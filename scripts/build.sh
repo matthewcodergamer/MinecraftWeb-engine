@@ -1,0 +1,60 @@
+#!/bin/bash
+# Build a browser artifact from the real Minecraft client bytecode.
+# usage: scripts/build.sh <EntryClass> [js|wasm]
+#   e.g. scripts/build.sh mcport.M1Main js
+set -euo pipefail
+cd "$(dirname "$0")/.."
+ROOT="$PWD"
+
+MC_DIR="${MC_DIR:-$HOME/Library/Application Support/minecraft}"
+MC_VERSION="${MC_VERSION:-26.3}"
+MC_JAR="$MC_DIR/versions/$MC_VERSION/$MC_VERSION.jar"
+MC_JSON="$MC_DIR/versions/$MC_VERSION/$MC_VERSION.json"
+JDK="${JDK:-$MC_DIR/runtime/java-runtime-epsilon/osx/java-runtime-epsilon/jre.bundle/Contents/Home}"
+ENTRY="${1:?entry class}"
+TARGET="${2:-js}"
+OUT="$ROOT/build/web"
+
+[ -f "$MC_JAR" ] || { echo "missing client jar: $MC_JAR" >&2; exit 1; }
+"$JDK/bin/java" -version 2>&1 | head -1
+
+# Minecraft's declared libraries (Java parts only; native jars are irrelevant in a browser).
+MC_LIBS=$(python3 - "$MC_JSON" "$MC_DIR/libraries" <<'EOF'
+import json, os, sys
+d = json.load(open(sys.argv[1]))
+out = []
+for l in d["libraries"]:
+    g, a, v, *cls = l["name"].split(":")
+    if cls:
+        continue
+    p = os.path.join(sys.argv[2], *g.split("."), a, v, f"{a}-{v}.jar")
+    if os.path.exists(p):
+        out.append(p)
+print(":".join(out))
+EOF
+)
+
+TEAVM_CP=$(ls "$ROOT"/tools/lib/*.jar | tr '\n' ':')
+mkdir -p build/tools build/classes "$OUT"
+
+"$JDK/bin/javac" -q -d build/tools -cp "$TEAVM_CP" tools/src/*.java 2>/dev/null || \
+  "$JDK/bin/javac" -d build/tools -cp "$TEAVM_CP" tools/src/*.java
+
+SRCS=$(find src/entry/java src/compat/java -name '*.java' 2>/dev/null || true)
+"$JDK/bin/javac" --release 25 -d build/classes \
+  -cp "$MC_JAR:$MC_LIBS:$ROOT/tools/lib/teavm-jso-0.16.0.jar:$ROOT/tools/lib/teavm-interop-0.16.0.jar" $SRCS
+
+cp -R src/compat/resources/. build/classes/ 2>/dev/null || true
+
+# Compat classes come first so they shadow the original library classes.
+IFS=: read -ra LIBARR <<< "$MC_LIBS"
+# TeaVM's Java class library + JS interop runtime (what replaces the JDK in the browser).
+TEAVM_RT=()
+for a in core classlib jso jso-apis jso-impl interop platform metaprogramming-api metaprogramming-impl extension-apis; do
+  TEAVM_RT+=("$ROOT/tools/lib/teavm-$a-0.16.0.jar")
+done
+NAME="$(echo "${ENTRY##*.}" | tr 'A-Z' 'a-z').${TARGET/wasm/wasm}"
+[ "$TARGET" = js ] && NAME="${NAME%.js}.js"
+time "$JDK/bin/java" -Xmx${PORT_HEAP:-3g} -cp "build/tools:$TEAVM_CP" PortBuilder "$TARGET" "$ENTRY" "$OUT" "$NAME" \
+  "$ROOT/build/classes" "$MC_JAR" "${LIBARR[@]}" "${TEAVM_RT[@]}" 2>&1 | tee "build/$ENTRY.$TARGET.log" | grep -vE "^\s*at " | tail -${PORT_LOG_LINES:-60}
+exit "${PIPESTATUS[0]}"

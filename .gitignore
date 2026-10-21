@@ -1,0 +1,8 @@
+# Build output contains compiled Mojang code - never commit or publish it.
+build/
+# Downloaded toolchain jars (re-fetch with scripts/fetch_deps.py)
+tools/lib/
+# Never commit Minecraft artifacts
+*.jar
+assets/
+.DS_Store
