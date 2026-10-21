@@ -9,7 +9,10 @@
   // Usage: run.html?js=m2main  (loads <js>.js and calls main()).
   Error.stackTraceLimit = 200;
   const logEl = document.getElementById('log'), errEl = document.getElementById('err');
-  window.__mcLog = (lvl, text) => { logEl.textContent += '[' + lvl + '] ' + text + '\n'; };
+  window.__mcLog = (lvl, text) => {
+    const t = window.__mcBootStart ? ((performance.now() - window.__mcBootStart) / 1000).toFixed(2) + 's ' : '';
+    logEl.textContent += t + '[' + lvl + '] ' + text + '\n';
+  };
   window.addEventListener('error', e => { errEl.textContent += 'ERROR: ' + e.message + '\n'; });
   window.addEventListener('unhandledrejection', e => { errEl.textContent += 'REJECTION: ' + e.reason + '\n'; });
 
