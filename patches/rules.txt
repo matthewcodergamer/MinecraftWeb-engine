@@ -1,0 +1,47 @@
+# Bytecode adaptations applied at compile time by tools/src/PortTransformer.java.
+# Format: KIND owner name+descriptor -> targetClass targetMethod
+#   REDIRECT        instance method call site -> static target(receiver, args...)
+#   REDIRECT_STATIC static method call site   -> static target(args...)
+#   BODY / BODY_STATIC  replace a method body with a call to the target
+# Every rule must preserve the original method's documented behaviour (see docs/MIGRATION_MATRIX.md).
+
+# --- JDK methods missing from TeaVM's class library ---------------------------------------
+REDIRECT_STATIC java.lang.Character toString(I)Ljava/lang/String; -> mcport.rt.jdk.JdkExt characterToString
+REDIRECT_STATIC java.lang.Character codePointOf(Ljava/lang/String;)I -> mcport.rt.jdk.JdkExt characterCodePointOf
+REDIRECT_STATIC java.lang.Integer parseUnsignedInt(Ljava/lang/String;I)I -> mcport.rt.jdk.JdkExt parseUnsignedInt
+REDIRECT_STATIC java.lang.Long parseUnsignedLong(Ljava/lang/String;I)J -> mcport.rt.jdk.JdkExt parseUnsignedLong
+REDIRECT_STATIC java.lang.Math powExact(II)I -> mcport.rt.jdk.JdkExt powExact
+REDIRECT_STATIC java.lang.Math fma(FFF)F -> mcport.rt.jdk.JdkExt fma
+REDIRECT_STATIC java.lang.Math fma(DDD)D -> mcport.rt.jdk.JdkExt fma
+REDIRECT_STATIC java.util.Date from(Ljava/time/Instant;)Ljava/util/Date; -> mcport.rt.jdk.JdkExt dateFrom
+REDIRECT java.util.Date toInstant()Ljava/time/Instant; -> mcport.rt.jdk.JdkExt dateToInstant
+REDIRECT_STATIC java.util.stream.StreamSupport intStream(Ljava/util/Spliterator$OfInt;Z)Ljava/util/stream/IntStream; -> mcport.rt.jdk.JdkExt intStream
+REDIRECT_STATIC java.util.stream.StreamSupport longStream(Ljava/util/Spliterator$OfLong;Z)Ljava/util/stream/LongStream; -> mcport.rt.jdk.JdkExt longStream
+REDIRECT java.lang.Runtime maxMemory()J -> mcport.rt.jdk.JdkExt runtimeMaxMemory
+REDIRECT java.lang.Class getGenericSuperclass()Ljava/lang/reflect/Type; -> mcport.rt.jdk.JdkExt classGetGenericSuperclass
+
+# --- JOML: no sun.misc.Unsafe in a browser; use JOML's own NIO implementation --------------
+BODY_STATIC org.joml.MemUtil createInstance()Lorg/joml/MemUtil; -> org.joml.BrowserMemUtil createInstance
+
+# --- net.minecraft.SystemReport: JMX/OSHI system probing -> browser equivalents ------------
+BODY_STATIC net.minecraft.SystemReport lambda$new$3()Ljava/lang/Object; -> mcport.rt.SystemReportBrowser heap
+BODY_STATIC net.minecraft.SystemReport lambda$new$4()Ljava/lang/Object; -> mcport.rt.SystemReportBrowser nonHeap
+BODY net.minecraft.SystemReport lambda$new$6()V -> mcport.rt.SystemReportBrowser hardware
+BODY net.minecraft.SystemReport lambda$new$7()V -> mcport.rt.SystemReportBrowser software
+BODY_STATIC net.minecraft.SystemReport printJvmFlags(Ljava/util/function/Predicate;)Ljava/lang/String; -> mcport.rt.SystemReportBrowser jvmFlags
+REDIRECT java.lang.Class getGenericInterfaces()[Ljava/lang/reflect/Type; -> mcport.rt.jdk.JdkExt classGetGenericInterfaces
+REDIRECT java.lang.Class isAnonymousClass()Z -> mcport.rt.jdk.JdkExt classIsAnonymousClass
+
+# --- Libraries: take the same fallback paths they use on JVMs without sun.misc.Unsafe ---------
+# Guava catches the failure (Exception|Error) and falls back to AtomicReferenceFieldUpdaterAtomicHelper.
+STUB_CLASS com.google.common.util.concurrent.AbstractFutureState$UnsafeAtomicHelper
+BODY_STATIC com.google.gson.internal.UnsafeAllocator create()Lcom/google/gson/internal/UnsafeAllocator; -> mcport.rt.patch.LibraryPatches gsonUnsafeAllocator
+BODY_STATIC io.netty.util.internal.logging.InternalLoggerFactory newDefaultFactory(Ljava/lang/String;)Lio/netty/util/internal/logging/InternalLoggerFactory; -> mcport.rt.patch.LibraryPatches nettyDefaultFactory
+
+# --- Classpath resources -> in-memory copy of the client jar's resources (mcport.rt.ClasspathResources)
+REDIRECT java.lang.Class getResourceAsStream(Ljava/lang/String;)Ljava/io/InputStream; -> mcport.rt.ClasspathResources classGetResourceAsStream
+REDIRECT java.lang.ClassLoader getResourceAsStream(Ljava/lang/String;)Ljava/io/InputStream; -> mcport.rt.ClasspathResources loaderGetResourceAsStream
+REDIRECT_STATIC java.lang.ClassLoader getSystemResourceAsStream(Ljava/lang/String;)Ljava/io/InputStream; -> mcport.rt.ClasspathResources systemGetResourceAsStream
+REDIRECT java.lang.Class getResource(Ljava/lang/String;)Ljava/net/URL; -> mcport.rt.ClasspathResources classGetResource
+REDIRECT java.lang.ClassLoader getResource(Ljava/lang/String;)Ljava/net/URL; -> mcport.rt.ClasspathResources loaderGetResource
+REDIRECT java.lang.ClassLoader getResources(Ljava/lang/String;)Ljava/util/Enumeration; -> mcport.rt.ClasspathResources loaderGetResources

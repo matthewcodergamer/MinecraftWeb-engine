@@ -28,8 +28,15 @@ public final class BrowserRuntime {
                     sb.append("\n    at ").append(st[i]);
                 }
             }
+            org.teavm.jso.JSObject js = org.teavm.jso.JSExceptions.getJSException(cur);
+            if (js != null) {
+                sb.append("\n  JS stack: ").append(jsStack(js));
+            }
             cur = cur.getCause() == cur ? null : cur.getCause();
         }
         return sb.toString();
     }
+
+    @JSBody(params = "e", script = "return String(e && e.stack ? e.stack : e);")
+    private static native String jsStack(org.teavm.jso.JSObject e);
 }

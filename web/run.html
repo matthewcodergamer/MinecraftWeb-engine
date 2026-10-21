@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Minecraft 26.3 browser port</title></head>
+<body style="font-family:monospace;font-size:12px">
+<h3>Minecraft 26.3 client bytecode &rarr; TeaVM &rarr; browser</h3>
+<pre id="log"></pre>
+<pre id="err" style="color:red"></pre>
+<script>
+  // Usage: run.html?js=m2main  (loads <js>.js and calls main()).
+  Error.stackTraceLimit = 200;
+  const logEl = document.getElementById('log'), errEl = document.getElementById('err');
+  window.__mcLog = (lvl, text) => { logEl.textContent += '[' + lvl + '] ' + text + '\n'; };
+  window.addEventListener('error', e => { errEl.textContent += 'ERROR: ' + e.message + '\n'; });
+  window.addEventListener('unhandledrejection', e => { errEl.textContent += 'REJECTION: ' + e.reason + '\n'; });
+
+  async function loadResources() {
+    const t0 = performance.now();
+    const res = await fetch('client-resources.bin');
+    if (!res.ok) { window.__mcLog('BOOT', 'no client-resources.bin (' + res.status + ')'); return; }
+    const buf = await res.arrayBuffer();
+    const dv = new DataView(buf);
+    if (dv.getUint32(0, false) !== 0x4D435253) throw new Error('bad resource archive magic');
+    const len = dv.getUint32(4, true);
+    const index = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 8, len)));
+    const base = 8 + len;
+    for (const k in index) index[k][0] += base;
+    window.__mcResources = { index, data: buf };
+    window.__mcLog('BOOT', 'resources: ' + Object.keys(index).length + ' files, '
+      + (buf.byteLength / 1048576).toFixed(1) + ' MiB in ' + Math.round(performance.now() - t0) + ' ms');
+  }
+
+  (async () => {
+    const js = new URLSearchParams(location.search).get('js') || 'm2main';
+    await loadResources();
+    const s = document.createElement('script');
+    s.src = js + '.js';
+    s.onload = () => {
+      window.__mcBootStart = performance.now();
+      try { main([]); } catch (e) { errEl.textContent += 'EXCEPTION: ' + e + '\n' + (e.stack || ''); }
+    };
+    document.body.appendChild(s);
+  })();
+</script>
+</body>
+</html>

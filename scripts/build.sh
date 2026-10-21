@@ -27,6 +27,11 @@ for l in d["libraries"]:
     g, a, v, *cls = l["name"].split(":")
     if cls:
         continue
+    # Libraries that cannot run in a browser; their call sites are ported to browser APIs instead.
+    if a in ("log4j-core", "log4j-slf4j2-impl", "log4j-api", "jna", "jna-platform", "oshi-core", "msal4j", "azure-json",
+             "java-objc-bridge", "text2speech", "netty-transport-classes-epoll",
+             "netty-transport-classes-kqueue", "netty-transport-native-unix-common"):
+        continue
     p = os.path.join(sys.argv[2], *g.split("."), a, v, f"{a}-{v}.jar")
     if os.path.exists(p):
         out.append(p)
@@ -42,8 +47,11 @@ mkdir -p build/tools build/classes "$OUT"
 
 SRCS=$(find src/entry/java src/compat/java -name '*.java' 2>/dev/null || true)
 "$JDK/bin/javac" --release 25 -d build/classes \
-  -cp "$MC_JAR:$MC_LIBS:$ROOT/tools/lib/teavm-jso-0.16.0.jar:$ROOT/tools/lib/teavm-interop-0.16.0.jar" $SRCS
+  -cp "$MC_JAR:$MC_LIBS:$ROOT/tools/lib/teavm-jso-0.16.0.jar:$ROOT/tools/lib/teavm-interop-0.16.0.jar:$ROOT/tools/lib/teavm-classlib-0.16.0.jar:$ROOT/tools/lib/teavm-jso-apis-0.16.0.jar" $SRCS
 
+# Types that live in JDK packages TeaVM does not rename (javax.*) are compiled into those packages.
+OVERLAY=$(find src/compat/java-base-overlay -name '*.java' 2>/dev/null || true)
+[ -n "$OVERLAY" ] && "$JDK/bin/javac" --release 25 --patch-module java.base=src/compat/java-base-overlay -d build/classes $OVERLAY
 cp -R src/compat/resources/. build/classes/ 2>/dev/null || true
 
 # Compat classes come first so they shadow the original library classes.
@@ -55,6 +63,6 @@ for a in core classlib jso jso-apis jso-impl interop platform metaprogramming-ap
 done
 NAME="$(echo "${ENTRY##*.}" | tr 'A-Z' 'a-z').${TARGET/wasm/wasm}"
 [ "$TARGET" = js ] && NAME="${NAME%.js}.js"
-time "$JDK/bin/java" -Xmx${PORT_HEAP:-3g} -cp "build/tools:$TEAVM_CP" PortBuilder "$TARGET" "$ENTRY" "$OUT" "$NAME" \
+time "$JDK/bin/java" -Xmx${PORT_HEAP:-3g} -Dport.rules="$ROOT/patches/rules.txt" ${PORT_JAVA_OPTS:-} -cp "build/tools:$TEAVM_CP" PortBuilder "$TARGET" "$ENTRY" "$OUT" "$NAME" \
   "$ROOT/build/classes" "$MC_JAR" "${LIBARR[@]}" "${TEAVM_RT[@]}" 2>&1 | tee "build/$ENTRY.$TARGET.log" | grep -vE "^\s*at " | tail -${PORT_LOG_LINES:-60}
 exit "${PIPESTATUS[0]}"

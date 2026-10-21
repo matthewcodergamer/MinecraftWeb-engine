@@ -16,6 +16,47 @@ import org.teavm.vm.TeaVMOptimizationLevel;
  * so missing classes/methods form the porting worklist.
  */
 public class PortBuilder {
+    /** Prints the shortest call chain from the entry point into any method of a class matching prefix. */
+    private static void explain(TeaVMTool tool, String prefix) {
+        org.teavm.dependency.DependencyInfo info = tool.getDependencyInfo();
+        org.teavm.callgraph.CallGraph graph = info.getCallGraph();
+        java.util.Map<org.teavm.model.MethodReference, org.teavm.model.MethodReference> next = new java.util.HashMap<>();
+        java.util.ArrayDeque<org.teavm.model.MethodReference> queue = new java.util.ArrayDeque<>();
+        for (org.teavm.model.MethodReference m : info.getReachableMethods()) {
+            if (m.getClassName().startsWith(prefix)) {
+                next.put(m, null);
+                queue.add(m);
+            }
+        }
+        System.out.println("WHY " + prefix + " (" + queue.size() + " reachable methods)");
+        String entry = tool.getMainClass();
+        while (!queue.isEmpty()) {
+            org.teavm.model.MethodReference m = queue.poll();
+            if (m.getClassName().equals(entry)) {
+                org.teavm.model.MethodReference cur = m;
+                while (cur != null) {
+                    System.out.println("   " + cur);
+                    cur = next.get(cur);
+                }
+                return;
+            }
+            org.teavm.callgraph.CallGraphNode node = graph.getNode(m);
+            if (node == null) {
+                continue;
+            }
+            for (org.teavm.callgraph.CallSite site : node.getCallerCallSites()) {
+                for (org.teavm.callgraph.CallGraphNode caller : site.getCallers()) {
+                    org.teavm.model.MethodReference c = caller.getMethod();
+                    if (!next.containsKey(c)) {
+                        next.put(c, m);
+                        queue.add(c);
+                    }
+                }
+            }
+        }
+        System.out.println("   (no chain from entry found - reached via class init or virtual dispatch)");
+    }
+
     public static void main(String[] args) throws Exception {
         String target = args[0];
         TeaVMTool tool = new TeaVMTool();
@@ -29,10 +70,16 @@ public class PortBuilder {
             cp.add(new File(args[i]));
         }
         tool.setClassPath(cp);
+        tool.getTransformers().add("PortTransformer");
         tool.setObfuscated(Boolean.getBoolean("port.minify"));
         tool.setOptimizationLevel(TeaVMOptimizationLevel.SIMPLE);
         tool.setFastDependencyAnalysis(Boolean.getBoolean("port.fast"));
         tool.setStrict(false);
+        String cache = System.getProperty("port.cache");
+        if (cache != null) {
+            tool.setIncremental(true);
+            tool.setCacheDirectory(new File(cache));
+        }
         tool.setDebugInformationGenerated(false);
         tool.setSourceMapsFileGenerated(false);
         tool.generate();
@@ -55,6 +102,12 @@ public class PortBuilder {
                 sb.append("  @ ").append(p.getLocation().getMethod());
             }
             System.out.println(sb);
+        }
+        String why = System.getProperty("port.why");
+        if (why != null) {
+            for (String prefix : why.split(",")) {
+                explain(tool, prefix);
+            }
         }
         System.out.println("classes compiled: " + tool.getClasses().size() + ", severe problems: " + severe);
         System.exit(severe == 0 ? 0 : 2);
