@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Minecraft — browser body</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0b0e14; overflow: hidden; overscroll-behavior: none; }
+    body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+    canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+    #status {
+      position: fixed; inset: 0; display: grid; place-items: center; padding: 24px;
+      color: #cfd6e4; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-align: center; white-space: pre-wrap; pointer-events: none;
+    }
+    #stats {
+      position: fixed; left: 12px; bottom: calc(12px + env(safe-area-inset-bottom));
+      padding: 8px 10px; max-width: calc(100vw - 24px); box-sizing: border-box;
+      color: #d7e0ee; background: rgba(8, 12, 20, 0.55);
+      border: 1px solid rgba(120, 150, 190, 0.25); border-radius: 6px;
+      font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: pre-wrap; pointer-events: none;
+    }
+    #hint {
+      position: fixed; left: 50%; top: calc(14px + env(safe-area-inset-top));
+      transform: translateX(-50%); max-width: calc(100vw - 24px); box-sizing: border-box;
+      padding: 7px 12px; border-radius: 8px; color: #fff;
+      background: rgba(8, 12, 20, 0.55); border: 1px solid rgba(120, 150, 190, 0.25);
+      font: 12px/1.5 system-ui, sans-serif; pointer-events: none;
+      transition: opacity .6s; text-align: center;
+    }
+    @media (max-width: 520px) {
+      #stats { left: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); font-size: 10px; }
+      #hint { font-size: 11px; }
+    }
+    #crosshair {
+      position: fixed; left: 50%; top: 50%; width: 18px; height: 18px;
+      transform: translate(-50%, -50%); pointer-events: none; opacity: .8;
+      background:
+        linear-gradient(#fff, #fff) center/2px 18px no-repeat,
+        linear-gradient(#fff, #fff) center/18px 2px no-repeat;
+      mix-blend-mode: difference;
+    }
+    @media (pointer: coarse) { #crosshair { opacity: .55; } }
+  </style>
+</head>
+<body>
+  <canvas id="mc-canvas"></canvas>
+  <div id="crosshair"></div>
+  <div id="status">starting mc-body…</div>
+  <div id="stats"></div>
+  <div id="hint">WASD move · mouse look · Space/Ctrl fly · Shift sprint — tap to capture mouse</div>
+
+  <!-- Harness only: loads the wasm module, hands the client jar's own block PNGs
+       to Rust, then hands control to Rust. There is no rendering logic here. -->
+  <script type="module">
+    import init, { run, texture_count, texture_name, upload_texture } from "./pkg/mc_body.js";
+
+    const status = document.getElementById('status');
+    const hint = document.getElementById('hint');
+    const fail = (error) => {
+      status.textContent = String(error && error.stack || error);
+      status.style.color = '#f88';
+      console.error(error);
+    };
+
+    const ARCHIVE_CANDIDATES = ['client-resources.bin', '../build/web/client-resources.bin'];
+
+    async function loadArchive() {
+      for (const url of ARCHIVE_CANDIDATES) {
+        try {
+          const response = await fetch(url);
+          if (!response.ok) continue;
+          const buffer = await response.arrayBuffer();
+          const view = new DataView(buffer);
+          if (view.getUint32(0, false) !== 0x4D435253) continue;
+          const length = view.getUint32(4, true);
+          const index = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 8, length)));
+          const base = 8 + length;
+          for (const key in index) index[key][0] += base;
+          return { buffer, index };
+        } catch (error) {
+          console.warn('resource archive ' + url + ':', error);
+        }
+      }
+      throw new Error('client-resources.bin not found (run scripts/serve.sh)');
+    }
+
+    (async () => {
+      try {
+        await init();
+        status.textContent = 'loading block textures…';
+        const archive = await loadArchive();
+        let uploaded = 0;
+        for (let layer = 0; layer < texture_count(); layer++) {
+          const entry = archive.index[texture_name(layer)];
+          if (!entry) continue;
+          upload_texture(layer, new Uint8Array(archive.buffer, entry[0], entry[1]));
+          uploaded++;
+        }
+        console.log('block textures: ' + uploaded + '/' + texture_count() + ' from the client jar');
+        status.textContent = '';
+        if (matchMedia('(pointer: coarse)').matches) {
+          hint.textContent = 'left half drag = move · right half drag = look · two fingers = fly';
+        }
+        setTimeout(() => { hint.style.opacity = '0'; }, 7000);
+        run();
+      } catch (error) {
+        fail(error);
+      }
+    })();
+  </script>
+</body>
+</html>

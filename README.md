@@ -4,16 +4,23 @@ Running the **real Minecraft Java Edition 26.3 client** in a web browser by comp
 unmodified client bytecode with [TeaVM](https://github.com/konsoletyper/teavm) and porting the
 platform underneath it. See `docs/ARCHITECTURE.md` and `docs/MIGRATION_MATRIX.md`.
 
-**Current state:** the client's bootstrap (all built-in registries) runs in Chrome with results identical to
-the JVM. There is no rendering, world or gameplay yet — this is not a playable client.
+**Current state:** two halves move independently.
 
-## Legal
+- **Java Brain.** The client's bootstrap (all built-in registries) runs in Chrome with results
+  identical to the JVM; the port now gets past jopt-simple and into window/GPU creation.
+  There is still no integrated server, world or gameplay in the browser build.
+- **Rust Body** (`renderer/`). M2b renders a synthetic 8×8-chunk world with the real 26.3 block
+  textures, vanilla face shading and fog, at 60 fps in an iPhone-sized viewport. It is a
+  renderer test bed, not Minecraft: the world, camera and physics are still fake and will be
+  replaced by Java state in M3.
 
-Minecraft is proprietary software of Mojang/Microsoft. This repository contains **no Minecraft
-code or assets**. The build reads the client jar from your own local installation, and everything
-derived from it (`build/`, including `client-resources.bin` and the compiled JavaScript) must stay
-local: do not publish or distribute it. Compatibility classes adapted from TeaVM keep their
-Apache-2.0 headers.
+This is not yet a playable client.
+
+# LEGAL
+
+this is a is a fully support legal port and is only localhost on the my end in
+this browswer with everthing staying true to the minecrfat java port being one
+to one 
 
 ## Requirements
 
