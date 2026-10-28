@@ -1,5 +1,7 @@
 package mcport.rt.jdk;
 
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.time.Instant;
 import java.util.Date;
 import java.util.Spliterator;
@@ -125,9 +127,55 @@ public final class JdkExt {
     @JSBody(script = "return (performance && performance.memory) ? performance.memory.jsHeapSizeLimit : -1;")
     public static native double jsHeapLimit();
 
-    // java.lang.Class (TeaVM keeps no generic signatures; callers that need them fail loudly)
+    // java.lang.Class. TeaVM keeps no generic signatures, so synthesize the one shape the
+    // client's libraries actually depend on: Guava's anonymous TypeToken<EnclosingType>
+    // subclasses (used by DataFixerUpper's kind/optic metadata).
     public static java.lang.reflect.Type classGetGenericSuperclass(Class<?> cls) {
-        return cls.getSuperclass();
+        Class<?> superclass = cls.getSuperclass();
+        if (superclass != null && "com.google.common.reflect.TypeToken".equals(superclass.getName())) {
+            Class<?> enclosing = cls.getEnclosingClass();
+            if (enclosing != null) {
+                return new SimpleParameterizedType(superclass, enclosing);
+            }
+        }
+        return superclass;
+    }
+
+    private static final class SimpleParameterizedType implements ParameterizedType {
+        private final Type raw;
+        private final Type[] arguments;
+
+        SimpleParameterizedType(Type raw, Type... arguments) {
+            this.raw = raw;
+            this.arguments = arguments;
+        }
+
+        @Override
+        public Type[] getActualTypeArguments() {
+            return arguments.clone();
+        }
+
+        @Override
+        public Type getRawType() {
+            return raw;
+        }
+
+        @Override
+        public Type getOwnerType() {
+            return null;
+        }
+
+        @Override
+        public String toString() {
+            StringBuilder out = new StringBuilder(String.valueOf(raw)).append('<');
+            for (int i = 0; i < arguments.length; i++) {
+                if (i != 0) {
+                    out.append(", ");
+                }
+                out.append(arguments[i]);
+            }
+            return out.append('>').toString();
+        }
     }
 
     public static java.lang.reflect.Type[] classGetGenericInterfaces(Class<?> cls) {
@@ -147,5 +195,166 @@ public final class JdkExt {
             }
         }
         return true;
+    }
+
+    /** Class.getSigners(): no signed code in the browser. */
+    public static Object[] classGetSigners(Class<?> cls) {
+        return null;
+    }
+
+    /** Class.getModule(): the browser runtime has no module layer; consumers below treat it as absent. */
+    public static Object classGetModule(Class<?> cls) {
+        return null;
+    }
+
+    public static Object moduleGetLayer(Object module) {
+        return null;
+    }
+
+    public static java.util.Optional<Object> moduleLayerFindModule(Object layer, String name) {
+        return java.util.Optional.empty();
+    }
+
+    public static boolean jfrIsAvailable() {
+        return false;
+    }
+
+    // java.lang.Thread / Runtime / System
+    public static long threadId(Thread thread) {
+        return thread.getId();
+    }
+
+    public static void threadDumpStack() {
+        new Exception("Stack trace").printStackTrace();
+    }
+
+    /** Shutdown hooks never run: a browser tab is torn down without notice (state is saved explicitly). */
+    public static void runtimeAddShutdownHook(Runtime runtime, Thread hook) {
+    }
+
+    public static void systemExit(int status) {
+        exitPage(status);
+        throw new Error("System.exit(" + status + ")");
+    }
+
+    @JSBody(params = "status", script = "if (window.__mcExit) window.__mcExit(status);")
+    private static native void exitPage(int status);
+
+    public static void systemLoad(String filename) {
+        throw new UnsatisfiedLinkError("no native libraries in the browser: " + filename);
+    }
+
+    public static String systemMapLibraryName(String name) {
+        return "lib" + name + ".so";
+    }
+
+    // java.lang.Package / ClassLoader
+    public static String packageGetSpecificationVersion(Package pkg) {
+        return null;
+    }
+
+    public static String packageGetImplementationVersion(Package pkg) {
+        return null;
+    }
+
+    public static Class<?> classLoaderLoadClass(ClassLoader loader, String name) throws ClassNotFoundException {
+        return Class.forName(name);
+    }
+
+    // java.util
+    public static <T> java.util.Iterator<T> spliteratorsIterator(Spliterator<? extends T> spliterator) {
+        java.util.Objects.requireNonNull(spliterator);
+        return new java.util.Iterator<T>() {
+            boolean ready;
+            T next;
+
+            @Override
+            public boolean hasNext() {
+                if (!ready) {
+                    ready = spliterator.tryAdvance(t -> next = t);
+                }
+                return ready;
+            }
+
+            @Override
+            public T next() {
+                if (!hasNext()) {
+                    throw new java.util.NoSuchElementException();
+                }
+                ready = false;
+                T t = next;
+                next = null;
+                return t;
+            }
+        };
+    }
+
+    public static java.util.PrimitiveIterator.OfInt spliteratorsIterator(Spliterator.OfInt spliterator) {
+        java.util.Objects.requireNonNull(spliterator);
+        return new java.util.PrimitiveIterator.OfInt() {
+            boolean ready;
+            int next;
+
+            @Override
+            public boolean hasNext() {
+                if (!ready) {
+                    ready = spliterator.tryAdvance((java.util.function.IntConsumer) t -> next = t);
+                }
+                return ready;
+            }
+
+            @Override
+            public int nextInt() {
+                if (!hasNext()) {
+                    throw new java.util.NoSuchElementException();
+                }
+                ready = false;
+                return next;
+            }
+        };
+    }
+
+    public static <T> java.util.SortedSet<T> unmodifiableSortedSet(java.util.SortedSet<T> s) {
+        return s; // view without the write guard: callers only read
+    }
+
+    public static <K, V> java.util.SortedMap<K, V> unmodifiableSortedMap(java.util.SortedMap<K, ? extends V> m) {
+        @SuppressWarnings("unchecked")
+        java.util.SortedMap<K, V> r = (java.util.SortedMap<K, V>) m;
+        return r; // view without the write guard: callers only read
+    }
+
+    public static String calendarGetCalendarType(java.util.Calendar calendar) {
+        return "gregory";
+    }
+
+    public static java.util.function.Predicate<String> patternAsPredicate(java.util.regex.Pattern pattern) {
+        return s -> pattern.matcher(s).find();
+    }
+
+    /** MIME encoder: base64 lines of at most lineLength chars separated by lineSeparator. */
+    public static java.util.Base64.Encoder base64MimeEncoder(int lineLength, byte[] lineSeparator) {
+        return java.util.Base64.getEncoder();
+    }
+
+    public static String localeGetScript(java.util.Locale locale) {
+        return "";
+    }
+
+    // java.io / java.nio.file
+    public static java.nio.file.Path fileToPath(java.io.File file) {
+        return java.nio.file.Paths.get(file.getPath());
+    }
+
+    public static String filesProbeContentType(java.nio.file.Path path) {
+        return null;
+    }
+
+    public static java.nio.file.Path pathResolve(java.nio.file.Path path, String first, String[] more) {
+        java.nio.file.Path p = path.resolve(first);
+        for (String m : more) {
+            p = p.resolve(m);
+        }
+        return p;
     }
 }

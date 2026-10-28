@@ -84,13 +84,17 @@ public class PortBuilder {
         tool.setSourceMapsFileGenerated(false);
         tool.generate();
 
-        int severe = 0;
+        int severe = tool.getProblemProvider().getSevereProblems().size();
+        int linkage = 0;
+        java.util.Set<Problem> severeSet = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        severeSet.addAll(tool.getProblemProvider().getSevereProblems());
         for (Problem p : tool.getProblemProvider().getProblems()) {
             boolean err = p.getSeverity() == ProblemSeverity.ERROR;
-            if (err) {
-                severe++;
+            boolean lazy = err && !severeSet.contains(p);
+            if (lazy) {
+                linkage++;
             }
-            StringBuilder sb = new StringBuilder(err ? "ERROR " : "WARN  ");
+            StringBuilder sb = new StringBuilder(lazy ? "LINK  " : err ? "ERROR " : "WARN  ");
             sb.append(p.getText());
             Object[] params = p.getParams();
             if (params != null) {
@@ -103,13 +107,41 @@ public class PortBuilder {
             }
             System.out.println(sb);
         }
+        // Native (JNI) methods without a browser implementation compile to stubs that fail at run time;
+        // list every reachable one so they are part of the worklist.
+        int natives = 0;
+        org.teavm.model.ClassReaderSource classes = tool.getDependencyInfo().getClassSource();
+        java.util.TreeSet<String> nativeList = new java.util.TreeSet<>();
+        for (org.teavm.model.MethodReference m : tool.getDependencyInfo().getReachableMethods()) {
+            org.teavm.model.MethodReader mr = classes.resolve(m);
+            if (mr == null || !mr.hasModifier(org.teavm.model.ElementModifier.NATIVE)) {
+                continue;
+            }
+            if (mr.getAnnotations().get("org.teavm.jso.JSBody") != null
+                    || mr.getAnnotations().get("org.teavm.interop.Import") != null
+                    || mr.getAnnotations().get("org.teavm.backend.javascript.spi.GeneratedBy") != null
+                    || mr.getAnnotations().get("org.teavm.backend.javascript.spi.InjectedBy") != null
+                    || mr.getAnnotations().get("org.teavm.jso.JSMethod") != null
+                    || m.getClassName().startsWith("java.") || m.getClassName().startsWith("org.teavm.")
+                    // JSO consumes @JSBody before this check runs: the port's own bridges are listed by class
+                    || m.getClassName().startsWith("mcport.") || m.getClassName().equals("org.lwjgl.system.JNI")) {
+                continue;
+            }
+            nativeList.add(m.toString());
+        }
+        for (String n : nativeList) {
+            System.out.println("NATIVE " + n);
+            natives++;
+        }
+        System.out.println("unimplemented reachable native methods: " + natives);
         String why = System.getProperty("port.why");
         if (why != null) {
             for (String prefix : why.split(",")) {
                 explain(tool, prefix);
             }
         }
-        System.out.println("classes compiled: " + tool.getClasses().size() + ", severe problems: " + severe);
+        System.out.println("classes compiled: " + tool.getClasses().size() + ", severe problems: " + severe
+                + ", lazy linkage errors (throw at run time): " + linkage);
         System.exit(severe == 0 ? 0 : 2);
     }
 }

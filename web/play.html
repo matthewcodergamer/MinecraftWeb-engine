@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Minecraft</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; overscroll-behavior: none; }
+  body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  #mc-canvas { position: fixed; inset: 0; }
+  #boot { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: #ddd; font: 14px/1.5 system-ui, sans-serif; background: #1e1e1e; z-index: 10; }
+  #boot .bar { width: min(420px, 80vw); height: 6px; background: #333; margin-top: 12px; }
+  #boot .bar div { height: 100%; width: 0; background: #e8e8e8; transition: width .2s; }
+  #boot pre { color: #f88; max-width: 90vw; white-space: pre-wrap; font-size: 12px; }
+  #stats { position: fixed; right: 6px; top: 4px; color: #fff; font: 11px monospace; text-shadow: 1px 1px #000;
+    z-index: 5; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="boot"><div id="boot-msg">Starting…</div><div class="bar"><div id="boot-bar"></div></div><pre id="boot-err"></pre></div>
+<div id="stats"></div>
+<script src="native/layout.js"></script>
+<script src="native/layout-shaders.js"></script>
+<script src="native/heap.js"></script>
+<script src="native/natives.js"></script>
+<script src="native/sdl.js"></script>
+<script src="native/shaders.js"></script>
+<script src="native/stb.js"></script>
+<script src="gpu/webgpu.js"></script>
+<script>
+// Host page of the browser port: loads the client jar's resources (packed from the user's own installation),
+// initialises the WebAssembly shader toolchain and the WebGPU device, then starts the real
+// net.minecraft.client.main.Main compiled by TeaVM (clientmain.js).
+'use strict';
+const params = new URLSearchParams(location.search);
+const msg = (t) => { document.getElementById('boot-msg').textContent = t; };
+const bar = (f) => { document.getElementById('boot-bar').style.width = Math.round(f * 100) + '%'; };
+const fail = (t) => { document.getElementById('boot-err').textContent += t + '\n'; window.__mc = Object.assign(window.__mc || {}, { stage: 'failed', error: t }); };
+Error.stackTraceLimit = 100;
+window.__mcLog = (lvl, text) => console.log('[' + lvl + '] ' + text);
+window.__mcExit = (status) => { msg('Minecraft exited (' + status + ')'); document.getElementById('boot').style.display = 'flex'; };
+window.addEventListener('error', (e) => fail('ERROR: ' + e.message));
+window.addEventListener('unhandledrejection', (e) => fail('REJECTION: ' + (e.reason && e.reason.stack || e.reason)));
+
+async function fetchWithProgress(url, label, from, to) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(url + ': HTTP ' + res.status);
+  const total = +res.headers.get('content-length') || 0;
+  if (!res.body || !total) { const b = await res.arrayBuffer(); bar(to); return b; }
+  const out = new Uint8Array(total);
+  const reader = res.body.getReader();
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    out.set(value, got);
+    got += value.length;
+    msg(label + ' ' + (got / 1048576).toFixed(0) + ' / ' + (total / 1048576).toFixed(0) + ' MiB');
+    bar(from + (to - from) * got / total);
+  }
+  return out.buffer;
+}
+
+async function loadResources() {
+  const buf = await fetchWithProgress('client-resources.bin', 'Loading game resources', 0, 0.6);
+  const dv = new DataView(buf);
+  if (dv.getUint32(0, false) !== 0x4D435253) throw new Error('bad resource archive');
+  const len = dv.getUint32(4, true);
+  const index = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 8, len)));
+  const base = 8 + len;
+  for (const k in index) index[k][0] += base;
+  window.__mcResources = { index, data: buf };
+}
+
+function showStats() {
+  const el = document.getElementById('stats');
+  if (params.get('stats') === '0') return;
+  window.__mcOnFps = (fps) => {
+    const G = window.__mcWebGPU, s = G && G.stats;
+    el.textContent = fps.toFixed(0) + ' fps' + (s ? ' | ' + (G.device ? 'WebGPU' : 'WebGL2') + ' draws ' + s.draws : '');
+    if (s) s.draws = 0;
+  };
+}
+
+(async () => {
+  try {
+    msg('Loading game resources…');
+    await loadResources();
+    msg('Starting shader compiler…');
+    bar(0.7);
+    await __mcShaders.init('');
+    msg('Starting graphics…');
+    bar(0.8);
+    const webgpu = await __mcWebGPU.init();
+    console.log(webgpu ? 'Graphics: WebGPU (' + __mcWebGPU.adapterName + ')' : 'Graphics: WebGPU unavailable, using WebGL2');
+    msg('Loading Minecraft…');
+    bar(0.9);
+    await new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = (params.get('js') || 'clientmain') + '.js';
+      s.onload = res;
+      s.onerror = () => rej(new Error('failed to load ' + s.src));
+      document.body.appendChild(s);
+    });
+    bar(1);
+    showStats();
+    // The Minecraft window (the canvas) appears when the client creates it; hide the boot screen then.
+    const waitCanvas = setInterval(() => {
+      if (window.__mcSDL && __mcSDL.canvas && window.__mcWebGPU && __mcWebGPU.frame > 0) {
+        document.getElementById('boot').style.display = 'none';
+        clearInterval(waitCanvas);
+      }
+    }, 100);
+    main([]);
+  } catch (e) {
+    fail(String(e && e.stack || e));
+  }
+})();
+</script>
+</body>
+</html>

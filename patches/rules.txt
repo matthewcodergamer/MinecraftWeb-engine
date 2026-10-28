@@ -38,6 +38,10 @@ STUB_CLASS com.google.common.util.concurrent.AbstractFutureState$UnsafeAtomicHel
 BODY_STATIC com.google.gson.internal.UnsafeAllocator create()Lcom/google/gson/internal/UnsafeAllocator; -> mcport.rt.patch.LibraryPatches gsonUnsafeAllocator
 BODY_STATIC io.netty.util.internal.logging.InternalLoggerFactory newDefaultFactory(Ljava/lang/String;)Lio/netty/util/internal/logging/InternalLoggerFactory; -> mcport.rt.patch.LibraryPatches nettyDefaultFactory
 
+# --- joptsimple CLI option converters: resolved reflectively on the JVM; the browser keeps no reflective
+# member metadata for java.io.File, so mcport.rt.patch.LibraryPatches supplies the converters directly.
+BODY_STATIC joptsimple.internal.Reflection findConverter(Ljava/lang/Class;)Ljoptsimple/ValueConverter; -> mcport.rt.patch.LibraryPatches joptFindConverter
+
 # --- Classpath resources -> in-memory copy of the client jar's resources (mcport.rt.ClasspathResources)
 REDIRECT java.lang.Class getResourceAsStream(Ljava/lang/String;)Ljava/io/InputStream; -> mcport.rt.ClasspathResources classGetResourceAsStream
 REDIRECT java.lang.ClassLoader getResourceAsStream(Ljava/lang/String;)Ljava/io/InputStream; -> mcport.rt.ClasspathResources loaderGetResourceAsStream
@@ -45,3 +49,105 @@ REDIRECT_STATIC java.lang.ClassLoader getSystemResourceAsStream(Ljava/lang/Strin
 REDIRECT java.lang.Class getResource(Ljava/lang/String;)Ljava/net/URL; -> mcport.rt.ClasspathResources classGetResource
 REDIRECT java.lang.ClassLoader getResource(Ljava/lang/String;)Ljava/net/URL; -> mcport.rt.ClasspathResources loaderGetResource
 REDIRECT java.lang.ClassLoader getResources(Ljava/lang/String;)Ljava/util/Enumeration; -> mcport.rt.ClasspathResources loaderGetResources
+
+# --- LWJGL platform layer -> browser (mcport.lwjgl): emulated native heap + JS natives table ----------
+BODY_STATIC org.lwjgl.system.MemoryUtil createBackend()Lorg/lwjgl/system/MemoryBackend; -> mcport.lwjgl.BrowserMemoryBackend create
+BODY_STATIC org.lwjgl.system.MemoryUtil getPageSize()I -> mcport.lwjgl.LwjglPatches pageSize
+BODY_STATIC org.lwjgl.system.MemoryUtil getCacheLineSize()I -> mcport.lwjgl.LwjglPatches cacheLineSize
+BODY_STATIC org.lwjgl.system.MemoryManage getInstance()Lorg/lwjgl/system/MemoryUtil$MemoryAllocator; -> mcport.lwjgl.LwjglPatches allocator
+BODY_STATIC org.lwjgl.system.MemoryAccessJNI getPointerSize()I -> mcport.lwjgl.LwjglPatches pointerSize
+BODY_STATIC org.lwjgl.system.MemoryAccessJNI malloc()J -> mcport.lwjgl.LwjglPatches zeroJ
+BODY_STATIC org.lwjgl.system.MemoryAccessJNI calloc()J -> mcport.lwjgl.LwjglPatches zeroJ
+BODY_STATIC org.lwjgl.system.MemoryAccessJNI realloc()J -> mcport.lwjgl.LwjglPatches zeroJ
+BODY_STATIC org.lwjgl.system.MemoryAccessJNI free()J -> mcport.lwjgl.LwjglPatches zeroJ
+BODY_STATIC org.lwjgl.system.MemoryAccessJNI aligned_alloc()J -> mcport.lwjgl.LwjglPatches zeroJ
+BODY_STATIC org.lwjgl.system.MemoryAccessJNI aligned_free()J -> mcport.lwjgl.LwjglPatches zeroJ
+BODY_STATIC org.lwjgl.system.Library initialize()V -> mcport.lwjgl.LwjglPatches libraryInitialize
+BODY_STATIC org.lwjgl.system.Library loadSystem(Ljava/lang/String;Ljava/lang/String;)V -> mcport.lwjgl.LwjglPatches loadSystem
+BODY_STATIC org.lwjgl.system.Library loadSystem(Ljava/util/function/Consumer;Ljava/util/function/Consumer;Ljava/lang/Class;Ljava/lang/String;Ljava/lang/String;)V -> mcport.lwjgl.LwjglPatches loadSystem
+BODY_STATIC org.lwjgl.system.Library loadNative(Ljava/lang/String;Ljava/lang/String;)Lorg/lwjgl/system/SharedLibrary; -> mcport.lwjgl.LwjglPatches loadNative
+BODY_STATIC org.lwjgl.system.Library loadNative(Ljava/lang/Class;Ljava/lang/String;Ljava/lang/String;)Lorg/lwjgl/system/SharedLibrary; -> mcport.lwjgl.LwjglPatches loadNative
+BODY_STATIC org.lwjgl.system.Library loadNative(Ljava/lang/Class;Ljava/lang/String;Ljava/lang/String;Z)Lorg/lwjgl/system/SharedLibrary; -> mcport.lwjgl.LwjglPatches loadNative
+BODY_STATIC org.lwjgl.system.Library loadNative(Ljava/lang/Class;Ljava/lang/String;Lorg/lwjgl/system/Configuration;[Ljava/lang/String;)Lorg/lwjgl/system/SharedLibrary; -> mcport.lwjgl.LwjglPatches loadNative
+BODY_STATIC org.lwjgl.system.Library loadNative(Ljava/lang/Class;Ljava/lang/String;Lorg/lwjgl/system/Configuration;Ljava/util/function/Supplier;[Ljava/lang/String;)Lorg/lwjgl/system/SharedLibrary; -> mcport.lwjgl.LwjglPatches loadNative
+BODY_STATIC org.lwjgl.system.Library <clinit>()V -> mcport.lwjgl.LwjglPatches noop
+BODY_STATIC org.lwjgl.system.ThreadLocalUtil getThreadJNIEnv()J -> mcport.lwjgl.LwjglPatches zeroJ
+BODY_STATIC org.lwjgl.system.ThreadLocalUtil getFunctionMissingAbort()J -> mcport.lwjgl.LwjglPatches zeroJ
+BODY_STATIC org.lwjgl.system.ThreadLocalUtil setupEnvData(I)J -> mcport.lwjgl.LwjglPatches zeroJI
+BODY_STATIC org.lwjgl.system.Upcalls <clinit>()V -> mcport.lwjgl.LwjglPatches noop
+BODY_STATIC org.lwjgl.system.Upcalls upcallCreate(Lorg/lwjgl/system/Callback$Descriptor;Ljava/lang/Object;)J -> mcport.lwjgl.LwjglPatches upcallCreate
+BODY_STATIC org.lwjgl.system.Upcalls upcallGet(J)Lorg/lwjgl/system/CallbackI; -> mcport.lwjgl.LwjglPatches upcallGet
+BODY_STATIC org.lwjgl.system.Upcalls upcallFree(J)V -> mcport.lwjgl.LwjglPatches upcallFree
+BODY_STATIC org.lwjgl.system.APIUtil apiCreateCIF(Lorg/lwjgl/system/libffi/FFIType;[Lorg/lwjgl/system/libffi/FFIType;)Lorg/lwjgl/system/libffi/FFICIF; -> mcport.lwjgl.LwjglPatches apiCreateCIF
+BODY_STATIC org.lwjgl.system.APIUtil apiCreateCIF(ILorg/lwjgl/system/libffi/FFIType;[Lorg/lwjgl/system/libffi/FFIType;)Lorg/lwjgl/system/libffi/FFICIF; -> mcport.lwjgl.LwjglPatches apiCreateCIF
+BODY_STATIC org.lwjgl.system.APIUtil apiCreateCIFVar(IILorg/lwjgl/system/libffi/FFIType;[Lorg/lwjgl/system/libffi/FFIType;)Lorg/lwjgl/system/libffi/FFICIF; -> mcport.lwjgl.LwjglPatches apiCreateCIFVar
+BODY_STATIC org.lwjgl.system.Platform get()Lorg/lwjgl/system/Platform; -> mcport.lwjgl.LwjglPatches platform
+REDIRECT_STATIC java.lang.invoke.MethodHandles lookup()Ljava/lang/invoke/MethodHandles$Lookup; -> mcport.lwjgl.LwjglPatches methodHandlesLookup
+# Direct buffers must be addressable native memory.
+REDIRECT_STATIC java.nio.ByteBuffer allocateDirect(I)Ljava/nio/ByteBuffer; -> mcport.lwjgl.BrowserAllocator allocateDirect
+
+# --- JDK methods missing from TeaVM (client entry) --------------------------------------------
+REDIRECT java.lang.Class getSigners()[Ljava/lang/Object; -> mcport.rt.jdk.JdkExt classGetSigners
+REDIRECT java.lang.Class getModule()Ljava/lang/Module; -> mcport.rt.jdk.JdkExt classGetModule
+REDIRECT java.lang.Module getLayer()Ljava/lang/ModuleLayer; -> mcport.rt.jdk.JdkExt moduleGetLayer
+REDIRECT java.lang.ModuleLayer findModule(Ljava/lang/String;)Ljava/util/Optional; -> mcport.rt.jdk.JdkExt moduleLayerFindModule
+REDIRECT_STATIC jdk.jfr.FlightRecorder isAvailable()Z -> mcport.rt.jdk.JdkExt jfrIsAvailable
+REDIRECT java.lang.Thread threadId()J -> mcport.rt.jdk.JdkExt threadId
+REDIRECT_STATIC java.lang.Thread dumpStack()V -> mcport.rt.jdk.JdkExt threadDumpStack
+REDIRECT java.lang.Runtime addShutdownHook(Ljava/lang/Thread;)V -> mcport.rt.jdk.JdkExt runtimeAddShutdownHook
+REDIRECT_STATIC java.lang.System exit(I)V -> mcport.rt.jdk.JdkExt systemExit
+REDIRECT_STATIC java.lang.System load(Ljava/lang/String;)V -> mcport.rt.jdk.JdkExt systemLoad
+REDIRECT_STATIC java.lang.System loadLibrary(Ljava/lang/String;)V -> mcport.rt.jdk.JdkExt systemLoad
+REDIRECT_STATIC java.lang.System mapLibraryName(Ljava/lang/String;)Ljava/lang/String; -> mcport.rt.jdk.JdkExt systemMapLibraryName
+REDIRECT java.lang.Package getSpecificationVersion()Ljava/lang/String; -> mcport.rt.jdk.JdkExt packageGetSpecificationVersion
+REDIRECT java.lang.Package getImplementationVersion()Ljava/lang/String; -> mcport.rt.jdk.JdkExt packageGetImplementationVersion
+REDIRECT_STATIC java.nio.file.Files getFileStore(Ljava/nio/file/Path;)Ljava/nio/file/FileStore; -> mcport.rt.fs.BrowserFileStore getFileStore
+REDIRECT java.lang.ClassLoader loadClass(Ljava/lang/String;)Ljava/lang/Class; -> mcport.rt.jdk.JdkExt classLoaderLoadClass
+REDIRECT_STATIC java.util.Spliterators iterator(Ljava/util/Spliterator;)Ljava/util/Iterator; -> mcport.rt.jdk.JdkExt spliteratorsIterator
+REDIRECT_STATIC java.util.Spliterators iterator(Ljava/util/Spliterator$OfInt;)Ljava/util/PrimitiveIterator$OfInt; -> mcport.rt.jdk.JdkExt spliteratorsIterator
+REDIRECT_STATIC java.util.Collections unmodifiableSortedSet(Ljava/util/SortedSet;)Ljava/util/SortedSet; -> mcport.rt.jdk.JdkExt unmodifiableSortedSet
+REDIRECT_STATIC java.util.Collections unmodifiableSortedMap(Ljava/util/SortedMap;)Ljava/util/SortedMap; -> mcport.rt.jdk.JdkExt unmodifiableSortedMap
+REDIRECT java.util.Calendar getCalendarType()Ljava/lang/String; -> mcport.rt.jdk.JdkExt calendarGetCalendarType
+REDIRECT java.util.regex.Pattern asPredicate()Ljava/util/function/Predicate; -> mcport.rt.jdk.JdkExt patternAsPredicate
+REDIRECT_STATIC java.util.Base64 getMimeEncoder(I[B)Ljava/util/Base64$Encoder; -> mcport.rt.jdk.JdkExt base64MimeEncoder
+REDIRECT java.util.Locale getScript()Ljava/lang/String; -> mcport.rt.jdk.JdkExt localeGetScript
+REDIRECT java.io.File toPath()Ljava/nio/file/Path; -> mcport.rt.jdk.JdkExt fileToPath
+REDIRECT_STATIC java.nio.file.Files probeContentType(Ljava/nio/file/Path;)Ljava/lang/String; -> mcport.rt.jdk.JdkExt filesProbeContentType
+REDIRECT java.nio.file.Path resolve(Ljava/lang/String;[Ljava/lang/String;)Ljava/nio/file/Path; -> mcport.rt.jdk.JdkExt pathResolve
+
+# --- Client code that probes the OS / loads native libraries ---------------------------------
+BODY_STATIC com.mojang.blaze3d.platform.NativeLibrariesBootstrap loadLibraries()V -> mcport.rt.patch.ClientPatches loadNativeLibraries
+BODY_STATIC com.mojang.blaze3d.platform.NativeLibrariesBootstrap isVulkanLoaderAvailable()Z -> mcport.rt.patch.ClientPatches vulkanLoaderAvailable
+BODY_STATIC net.minecraft.util.NativeModuleLister listModules()Ljava/util/List; -> mcport.rt.patch.ClientPatches listNativeModules
+BODY_STATIC net.minecraft.util.NativeModuleLister tryGetModuleVersion(Ljava/lang/String;)Ljava/util/Optional; -> mcport.rt.patch.ClientPatches nativeModuleVersion
+BODY_STATIC net.minecraft.client.gui.components.debug.DebugEntrySystemSpecs getCpuInfo()Ljava/lang/String; -> mcport.rt.patch.ClientPatches cpuInfo
+BODY_STATIC com.mojang.jtracy.TracyClient load()V -> mcport.rt.patch.ClientPatches tracyLoad
+BODY_STATIC com.mojang.jtracy.TracyClient beginZone(Ljava/lang/String;Z)Lcom/mojang/jtracy/Zone; -> mcport.rt.patch.ClientPatches tracyBeginZone
+STUB_CLASS com.mojang.jtracy.Loader
+# Chat-signing keys from servers (X.509): not available; Mojang's code reports CryptException as for a bad key.
+STUB net.minecraft.util.Crypt byteToPublicKey([B)Ljava/security/PublicKey;
+
+# --- Graphics: renderpearl backends for the browser (WebGPU preferred) -----------------------------
+# ClientBootstrap references VulkanFeatureSets only to run its empty bootstrap(); touching the class
+# initializes large Vk* feature structs that cannot reflect on TeaVM. The browser never uses Vulkan.
+REDIRECT_STATIC com.mojang.renderpearl.backend.vulkan.VulkanFeatureSets bootstrap()V -> mcport.rt.patch.ClientPatches noop
+BODY net.minecraft.client.PreferredGraphicsApi getBackendsToTry()[Lcom/mojang/renderpearl/api/device/GpuBackend; -> mcport.gpu.GraphicsPatches backendsToTry
+# JOML's Unsafe-based implementations are never selected (createInstance is patched above); fast dependency
+# analysis still reaches them.
+STUB_CLASS org.joml.MemUtil$MemUtilUnsafe
+STUB_CLASS org.joml.MemUtil$MemUtilInternalUnsafe
+
+# --- LWJGL modules with their own JNI natives ------------------------------------------------------
+BODY_STATIC org.lwjgl.stb.STBImage nstbi_load_from_memory(JIJJJI)J -> mcport.lwjgl.StbNatives loadFromMemory
+BODY_STATIC org.lwjgl.stb.STBImage nstbi_failure_reason()J -> mcport.lwjgl.StbNatives failureReason
+BODY_STATIC org.lwjgl.stb.STBImage nstbi_image_free(J)V -> mcport.lwjgl.StbNatives imageFree
+BODY_STATIC org.lwjgl.stb.STBImageResize nstbir_resize_uint8_linear(JIIIJIIII)J -> mcport.lwjgl.StbNatives resizeLinear
+BODY_STATIC org.lwjgl.stb.STBImageWrite nstbi_write_png_to_func(JJIIIJI)I -> mcport.lwjgl.StbNatives writePng
+ZERO_NATIVES org.lwjgl.stb.LibSTB
+# libffi: callback descriptors only (the browser bridge needs no CIFs); Vulkan memory allocator and Tracy are
+# never loaded in the browser.
+ZERO_NATIVES org.lwjgl.system.libffi.LibFFI
+ZERO_NATIVES org.lwjgl.util.vma.Vma
+ZERO_NATIVES org.lwjgl.util.vma.LibVma
+ZERO_NATIVES com.mojang.jtracy.TracyBindings
+ZERO_NATIVES org.lwjgl.system.jni.JNINativeInterface

@@ -1,0 +1,70 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>shader toolchain test</title></head>
+<body><pre id="log"></pre>
+<script src="native/layout.js"></script>
+<script src="native/layout-shaders.js"></script>
+<script src="native/heap.js"></script>
+<script src="native/natives.js"></script>
+<script src="native/shaders.js"></script>
+<script>
+// Runs every Minecraft core shader through the browser toolchain the WebGPU backend uses:
+// include/macro/binding preprocessing -> glslang -> combined-sampler split -> Tint -> WebGPU shader module.
+// Shaders are read from test-shaders/ (copied from the local client jar by scripts/test-shaders.sh).
+const log = (s) => { document.getElementById('log').textContent += s + '\n'; console.log(s); };
+window.__mc = {};
+(async () => {
+  try {
+    const S = __mcShaders;
+    await S.init('');
+    const list = await (await fetch('test-shaders/list.txt')).text();
+    const files = list.trim().split('\n');
+    const read = async (f) => (await fetch('test-shaders/' + f)).text();
+    const includes = {};
+    for (const f of files.filter((f) => f.startsWith('include/'))) includes['minecraft:' + f.substring(8)] = await read(f);
+    // resolve #include directly (the real runtime goes through Mojang's include callback)
+    const preprocess = (src) => src.replace(/^[ \t]*#[ \t]*include[ \t]*<([^>]+)>.*$/gm, (l, n) => {
+      if (!(n in includes)) throw new Error('missing include ' + n);
+      return preprocess(includes[n]);
+    });
+    let dev = null;
+    if (navigator.gpu) {
+      const ad = await navigator.gpu.requestAdapter();
+      dev = ad && await ad.requestDevice();
+    }
+    log('WebGPU device: ' + !!dev);
+    let ok = 0, fail = 0;
+    for (const f of files.filter((f) => /^core\/.*\.(vsh|fsh)$/.test(f))) {
+      const kind = f.endsWith('.fsh') ? 1 : 0;
+      try {
+        const text = S.preprocess({ macros: new Map([['RENDERPEARL_DEPTH_IS_ZERO_TO_ONE', '']]) }, preprocess(await read(f)), f);
+        const glslang = S.glslang;
+        const c = S.compileGLSL(text, kind);
+        if (c.error) throw new Error('glslang: ' + c.error);
+        const words = c.words;
+        const m = S.parse(words);
+        const res = S.classify(m);
+        const r = S.toWGSL(words, 1);
+        if (!r.code || !r.code.trim()) throw new Error('Tint produced no WGSL');
+        if (dev) {
+          dev.pushErrorScope('validation');
+          const mod = dev.createShaderModule({ code: r.code });
+          const info = await mod.getCompilationInfo();
+          const err = await dev.popErrorScope();
+          const errs = info.messages.filter((x) => x.type === 'error');
+          if (errs.length || err) throw new Error('WebGPU: ' + (errs.map((x) => x.message).join('; ') || err.message));
+        }
+        ok++;
+        if (f.includes('position_tex_color')) log(f + ' resources: ' + JSON.stringify(Object.fromEntries(Object.entries(res).map(([k, v]) => [k, v.map((x) => m.names[x.id] || m.names[m.types[x.type].pointee])]))) + ' samplers ' + JSON.stringify(r.samplers));
+      } catch (e) {
+        fail++;
+        log('FAIL ' + f + ': ' + String(e.message || e).split('\n').slice(0, 6).join(' | '));
+      }
+    }
+    log('shaders ok=' + ok + ' fail=' + fail);
+    window.__mc.stage = 'complete';
+  } catch (e) {
+    log('ERROR ' + e + '\n' + (e.stack || ''));
+    window.__mc.stage = 'failed';
+  }
+})();
+</script></body></html>

@@ -1,0 +1,46 @@
+<!doctype html>
+<html><head><meta charset="utf-8"></head><body><pre id="log"></pre>
+<script src="native/layout.js"></script>
+<script src="native/heap.js"></script>
+<script src="native/natives.js"></script>
+<script src="native/stb.js"></script>
+<script>
+// Decodes every PNG of the client jar with web/native/stb.js and compares against the browser's decoder.
+const log = (s) => { document.getElementById('log').textContent += s + '\n'; console.log(s); };
+window.__mc = {};
+(async () => {
+  const buf = await (await fetch('client-resources.bin')).arrayBuffer();
+  const dv = new DataView(buf), len = dv.getUint32(4, true);
+  const index = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 8, len)));
+  const N = __mcNative, H = __mcHeap;
+  const load = N.fn[N.lookup('stb', 'stbi_load_from_memory')];
+  let ok = 0, bad = 0, n = 0, t = 0;
+  const names = Object.keys(index).filter((k) => k.endsWith('.png'));
+  for (const name of names) {
+    const [off, size] = index[name];
+    const bytes = new Uint8Array(buf, 8 + len + off, size);
+    const p = H.malloc(size, 16); H.u8.set(bytes, p);
+    const out = H.malloc(16, 16);
+    const t0 = performance.now();
+    const px = load(p, size, out, out + 4, out + 8, 4);
+    t += performance.now() - t0;
+    if (!px) { bad++; log('FAIL decode ' + name); continue; }
+    const w = H.dv.getInt32(out, true), h = H.dv.getInt32(out + 4, true);
+    if (n++ < 400 || name.includes('gui/title')) {
+      const bmp = await createImageBitmap(new Blob([bytes]), { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+      const c = new OffscreenCanvas(w, h), g = c.getContext('2d', { colorSpace: 'srgb' });
+      g.drawImage(bmp, 0, 0);
+      const ref = g.getImageData(0, 0, w, h).data;
+      let diff = 0;
+      for (let i = 0; i < ref.length; i++) {
+        // canvas stores premultiplied alpha: compare colour only where alpha is opaque
+        if ((i & 3) === 3 ? ref[i] !== H.u8[px + i] : (ref[i | 3] === 255 && Math.abs(ref[i] - H.u8[px + i]) > 1)) diff++;
+      }
+      if (diff) { bad++; log('DIFF ' + name + ' ' + w + 'x' + h + ' ' + diff); } else ok++;
+    } else ok++;
+    H.free(px); H.free(p); H.free(out);
+  }
+  log('png ok=' + ok + ' bad=' + bad + ' of ' + names.length + ', decode ' + t.toFixed(0) + ' ms total');
+  window.__mc.stage = 'complete';
+})().catch((e) => { log('ERROR ' + e.stack); window.__mc.stage = 'failed'; });
+</script></body></html>

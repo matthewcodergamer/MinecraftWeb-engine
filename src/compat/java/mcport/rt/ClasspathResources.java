@@ -32,11 +32,12 @@ public final class ClasspathResources {
             return null;
         }
         byte[] out = new byte[view.getLength()];
-        for (int i = 0; i < out.length; i++) {
-            out[i] = view.get(i);
-        }
+        copy(out, view);
         return out;
     }
+
+    @JSBody(params = {"dst", "src"}, script = "dst.set(src);")
+    private static native void copy(@org.teavm.jso.JSByRef byte[] dst, Int8Array src);
 
     private static String normalize(String path) {
         while (path.startsWith("/")) {

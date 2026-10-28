@@ -37,6 +37,7 @@ public class PortTransformer implements ClassHolderTransformer {
     private static final Map<String, Integer> APPLIED = new HashMap<>();
     private static final java.util.Set<String> STUB_CLASSES = new java.util.HashSet<>();
     private static final Map<String, java.util.Set<MethodDescriptor>> STUBS = new HashMap<>();
+    private static final java.util.Set<String> ZERO_NATIVES = new java.util.HashSet<>();
 
     static {
         String file = System.getProperty("port.rules");
@@ -50,6 +51,10 @@ public class PortTransformer implements ClassHolderTransformer {
                     String[] p = line.split("\\s+");
                     if (p[0].equals("STUB_CLASS") && p.length == 2) {
                         STUB_CLASSES.add(p[1]);
+                        continue;
+                    }
+                    if (p[0].equals("ZERO_NATIVES") && p.length == 2) {
+                        ZERO_NATIVES.add(p[1]);
                         continue;
                     }
                     if (p[0].equals("STUB") && p.length == 3) {
@@ -100,7 +105,13 @@ public class PortTransformer implements ClassHolderTransformer {
         Map<MethodDescriptor, MethodReference> bodies = BODIES.get(cls.getName());
         boolean stubAll = STUB_CLASSES.contains(cls.getName());
         java.util.Set<MethodDescriptor> stubs = STUBS.get(cls.getName());
+        boolean zeroNatives = ZERO_NATIVES.contains(cls.getName());
         for (MethodHolder method : cls.getMethods()) {
+            if (zeroNatives && method.hasModifier(ElementModifier.NATIVE)) {
+                zeroBody(method);
+                count("ZERO_NATIVE " + cls.getName() + "." + method.getDescriptor());
+                continue;
+            }
             if ((stubAll || (stubs != null && stubs.contains(method.getDescriptor())))
                     && !method.hasModifier(ElementModifier.ABSTRACT)) {
                 stubBody(method, cls.getName());
@@ -173,6 +184,57 @@ public class PortTransformer implements ClassHolderTransformer {
         block.add(construct);
         block.add(init);
         block.add(raise);
+        method.getModifiers().remove(ElementModifier.NATIVE);
+        method.setProgram(program);
+    }
+
+    /** Native method that returns the zero value of its type (native libraries that are never really used). */
+    private static void zeroBody(MethodHolder method) {
+        Program program = new Program();
+        program.createVariable();
+        for (int i = 0; i < method.parameterCount(); i++) {
+            program.createVariable();
+        }
+        BasicBlock block = program.createBasicBlock();
+        ExitInstruction exit = new ExitInstruction();
+        ValueType rt = method.getResultType();
+        if (rt != ValueType.VOID) {
+            Variable v = program.createVariable();
+            if (rt instanceof ValueType.Primitive) {
+                switch (((ValueType.Primitive) rt).getKind()) {
+                    case LONG: {
+                        org.teavm.model.instructions.LongConstantInstruction c = new org.teavm.model.instructions.LongConstantInstruction();
+                        c.setReceiver(v);
+                        block.add(c);
+                        break;
+                    }
+                    case FLOAT: {
+                        org.teavm.model.instructions.FloatConstantInstruction c = new org.teavm.model.instructions.FloatConstantInstruction();
+                        c.setReceiver(v);
+                        block.add(c);
+                        break;
+                    }
+                    case DOUBLE: {
+                        org.teavm.model.instructions.DoubleConstantInstruction c = new org.teavm.model.instructions.DoubleConstantInstruction();
+                        c.setReceiver(v);
+                        block.add(c);
+                        break;
+                    }
+                    default: {
+                        org.teavm.model.instructions.IntegerConstantInstruction c = new org.teavm.model.instructions.IntegerConstantInstruction();
+                        c.setReceiver(v);
+                        block.add(c);
+                        break;
+                    }
+                }
+            } else {
+                org.teavm.model.instructions.NullConstantInstruction c = new org.teavm.model.instructions.NullConstantInstruction();
+                c.setReceiver(v);
+                block.add(c);
+            }
+            exit.setValueToReturn(v);
+        }
+        block.add(exit);
         method.getModifiers().remove(ElementModifier.NATIVE);
         method.setProgram(program);
     }

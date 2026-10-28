@@ -105,6 +105,8 @@ def main():
     ap.add_argument("--timeout", type=float, default=120)
     ap.add_argument("--screenshot")
     ap.add_argument("--eval", action="append", default=[])
+    ap.add_argument("--viewport", help="emulate a CSS viewport, e.g. 414x896")
+    ap.add_argument("--dpr", type=float, default=2.0, help="device scale factor for --viewport")
     ap.add_argument("--gpu", action="store_true", help="use the real GPU instead of SwiftShader")
     ap.add_argument("--quiet", action="store_true", help="do not stream console output")
     a = ap.parse_args()
@@ -112,19 +114,23 @@ def main():
     profile = tempfile.mkdtemp()
     port = 9300 + os.getpid() % 500
     args = [CHROME, "--headless=new", f"--remote-debugging-port={port}", f"--user-data-dir={profile}",
-            "--no-first-run", "--window-size=1280,720", "about:blank"]
+            "--no-proxy-server",
+            "--no-first-run", "--window-size=1280,720", "--enable-unsafe-webgpu", "about:blank"]
     if not a.gpu:
         args.insert(2, "--use-angle=swiftshader")
     chrome = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     ok = False
     try:
-        for _ in range(100):
+        page = None
+        for _ in range(600):
             try:
                 tabs = json.load(urllib.request.urlopen(f"http://127.0.0.1:{port}/json"))
                 page = next(t for t in tabs if t["type"] == "page")
                 break
             except Exception:
                 time.sleep(0.1)
+        if page is None:
+            raise SystemExit("Chrome did not start (DevTools endpoint unreachable)")
         ws = WS(page["webSocketDebuggerUrl"])
         t0 = time.time()
 
@@ -142,6 +148,14 @@ def main():
 
         ws.call("Runtime.enable", pump=pump)
         ws.call("Page.enable", pump=pump)
+        if a.viewport:
+            width, height = (int(part) for part in a.viewport.lower().split("x", 1))
+            ws.call("Emulation.setDeviceMetricsOverride", {
+                "width": width,
+                "height": height,
+                "deviceScaleFactor": a.dpr,
+                "mobile": True,
+            }, pump=pump)
         ws.call("Page.navigate", {"url": a.url}, pump=pump)
         deadline = time.time() + a.timeout
         while time.time() < deadline:
