@@ -72,7 +72,12 @@ public class PortBuilder {
         tool.setClassPath(cp);
         tool.getTransformers().add("PortTransformer");
         tool.setObfuscated(Boolean.getBoolean("port.minify"));
-        tool.setOptimizationLevel(TeaVMOptimizationLevel.SIMPLE);
+        // FULL gives TeaVM's best JavaScript/WASM output (inlining, escape analysis,
+        // dead-code elimination). It costs build time, not runtime, so it is the
+        // default for release artifacts. PORT_OPT=ADVANCED|SIMPLE makes an
+        // incremental debugging build possible without editing this file.
+        String opt = System.getProperty("port.opt", System.getenv().getOrDefault("PORT_OPT", "FULL"));
+        tool.setOptimizationLevel(TeaVMOptimizationLevel.valueOf(opt.trim().toUpperCase(java.util.Locale.ROOT)));
         tool.setFastDependencyAnalysis(Boolean.getBoolean("port.fast"));
         tool.setStrict(false);
         String cache = System.getProperty("port.cache");

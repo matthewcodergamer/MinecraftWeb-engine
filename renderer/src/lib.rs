@@ -19,13 +19,17 @@ mod arena;
 mod bridge;
 mod controls;
 mod cull;
+mod lighting;
 mod material;
 mod math;
 mod mesh;
+mod noise;
 mod textures;
+mod worldgen;
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -42,12 +46,122 @@ const MAX_DPR: f64 = 2.0;
 const CANVAS_ID: &str = "mc-canvas";
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-/// Synthetic island is 8x8 chunks (128x128 blocks).
-/// Vanilla overworld daytime sky (renderpearl's clear colour) and matching fog.
-const SKY_COLOR: [f32; 3] = [0.47, 0.63, 0.84];
-const FOG_START: f32 = 96.0;
-const FOG_END: f32 = 192.0;
-const UNIFORM_SIZE: u64 = 112;
+/// Full day/night cycle used by the renderer-only sky. Vanilla is 20 minutes;
+/// a shorter cycle makes the feature visible while testing on a phone.
+const DAY_SECONDS: f32 = 600.0;
+const UNIFORM_SIZE: u64 = 240;
+
+/// Default view distance in chunks. The Java brain streams sections; this caps
+/// how far the Body will *draw* them, which is the memory/bandwidth lever on
+/// iOS Safari (iPhone 11 has a ~1.5 GB per-tab budget). Overridden from JS via
+/// `set_render_distance`, which the host calls with 4 on phones.
+const DEFAULT_RENDER_DISTANCE: u32 = 8;
+static RENDER_DISTANCE: AtomicU32 = AtomicU32::new(DEFAULT_RENDER_DISTANCE);
+
+/// Post-processing is always compiled in; the host can bypass it for A/B
+/// debugging (`?post=0`). The scene is rendered to an offscreen Rgba8 target
+/// and the fullscreen pass in `post.wgsl` grades it onto the swap chain.
+static POST_ENABLED: AtomicBool = AtomicBool::new(true);
+
+thread_local! {
+    /// Optional external time override (0 = sunrise, 0.25 = noon). Java can
+    /// send its world time here; otherwise the renderer runs its own cycle.
+    static TIME_OVERRIDE: std::cell::Cell<Option<f32>> = const { std::cell::Cell::new(None) };
+}
+
+/// Sets the sky/sun phase from an external clock. `fraction` is one full day
+/// (0 = sunrise, 0.25 = noon, 0.5 = sunset, 0.75 = midnight).
+#[wasm_bindgen]
+pub fn set_time_of_day(fraction: f32) {
+    let wrapped = fraction.rem_euclid(1.0);
+    TIME_OVERRIDE.with(|cell| cell.set(Some(wrapped)));
+}
+
+#[wasm_bindgen]
+pub fn clear_time_of_day() {
+    TIME_OVERRIDE.with(|cell| cell.set(None));
+}
+
+#[wasm_bindgen]
+pub fn set_post_enabled(on: bool) {
+    POST_ENABLED.store(on, Ordering::Relaxed);
+}
+
+#[wasm_bindgen]
+pub fn post_enabled() -> bool {
+    POST_ENABLED.load(Ordering::Relaxed)
+}
+
+/// Chunk (16 m) view distance. Clamped so a bad host value cannot turn the
+/// fog and the cull radius into nonsense.
+#[wasm_bindgen]
+pub fn set_render_distance(chunks: u32) {
+    RENDER_DISTANCE.store(chunks.clamp(2, 32), Ordering::Relaxed);
+}
+
+#[wasm_bindgen]
+pub fn render_distance() -> u32 {
+    RENDER_DISTANCE.load(Ordering::Relaxed)
+}
+
+struct SkyState {
+    zenith: [f32; 3],
+    horizon: [f32; 3],
+    sun_color: [f32; 3],
+    sun_dir: [f32; 3],
+    intensity: f32,
+    day: f32,
+}
+
+fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+fn mix3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+    [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+    ]
+}
+
+/// Vanilla-ish day/night palette. `time` 0 = sunrise, 0.25 = noon,
+/// 0.5 = sunset, 0.75 = midnight.
+fn sky_state(time: f32) -> SkyState {
+    let angle = time * std::f32::consts::TAU;
+    let elevation = angle.sin();
+    let day = smoothstep(-0.08, 0.24, elevation);
+    let sunset = (1.0 - elevation.abs() / 0.30).clamp(0.0, 1.0) * day.max(0.15);
+
+    let night_zenith = [0.010, 0.018, 0.052];
+    let night_horizon = [0.030, 0.052, 0.105];
+    let day_zenith = [0.30, 0.54, 1.00];
+    let day_horizon = [0.70, 0.83, 1.00];
+
+    let mut zenith = mix3(night_zenith, day_zenith, day);
+    let mut horizon = mix3(night_horizon, day_horizon, day);
+    zenith = mix3(zenith, [0.35, 0.26, 0.46], sunset * 0.30);
+    horizon = mix3(horizon, [1.00, 0.42, 0.18], sunset * 0.70);
+
+    let sun_color = mix3([1.0, 0.42, 0.16], [1.0, 0.95, 0.86], day);
+    let sun_dir = [angle.cos() * 0.82, elevation, angle.cos() * 0.36];
+    let length = (sun_dir[0] * sun_dir[0] + sun_dir[1] * sun_dir[1] + sun_dir[2] * sun_dir[2])
+        .sqrt()
+        .max(0.001);
+    SkyState {
+        zenith,
+        horizon,
+        sun_color,
+        sun_dir: [
+            sun_dir[0] / length,
+            sun_dir[1] / length,
+            sun_dir[2] / length,
+        ],
+        intensity: 0.16 + 0.84 * day,
+        day,
+    }
+}
 
 struct Renderer {
     instance: wgpu::Instance,
@@ -58,6 +172,7 @@ struct Renderer {
     config: wgpu::SurfaceConfiguration,
 
     pipeline: wgpu::RenderPipeline,
+    sky_pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     textures: BlockTextures,
@@ -69,10 +184,23 @@ struct Renderer {
     last_frame_ms: f64,
     fps: f32,
     draw_ms: f32,
+    first_frame: bool,
+    horizon: [f32; 3],
 
     #[allow(dead_code)] // the view keeps the texture alive; handle is owned here
     depth_texture: wgpu::Texture,
     depth_view: wgpu::TextureView,
+
+    // --- Post-processing -------------------------------------------------
+    // The chunk pass renders into `scene_view`; `post_pipeline` samples it and
+    // writes the graded result to the swap chain.
+    post_pipeline: wgpu::RenderPipeline,
+    post_layout: wgpu::BindGroupLayout,
+    post_bind_group: wgpu::BindGroup,
+    post_sampler: wgpu::Sampler,
+    #[allow(dead_code)]
+    scene_texture: wgpu::Texture,
+    scene_view: wgpu::TextureView,
 
     stats_text: String,
 }
@@ -109,6 +237,26 @@ impl Renderer {
         let (depth_texture, depth_view) = create_depth(&self.device, width, height);
         self.depth_texture = depth_texture;
         self.depth_view = depth_view;
+
+        // The post pass samples a same-size copy of the frame.
+        let (scene_texture, scene_view) =
+            create_scene_target(&self.device, width, height, self.config.format);
+        self.post_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("mc-body/post.bind"),
+            layout: &self.post_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&scene_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.post_sampler),
+                },
+            ],
+        });
+        self.scene_texture = scene_texture;
+        self.scene_view = scene_view;
     }
 
     fn update_camera(&mut self) -> ([f32; 16], [f32; 3]) {
@@ -120,31 +268,65 @@ impl Renderer {
         controls::tick(dt);
 
         let pose = controls::pose(aspect);
+        // Fog tracks the view distance so a 4-chunk phone build fades out at
+        // 64 m instead of drawing nothing and fogging at 192 m.
+        let view_blocks = RENDER_DISTANCE.load(Ordering::Relaxed) as f32 * 16.0;
+        let elapsed = ((now - self.start_ms) * 0.001) as f32;
+        let time = TIME_OVERRIDE
+            .with(|cell| cell.get())
+            .unwrap_or_else(|| (0.20 + elapsed / DAY_SECONDS).fract());
+        let sky = sky_state(time);
+
         let mut uniform = [0u8; UNIFORM_SIZE as usize];
         uniform[0..64].copy_from_slice(&math::to_bytes(&pose.view_projection));
-        let eye_and_fog = [
-            pose.position[0],
-            pose.position[1],
-            pose.position[2],
-            0.0,
-            SKY_COLOR[0],
-            SKY_COLOR[1],
-            SKY_COLOR[2],
-            1.0,
-            FOG_START,
-            FOG_END,
-            (now - self.start_ms) as f32 * 0.001,
-            0.0,
-        ];
-        for (i, value) in eye_and_fog.iter().enumerate() {
-            uniform[64 + i * 4..68 + i * 4].copy_from_slice(&value.to_le_bytes());
-        }
+        uniform[64..128].copy_from_slice(&math::to_bytes(&math::invert(&pose.view_projection)));
+        let mut write4 = |slot: usize, value: [f32; 4]| {
+            let offset = slot * 16;
+            for (i, component) in value.iter().enumerate() {
+                uniform[offset + i * 4..offset + i * 4 + 4]
+                    .copy_from_slice(&component.to_le_bytes());
+            }
+        };
+        write4(
+            8,
+            [pose.position[0], pose.position[1], pose.position[2], 0.0],
+        );
+        write4(9, [sky.horizon[0], sky.horizon[1], sky.horizon[2], 1.0]);
+        write4(
+            10,
+            [
+                view_blocks * 0.55,
+                view_blocks * 0.98,
+                elapsed,
+                sky.intensity,
+            ],
+        );
+        write4(
+            11,
+            [sky.sun_dir[0], sky.sun_dir[1], sky.sun_dir[2], sky.day],
+        );
+        write4(12, [sky.zenith[0], sky.zenith[1], sky.zenith[2], 1.0]);
+        write4(13, [sky.horizon[0], sky.horizon[1], sky.horizon[2], 1.0]);
+        write4(
+            14,
+            [sky.sun_color[0], sky.sun_color[1], sky.sun_color[2], 1.0],
+        );
         self.queue.write_buffer(&self.uniform_buffer, 0, &uniform);
+        self.horizon = sky.horizon;
         (pose.view_projection, pose.position)
     }
 
     fn draw(&mut self) {
         self.sync_size();
+        // First real Java section arrives: retire the synthetic demo arena once.
+        // The dirty queue below rebuilds the Brain's sections incrementally.
+        if bridge::take_reset() {
+            self.arena.clear();
+            self.visible.clear();
+        }
+        // A block edit or a Java section invalidates the renderer-only BFS
+        // light field. Recompute it once, before the dirty queue is consumed.
+        bridge::rebuild_light_if_stale();
         let frame_start = js_sys::Date::now();
         // Incremental bridge: re-mesh at most a few dirty sections per frame,
         // bounded by a 3 ms budget so a block edit never stalls the frame.
@@ -160,16 +342,28 @@ impl Renderer {
                 None => break,
             }
         }
-        let (view_projection, _eye) = self.update_camera();
+        let (view_projection, eye) = self.update_camera();
 
         let frustum = Frustum::from_view_projection(&view_projection);
+        // Radial chunk-distance cull in addition to the frustum. Sections past
+        // the view distance are never bound, so neither their vertex buffers
+        // nor their texture fetches cost the phone anything.
+        let view_blocks = RENDER_DISTANCE.load(Ordering::Relaxed) as f32 * 16.0;
+        let view_blocks_sq = view_blocks * view_blocks;
         self.visible.clear();
         let mut visible_triangles = 0u32;
         for (index, slot) in self.arena.slots.iter().enumerate() {
-            if slot.index_count > 0 && frustum.intersects_aabb(slot.min, slot.max) {
-                self.visible.push(index);
-                visible_triangles += slot.index_count / 3;
+            if slot.index_count == 0 || !frustum.intersects_aabb(slot.min, slot.max) {
+                continue;
             }
+            let cx = (slot.min[0] + slot.max[0]) * 0.5 - eye[0];
+            let cy = (slot.min[1] + slot.max[1]) * 0.5 - eye[1];
+            let cz = (slot.min[2] + slot.max[2]) * 0.5 - eye[2];
+            if cx * cx + cy * cy + cz * cz > view_blocks_sq {
+                continue;
+            }
+            self.visible.push(index);
+            visible_triangles += slot.index_count / 3;
         }
 
         self.frame_index += 1;
@@ -180,7 +374,11 @@ impl Renderer {
                 self.fps,
                 self.draw_ms,
                 self.visible.len(),
-                self.arena.slots.iter().filter(|s| s.index_count > 0).count(),
+                self.arena
+                    .slots
+                    .iter()
+                    .filter(|s| s.index_count > 0)
+                    .count(),
                 visible_triangles,
                 self.arena.total_indices / 3
             ));
@@ -211,9 +409,13 @@ impl Renderer {
             }
         };
 
-        let view = frame
+        let swap_view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+        let post = POST_ENABLED.load(Ordering::Relaxed);
+        // Without post-processing the chunk pass draws straight to the swap
+        // chain; with it, it draws into the offscreen target below.
+        let scene_view = if post { &self.scene_view } else { &swap_view };
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -223,14 +425,14 @@ impl Renderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("mc-body/chunks"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view: scene_view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: SKY_COLOR[0] as f64,
-                            g: SKY_COLOR[1] as f64,
-                            b: SKY_COLOR[2] as f64,
+                            r: self.horizon[0] as f64,
+                            g: self.horizon[1] as f64,
+                            b: self.horizon[2] as f64,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -248,6 +450,12 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            // Sky first: it fills every pixel without depth writes, then the
+            // chunk pipeline overdraws it where terrain exists.
+            pass.set_pipeline(&self.sky_pipeline);
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.draw(0..3, 0..1);
+
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             for &index in &self.visible {
@@ -257,9 +465,37 @@ impl Renderer {
                 pass.draw_indexed(0..slot.index_count, 0, 0..1);
             }
         }
+
+        if post {
+            // Fullscreen triangle: colour-grade the scene onto the swap chain.
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("mc-body/post"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &swap_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.post_pipeline);
+            pass.set_bind_group(0, &self.post_bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+
         self.queue.submit(Some(encoder.finish()));
         self.queue.present(frame);
         self.draw_ms = (js_sys::Date::now() - frame_start) as f32;
+        if !self.first_frame {
+            self.first_frame = true;
+            set_ready_flag();
+        }
     }
 }
 
@@ -287,9 +523,45 @@ pub fn run() {
             Err(err) => {
                 let message = err.as_string().unwrap_or_else(|| format!("{err:?}"));
                 report_error(&format!("mc-body init failed: {message}"));
+                set_error_flag(&message);
             }
         }
     });
+}
+
+/// Java Brain → Body player pose. `y` is the eye height (`LocalPlayer.getEyeY`),
+/// so the Rust camera follows Java's collision/gravity result exactly.
+#[wasm_bindgen]
+pub fn set_java_player(x: f32, y: f32, z: f32) {
+    controls::set_external_position([x, y, z]);
+}
+
+/// Returns the camera to the standalone free-fly debug pose.
+#[wasm_bindgen]
+pub fn clear_java_player() {
+    controls::clear_external_position();
+    controls::clear_external_rotation();
+}
+
+/// Java Brain → Body rotation, in Minecraft degrees (`getYRot` / `getXRot`).
+/// The renderer converts to its own camera convention in `controls`.
+#[wasm_bindgen]
+pub fn set_java_rotation(yaw_degrees: f32, pitch_degrees: f32) {
+    controls::set_external_rotation(yaw_degrees, pitch_degrees);
+}
+
+/// Parent page → camera, used for mouse/touch look. `touch` selects the higher
+/// mobile sensitivity. Ignored for rotation once Java reports its pose.
+#[wasm_bindgen]
+pub fn apply_look(dx: f32, dy: f32, touch: bool) {
+    controls::apply_look(dx, dy, touch);
+}
+
+/// The hybrid page owns input forwarding (bridge -> SDL/Java), so disable the
+/// renderer's duplicate DOM listeners on its visible canvas.
+#[wasm_bindgen]
+pub fn set_host_input(hosted: bool) {
+    controls::set_host_input(hosted);
 }
 
 async fn init() -> Result<Renderer, JsValue> {
@@ -360,8 +632,14 @@ async fn init() -> Result<Renderer, JsValue> {
     // Same store and mesher the Java bridge will drive; only the source of
     // the block IDs is temporary.
     bridge::generate_demo();
+    // Stand on the surface instead of the old fixed y = 30 (which floated ~20
+    // blocks over the island). Java overwrites this pose when it is running.
+    let (spawn, spawn_yaw, spawn_pitch) = bridge::demo_spawn_pose();
+    controls::set_spawn(spawn);
+    controls::set_spawn_rotation(spawn_yaw, spawn_pitch);
     let mesh_start = js_sys::Date::now();
     let world = bridge::mesh_world();
+    bridge::clear_dirty();
     let mesh_ms = js_sys::Date::now() - mesh_start;
 
     if world.sections.is_empty() {
@@ -500,6 +778,139 @@ async fn init() -> Result<Renderer, JsValue> {
         cache: None,
     });
 
+    // --- Sky pipeline ----------------------------------------------------
+    let sky_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("mc-body/sky.wgsl"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("sky.wgsl").into()),
+    });
+    let sky_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("mc-body/sky"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &sky_shader,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &sky_shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: config.format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    });
+
+    // --- Post-processing pipeline ---------------------------------------
+    // `post.wgsl` is a placeholder colour grade; drop the Complementary
+    // Shader WGSL port in here later without touching the Rust side.
+    let post_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("mc-body/post.wgsl"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("post.wgsl").into()),
+    });
+
+    let post_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("mc-body/post.sampler"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+
+    let post_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("mc-body/post.layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    });
+
+    let post_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("mc-body/post.pipeline.layout"),
+        bind_group_layouts: &[Some(&post_layout)],
+        immediate_size: 0,
+    });
+
+    let post_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("mc-body/post"),
+        layout: Some(&post_pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &post_shader,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &post_shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: config.format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            ..Default::default()
+        },
+        // The fullscreen triangle is screen-space: no depth, no culling.
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    });
+
+    let (scene_texture, scene_view) =
+        create_scene_target(&device, config.width, config.height, config.format);
+    let post_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("mc-body/post.bind"),
+        layout: &post_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&scene_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&post_sampler),
+            },
+        ],
+    });
+
     let (depth_texture, depth_view) = create_depth(&device, config.width, config.height);
     let start_ms = js_sys::Date::now();
 
@@ -511,6 +922,7 @@ async fn init() -> Result<Renderer, JsValue> {
         queue,
         config,
         pipeline,
+        sky_pipeline,
         uniform_buffer,
         bind_group,
         textures,
@@ -521,13 +933,51 @@ async fn init() -> Result<Renderer, JsValue> {
         last_frame_ms: start_ms,
         fps: 0.0,
         draw_ms: 0.0,
+        first_frame: false,
+        horizon: [0.47, 0.63, 0.84],
         depth_texture,
         depth_view,
+        post_pipeline,
+        post_layout,
+        post_bind_group,
+        post_sampler,
+        scene_texture,
+        scene_view,
         stats_text,
     })
 }
 
-fn create_depth(device: &wgpu::Device, width: u32, height: u32) -> (wgpu::Texture, wgpu::TextureView) {
+fn create_scene_target(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("mc-body/scene"),
+        size: wgpu::Extent3d {
+            width: width.max(1),
+            height: height.max(1),
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        // Match the swap chain exactly: a BGRA surface cannot be rendered into
+        // an RGBA target, and the chunk pipeline is created for `config.format`.
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (texture, view)
+}
+
+fn create_depth(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+) -> (wgpu::Texture, wgpu::TextureView) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("mc-body/depth"),
         size: wgpu::Extent3d {
@@ -585,9 +1035,7 @@ fn canvas_pixel_size(canvas: &web_sys::HtmlCanvasElement) -> (u32, u32) {
         .map(|window| window.device_pixel_ratio())
         .unwrap_or(1.0)
         .clamp(1.0, MAX_DPR);
-    let width = (canvas.client_width().max(1) as f64 * dpr)
-        .round()
-        .max(1.0) as u32;
+    let width = (canvas.client_width().max(1) as f64 * dpr).round().max(1.0) as u32;
     let height = (canvas.client_height().max(1) as f64 * dpr)
         .round()
         .max(1.0) as u32;
@@ -613,6 +1061,27 @@ fn set_element_text(id: &str, text: &str) {
 fn report_error(message: &str) {
     web_sys::console::error_1(&JsValue::from_str(message));
     set_status(message);
+}
+
+fn set_ready_flag() {
+    if let Some(window) = web_sys::window() {
+        let _ = js_sys::Reflect::set(&window, &JsValue::from_str("__mcBodyReady"), &JsValue::TRUE);
+        let _ = js_sys::Reflect::set(
+            &window,
+            &JsValue::from_str("__mcBodyReadyAt"),
+            &JsValue::from_f64(js_sys::Date::now()),
+        );
+    }
+}
+
+fn set_error_flag(message: &str) {
+    if let Some(window) = web_sys::window() {
+        let _ = js_sys::Reflect::set(
+            &window,
+            &JsValue::from_str("__mcBodyError"),
+            &JsValue::from_str(message),
+        );
+    }
 }
 
 fn log(message: &str) {

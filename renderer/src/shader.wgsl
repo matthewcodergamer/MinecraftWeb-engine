@@ -1,16 +1,22 @@
 // mc-body chunk shader — vanilla block texture array, directional face shading,
-// distance fog. One texture array (not an atlas) lets a greedily merged quad
-// repeat its tile with the sampler, which is exactly how vanilla repeats block
-// textures across a face.
+// smooth sky/block light + AO and distance fog. One texture array (not an atlas)
+// lets a greedily merged quad repeat its tile with the sampler, which is exactly
+// how vanilla repeats block textures across a face.
 
 struct Camera {
     view_proj: mat4x4<f32>,
+    inv_view_proj: mat4x4<f32>,
     // xyz = eye position, w unused
     position: vec4<f32>,
-    // rgb = horizon/sky colour, a = fog density
+    // rgb = horizon/fog colour, a = fog density
     fog_color: vec4<f32>,
-    // x = fog start, y = fog end, z = seconds, w unused
+    // x = fog start, y = fog end, z = seconds, w = sky light intensity 0..1
     params: vec4<f32>,
+    // xyz = sun direction, w = day factor 0..1
+    sun_dir: vec4<f32>,
+    sky_zenith: vec4<f32>,
+    sky_horizon: vec4<f32>,
+    sun_color: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -22,14 +28,22 @@ struct VertexInput {
     @location(1) uv: vec2<f32>,
     @location(2) layer: u32,
     @location(3) shade: u32,
+    // Packed sky << 4 | block, both nibbles 0..15. f32 so it interpolates.
+    @location(4) light: f32,
+    // 0..255, 255 = fully open.
+    @location(5) ao: u32,
 };
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) layer: u32,
-    @location(2) shade: f32,
+    // Face shade is constant across a greedy quad; flat interpolation avoids
+    // inventing a gradient between identical vertices.
+    @location(2) @interpolate(flat) shade: f32,
     @location(3) world: vec3<f32>,
+    @location(4) light: f32,
+    @location(5) ao: f32,
 };
 
 @vertex
@@ -40,7 +54,21 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     output.layer = input.layer;
     output.shade = f32(input.shade) / 255.0;
     output.world = input.position;
+    output.light = input.light;
+    output.ao = f32(input.ao) / 255.0;
     return output;
+}
+
+// Vanilla lightmap curve: pow(0.8, 15 - level), then a warm shift at low
+// levels. Sky light is scaled by the time-of-day intensity; block light stays
+// full at night.
+fn lightmap(sky: f32, block: f32) -> vec3<f32> {
+    let level = max(block, sky * camera.params.w);
+    // A floor of 0.12 keeps caves readable without flattening the contrast.
+    let l = clamp(max(level, 0.12), 0.0, 1.0);
+    let brightness = pow(0.8, 15.0 - l * 15.0);
+    let warm = mix(vec3<f32>(1.0, 0.82, 0.62), vec3<f32>(1.0), l);
+    return warm * brightness;
 }
 
 @fragment
@@ -51,11 +79,16 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     if (texel.a < 0.1) {
         discard;
     }
-    // Vanilla: texel * face shade * lightmap. The demo has full sky light, so
-    // face shading is the whole light term.
-    var color = texel.rgb * input.shade;
+
+    let packed = u32(round(input.light));
+    let sky = f32((packed >> 4u) & 15u) / 15.0;
+    let block = f32(packed & 15u) / 15.0;
+    var color = texel.rgb * input.shade * input.ao * lightmap(sky, block);
+
     let distance = length(input.world - camera.position.xyz);
-    let fog = smoothstep(camera.params.x, camera.params.y, distance);
+    // fog_color.a lets the Java Brain disable fog (nether/end, or a custom
+    // dimension) without rebuilding the pipeline.
+    let fog = smoothstep(camera.params.x, camera.params.y, distance) * camera.fog_color.a;
     color = mix(color, camera.fog_color.rgb, fog);
     return vec4<f32>(color, 1.0);
 }

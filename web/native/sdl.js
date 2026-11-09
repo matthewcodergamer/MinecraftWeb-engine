@@ -17,6 +17,7 @@
     keys: null,            // SDL_GetKeyboardState array (bool per scancode)
     mod: 0,
     mouseX: 0, mouseY: 0, buttons: 0,
+    relX: 0, relY: 0,
     relative: false,
     textInput: false,
     clipboard: '',
@@ -188,6 +189,8 @@
     window.addEventListener('mousemove', (e) => {
       const locked = document.pointerLockElement === c;
       let xrel = e.movementX || 0, yrel = e.movementY || 0;
+      state.relX += xrel;
+      state.relY += yrel;
       if (!locked) {
         const r = c.getBoundingClientRect();
         state.mouseX = e.clientX - r.left;
@@ -216,6 +219,105 @@
       push({ type: document.hidden ? EV.SDL_EVENT_WINDOW_OCCLUDED : EV.SDL_EVENT_WINDOW_EXPOSED });
     });
   }
+
+  // ---------------------------------------------------------------- injected input
+  // The hybrid page owns the visible canvas; the Java client runs in an
+  // off-screen iframe. Parent input is forwarded here and turned into the exact
+  // same SDL events a real key/mouse would produce, so Minecraft's own input,
+  // rotation and physics path runs unchanged.
+  function injectKey(code, down) {
+    const sc = CODE_TO_SCANCODE[code];
+    if (sc === undefined) return false;
+    const keys = keyboardState();
+    const bit = MOD_BITS[code];
+    if (bit) state.mod = down ? (state.mod | bit) : (state.mod & ~bit);
+    H().u8[keys + sc] = down ? 1 : 0;
+    push({ type: down ? EV.SDL_EVENT_KEY_DOWN : EV.SDL_EVENT_KEY_UP, scancode: sc,
+      key: SCANCODE_TO_KEY[sc] || 0, mod: state.mod, down, repeat: false });
+    return true;
+  }
+
+  function injectMouse(dx, dy, x, y) {
+    if (!state.canvas) return false;
+    if (typeof x === 'number') state.mouseX = x;
+    if (typeof y === 'number') state.mouseY = y;
+    state.mouseX += dx || 0;
+    state.mouseY += dy || 0;
+    state.relX += dx || 0;
+    state.relY += dy || 0;
+    push({ type: EV.SDL_EVENT_MOUSE_MOTION, state: state.buttons,
+      x: state.mouseX, y: state.mouseY, xrel: dx || 0, yrel: dy || 0 });
+    return true;
+  }
+
+  function injectButton(button, down) {
+    if (!state.canvas) return false;
+    const domButton = button === 1 || button === 2 ? button : 0;
+    const b = DOM_TO_SDL_BUTTON[domButton];
+    if (down) state.buttons |= 1 << (b - 1);
+    else state.buttons &= ~(1 << (b - 1));
+    push({ type: down ? EV.SDL_EVENT_MOUSE_BUTTON_DOWN : EV.SDL_EVENT_MOUSE_BUTTON_UP,
+      button: b, down, clicks: 1, x: state.mouseX, y: state.mouseY });
+    return true;
+  }
+
+  function injectWheel(dx, dy) {
+    if (!state.canvas) return false;
+    push({ type: EV.SDL_EVENT_MOUSE_WHEEL, x: dx || 0, y: dy || 0,
+      direction: MOUSE.SDL_MOUSEWHEEL_NORMAL, mouse_x: state.mouseX, mouse_y: state.mouseY });
+    return true;
+  }
+
+  // Analog stick -> the four movement keys Java actually polls. Minecraft's
+  // input is digital, so a Bedrock-style stick is translated with hysteresis:
+  // press at 0.35, release at 0.22. Without the gap a stick parked on the
+  // threshold would chatter W on/off every pointermove.
+  const MOVE_PRESS = 0.35, MOVE_RELEASE = 0.22;
+  const moveHeld = { KeyW: false, KeyS: false, KeyA: false, KeyD: false };
+  function injectMove(x, y) {
+    const axis = (value) => {
+      const codePos = value > 0, codeNeg = value < 0;
+      return { pos: codePos, neg: codeNeg, mag: Math.abs(value) };
+    };
+    const v = axis(y || 0), h = axis(x || 0);
+    const want = {
+      KeyW: v.pos && v.mag > (moveHeld.KeyW ? MOVE_RELEASE : MOVE_PRESS),
+      KeyS: v.neg && v.mag > (moveHeld.KeyS ? MOVE_RELEASE : MOVE_PRESS),
+      KeyD: h.pos && h.mag > (moveHeld.KeyD ? MOVE_RELEASE : MOVE_PRESS),
+      KeyA: h.neg && h.mag > (moveHeld.KeyA ? MOVE_RELEASE : MOVE_PRESS),
+    };
+    // Analog magnitude is not lost: it clamps the walk speed through the
+    // standard sprint/sneak modifiers only when the stick is pushed past the
+    // "full" ring. Anything inside it is a normal Java walk.
+    for (const code of Object.keys(want)) {
+      if (want[code] === moveHeld[code]) continue;
+      moveHeld[code] = want[code];
+      injectKey(code, want[code]);
+    }
+    return true;
+  }
+
+  // Hotbar selection is Digit1..Digit9 in Java. Press-and-release in one go so
+  // the client sees the same edge a keyboard would produce.
+  function injectSlot(index) {
+    const n = Number(index) | 0;
+    if (n < 0 || n > 8) return false;
+    const code = 'Digit' + (n + 1);
+    if (CODE_TO_SCANCODE[code] === undefined) return false;
+    injectKey(code, true);
+    injectKey(code, false);
+    return true;
+  }
+
+  state.injectKey = injectKey;
+  state.injectMouse = injectMouse;
+  state.injectButton = injectButton;
+  state.injectWheel = injectWheel;
+  state.injectMove = injectMove;
+  state.injectSlot = injectSlot;
+  state.injectText = (text) => {
+    if (state.textInput && text) push({ type: EV.SDL_EVENT_TEXT_INPUT, text: String(text) });
+  };
 
   // ---------------------------------------------------------------- event structs
   function writeEvent(p, ev) {
@@ -475,6 +577,14 @@
       return state.buttons;
     },
     SDL_GetGlobalMouseState: (xp, yp) => N.impls.SDL_GetMouseState(xp, yp),
+    SDL_GetRelativeMouseState: (xp, yp) => {
+      const dv = H().dv;
+      if (xp) dv.setFloat32(xp, state.relX, true);
+      if (yp) dv.setFloat32(yp, state.relY, true);
+      state.relX = 0;
+      state.relY = 0;
+      return state.buttons;
+    },
     SDL_WarpMouseInWindow: (w, x, y) => { state.mouseX = x; state.mouseY = y; },
     SDL_SetWindowRelativeMouseMode: (w, on) => {
       state.relative = !!on;

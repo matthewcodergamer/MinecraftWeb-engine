@@ -115,6 +115,13 @@ REDIRECT java.io.File toPath()Ljava/nio/file/Path; -> mcport.rt.jdk.JdkExt fileT
 REDIRECT_STATIC java.nio.file.Files probeContentType(Ljava/nio/file/Path;)Ljava/lang/String; -> mcport.rt.jdk.JdkExt filesProbeContentType
 REDIRECT java.nio.file.Path resolve(Ljava/lang/String;[Ljava/lang/String;)Ljava/nio/file/Path; -> mcport.rt.jdk.JdkExt pathResolve
 
+# --- Offline auth: the browser has no live Minecraft Services session ------------------------------
+# Always use the offline discovery service so no background HTTP retries are scheduled. The
+# scheduled executor implementation still exists for libraries that construct one.
+REDIRECT_STATIC com.mojang.authlib.services.MinecraftServicesDiscoveryService create(Ljava/net/Proxy;)Lcom/mojang/authlib/services/MinecraftServicesDiscoveryService; -> mcport.rt.patch.AuthPatches createOffline
+REDIRECT_STATIC com.mojang.authlib.services.MinecraftServicesDiscoveryService create(Ljava/net/Proxy;Z)Lcom/mojang/authlib/services/MinecraftServicesDiscoveryService; -> mcport.rt.patch.AuthPatches createOffline
+REDIRECT_STATIC com.mojang.authlib.services.MinecraftServicesDiscoveryService create(Ljava/net/Proxy;ZLcom/mojang/authlib/Environment;)Lcom/mojang/authlib/services/MinecraftServicesDiscoveryService; -> mcport.rt.patch.AuthPatches createOfflineWithEnv
+
 # --- Client code that probes the OS / loads native libraries ---------------------------------
 BODY_STATIC com.mojang.blaze3d.platform.NativeLibrariesBootstrap loadLibraries()V -> mcport.rt.patch.ClientPatches loadNativeLibraries
 BODY_STATIC com.mojang.blaze3d.platform.NativeLibrariesBootstrap isVulkanLoaderAvailable()Z -> mcport.rt.patch.ClientPatches vulkanLoaderAvailable

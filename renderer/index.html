@@ -50,7 +50,7 @@
   <div id="crosshair"></div>
   <div id="status">starting mc-body…</div>
   <div id="stats"></div>
-  <div id="hint">WASD move · mouse look · Space/Ctrl fly · Shift sprint — tap to capture mouse</div>
+  <div id="hint">WASD move · mouse look · Space jump · Ctrl sprint · F fly — tap to capture mouse</div>
 
   <!-- Harness only: loads the wasm module, hands the client jar's own block PNGs
        to Rust, then hands control to Rust. There is no rendering logic here. -->
@@ -65,7 +65,7 @@
       console.error(error);
     };
 
-    const ARCHIVE_CANDIDATES = ['client-resources.bin', '../build/web/client-resources.bin'];
+    const ARCHIVE_CANDIDATES = ['client-textures.bin', 'client-resources.bin', '../build/web/client-textures.bin', '../build/web/client-resources.bin'];
 
     async function loadArchive() {
       for (const url of ARCHIVE_CANDIDATES) {
@@ -102,7 +102,8 @@
         console.log('block textures: ' + uploaded + '/' + texture_count() + ' from the client jar');
         status.textContent = '';
         if (matchMedia('(pointer: coarse)').matches) {
-          hint.textContent = 'left half drag = move · right half drag = look · two fingers = fly';
+          hint.textContent = 'left stick = move · right drag = look · JUMP/SHIFT buttons'+
+            ' · F toggles fly';
         }
         setTimeout(() => { hint.style.opacity = '0'; }, 7000);
         run();

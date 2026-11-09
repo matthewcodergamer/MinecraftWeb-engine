@@ -13,7 +13,12 @@ pub const TILE: u32 = 16;
 const MIP_LEVELS: u32 = 5; // 16, 8, 4, 2, 1
 
 /// Layer order, mirrored by `material.rs`.
-pub const TEXTURE_NAMES: [&str; 16] = [
+///
+/// These are the client jar's own 16x16 PNGs. The first sixteen layers keep the
+/// original M2b order so existing demo IDs do not move; the rest cover the blocks
+/// a real 26.3 chunk palette is likely to contain. 85 layers is well below the
+/// WebGPU `maxTextureArrayLayers` floor of 256.
+pub const TEXTURE_NAMES: [&str; 99] = [
     "assets/minecraft/textures/block/stone.png",
     "assets/minecraft/textures/block/dirt.png",
     "assets/minecraft/textures/block/grass_block_top.png",
@@ -30,6 +35,89 @@ pub const TEXTURE_NAMES: [&str; 16] = [
     "assets/minecraft/textures/block/gravel.png",
     "assets/minecraft/textures/block/snow.png",
     "assets/minecraft/textures/block/glass.png",
+    "assets/minecraft/textures/block/gold_ore.png",
+    "assets/minecraft/textures/block/diamond_ore.png",
+    "assets/minecraft/textures/block/redstone_ore.png",
+    "assets/minecraft/textures/block/water_still.png",
+    "assets/minecraft/textures/block/lava_still.png",
+    "assets/minecraft/textures/block/sandstone.png",
+    "assets/minecraft/textures/block/sandstone_top.png",
+    "assets/minecraft/textures/block/andesite.png",
+    "assets/minecraft/textures/block/diorite.png",
+    "assets/minecraft/textures/block/granite.png",
+    "assets/minecraft/textures/block/deepslate.png",
+    "assets/minecraft/textures/block/deepslate_top.png",
+    "assets/minecraft/textures/block/tuff.png",
+    "assets/minecraft/textures/block/calcite.png",
+    "assets/minecraft/textures/block/obsidian.png",
+    "assets/minecraft/textures/block/netherrack.png",
+    "assets/minecraft/textures/block/soul_sand.png",
+    "assets/minecraft/textures/block/glowstone.png",
+    "assets/minecraft/textures/block/ice.png",
+    "assets/minecraft/textures/block/packed_ice.png",
+    "assets/minecraft/textures/block/blue_ice.png",
+    "assets/minecraft/textures/block/clay.png",
+    "assets/minecraft/textures/block/terracotta.png",
+    "assets/minecraft/textures/block/bricks.png",
+    "assets/minecraft/textures/block/stone_bricks.png",
+    "assets/minecraft/textures/block/mossy_cobblestone.png",
+    "assets/minecraft/textures/block/short_grass.png",
+    "assets/minecraft/textures/block/poppy.png",
+    "assets/minecraft/textures/block/dandelion.png",
+    "assets/minecraft/textures/block/oak_sapling.png",
+    "assets/minecraft/textures/block/grass_block_snow.png",
+    "assets/minecraft/textures/block/powder_snow.png",
+    "assets/minecraft/textures/block/mud.png",
+    "assets/minecraft/textures/block/packed_mud.png",
+    "assets/minecraft/textures/block/mud_bricks.png",
+    "assets/minecraft/textures/block/copper_ore.png",
+    "assets/minecraft/textures/block/raw_iron_block.png",
+    "assets/minecraft/textures/block/raw_copper_block.png",
+    "assets/minecraft/textures/block/raw_gold_block.png",
+    "assets/minecraft/textures/block/coal_block.png",
+    "assets/minecraft/textures/block/iron_block.png",
+    "assets/minecraft/textures/block/gold_block.png",
+    "assets/minecraft/textures/block/diamond_block.png",
+    "assets/minecraft/textures/block/emerald_block.png",
+    "assets/minecraft/textures/block/lapis_block.png",
+    "assets/minecraft/textures/block/redstone_block.png",
+    "assets/minecraft/textures/block/netherite_block.png",
+    "assets/minecraft/textures/block/amethyst_block.png",
+    "assets/minecraft/textures/block/budding_amethyst.png",
+    "assets/minecraft/textures/block/copper_block.png",
+    "assets/minecraft/textures/block/exposed_copper.png",
+    "assets/minecraft/textures/block/weathered_copper.png",
+    "assets/minecraft/textures/block/oxidized_copper.png",
+    "assets/minecraft/textures/block/cut_copper.png",
+    "assets/minecraft/textures/block/moss_block.png",
+    "assets/minecraft/textures/block/red_sand.png",
+    "assets/minecraft/textures/block/red_sandstone.png",
+    "assets/minecraft/textures/block/smooth_stone.png",
+    "assets/minecraft/textures/block/blackstone.png",
+    "assets/minecraft/textures/block/end_stone.png",
+    "assets/minecraft/textures/block/purpur_block.png",
+    "assets/minecraft/textures/block/ancient_debris_side.png",
+    "assets/minecraft/textures/block/ancient_debris_top.png",
+    "assets/minecraft/textures/block/basalt_side.png",
+    "assets/minecraft/textures/block/basalt_top.png",
+    "assets/minecraft/textures/block/podzol_top.png",
+    "assets/minecraft/textures/block/podzol_side.png",
+    "assets/minecraft/textures/block/mycelium_top.png",
+    "assets/minecraft/textures/block/mycelium_side.png",
+    "assets/minecraft/textures/block/lapis_ore.png",
+    "assets/minecraft/textures/block/emerald_ore.png",
+    "assets/minecraft/textures/block/deepslate_coal_ore.png",
+    "assets/minecraft/textures/block/deepslate_iron_ore.png",
+    "assets/minecraft/textures/block/deepslate_gold_ore.png",
+    "assets/minecraft/textures/block/deepslate_redstone_ore.png",
+    "assets/minecraft/textures/block/deepslate_lapis_ore.png",
+    "assets/minecraft/textures/block/deepslate_diamond_ore.png",
+    "assets/minecraft/textures/block/deepslate_emerald_ore.png",
+    "assets/minecraft/textures/block/deepslate_copper_ore.png",
+    "assets/minecraft/textures/block/dirt_path_top.png",
+    "assets/minecraft/textures/block/dirt_path_side.png",
+    "assets/minecraft/textures/block/farmland.png",
+    "assets/minecraft/textures/block/farmland_moist.png",
 ];
 
 /// Vanilla biome tints that are baked into greyscale block textures.
@@ -55,6 +143,22 @@ pub fn texture_name(layer: u32) -> String {
         .copied()
         .unwrap_or("")
         .to_string()
+}
+
+/// Resolve a vanilla asset path (`assets/minecraft/textures/block/dirt.png`) to
+/// its array layer. Returns -1 when the Body does not carry that texture.
+/// Java/JS use this when they send a material table for real block-state IDs.
+#[wasm_bindgen]
+pub fn texture_layer(path: &str) -> i32 {
+    layer_for_path(path).map(|layer| layer as i32).unwrap_or(-1)
+}
+
+pub fn layer_for_path(path: &str) -> Option<u32> {
+    // Accept both the canonical asset path and the short `block/dirt.png` form.
+    TEXTURE_NAMES
+        .iter()
+        .position(|name| *name == path || name.ends_with(path))
+        .map(|index| index as u32)
 }
 
 /// Bridge for the page: hand over one PNG from the client jar.
@@ -169,8 +273,9 @@ fn decode(png: &[u8], layer: u32) -> Vec<u8> {
     // frame is the still image.
     let frame_height = height.min(TILE);
     let tint = match layer {
-        2 => Some(TINT_GRASS), // grass_block_top is greyscale
-        7 => Some(TINT_LEAVES),
+        2 | 42 => Some(TINT_GRASS), // grass_block_top, short_grass (greyscale)
+        7 => Some(TINT_LEAVES),     // oak_leaves (greyscale)
+        crate::material::L_WATER => Some([0x3F, 0x76, 0xE4]), // vanilla water tint
         _ => None,
     };
 
@@ -198,7 +303,57 @@ fn decode(png: &[u8], layer: u32) -> Vec<u8> {
             out[o + 3] = a;
         }
     }
+    // The vanilla leaf PNG is a cutout with 33% fully transparent pixels. On a
+    // browser rasteriser that reads as a confetti canopy you can see the sky
+    // through. Close the 1-pixel gaps with the surrounding leaf colour (the
+    // "fast leaves" density players actually recognise) while keeping the rest
+    // of the cutout shape.
+    if layer == crate::material::L_LEAVES {
+        densify_leaf(&mut out);
+    }
     out
+}
+
+fn densify_leaf(tile: &mut [u8]) {
+    const N: usize = TILE as usize;
+    let source = tile.to_vec();
+    for y in 0..N {
+        for x in 0..N {
+            let o = (y * N + x) * 4;
+            if source[o + 3] >= 128 {
+                continue;
+            }
+            let mut r = 0u32;
+            let mut g = 0u32;
+            let mut b = 0u32;
+            let mut n = 0u32;
+            for dy in [-1i32, 0, 1] {
+                for dx in [-1i32, 0, 1] {
+                    if dx == 0 && dy == 0 {
+                        continue;
+                    }
+                    let nx = (x as i32 + dx).rem_euclid(N as i32) as usize;
+                    let ny = (y as i32 + dy).rem_euclid(N as i32) as usize;
+                    let i = (ny * N + nx) * 4;
+                    if source[i + 3] < 128 {
+                        continue;
+                    }
+                    r += u32::from(source[i]);
+                    g += u32::from(source[i + 1]);
+                    b += u32::from(source[i + 2]);
+                    n += 1;
+                }
+            }
+            if n > 0 {
+                // A touch darker than the surrounding leaves so the filled cell
+                // reads as depth inside the canopy, not a flat green square.
+                tile[o] = ((r / n) * 88 / 100) as u8;
+                tile[o + 1] = ((g / n) * 88 / 100) as u8;
+                tile[o + 2] = ((b / n) * 88 / 100) as u8;
+                tile[o + 3] = 255;
+            }
+        }
+    }
 }
 
 fn missing_tile() -> Vec<u8> {

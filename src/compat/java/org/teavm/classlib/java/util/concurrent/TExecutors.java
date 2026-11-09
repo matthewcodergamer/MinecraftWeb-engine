@@ -3,6 +3,8 @@ package org.teavm.classlib.java.util.concurrent;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -34,6 +36,22 @@ public final class TExecutors {
 
     public static ExecutorService newSingleThreadExecutor(ThreadFactory factory) {
         return newFixedThreadPool(1, factory);
+    }
+
+    public static ScheduledExecutorService newScheduledThreadPool(int corePoolSize) {
+        return new ScheduledThreadPoolExecutor(corePoolSize);
+    }
+
+    public static ScheduledExecutorService newScheduledThreadPool(int corePoolSize, ThreadFactory factory) {
+        return new ScheduledThreadPoolExecutor(corePoolSize, factory);
+    }
+
+    public static ScheduledExecutorService newSingleThreadScheduledExecutor() {
+        return new ScheduledThreadPoolExecutor(1);
+    }
+
+    public static ScheduledExecutorService newSingleThreadScheduledExecutor(ThreadFactory factory) {
+        return new ScheduledThreadPoolExecutor(1, factory);
     }
 
     public static ThreadFactory defaultThreadFactory() {

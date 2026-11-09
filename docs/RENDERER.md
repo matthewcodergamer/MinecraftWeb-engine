@@ -1,7 +1,7 @@
 # The Zombie Hybrid — Body renderer (`renderer/`)
 
 Status: **Milestone 2b complete** (Oct 27 2026). The Body now draws the client jar's own
-block textures through a 16-layer texture array, with vanilla face shading, sky colour and
+block textures through a 99-layer texture array, with vanilla face shading, sky colour and
 distance fog, on top of M2a's persistent arena and frustum culling. Meshing is 56,814 faces →
 19,320 quads (66 % fewer) / 38,640 triangles across 92 non-empty sections, and block edits
 re-mesh incrementally inside a 3 ms/frame budget. A free-fly camera (touch, mouse, keyboard)

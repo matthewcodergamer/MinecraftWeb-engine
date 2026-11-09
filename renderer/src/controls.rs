@@ -12,10 +12,17 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{HtmlCanvasElement, KeyboardEvent, MouseEvent, PointerEvent};
 
-const WALK_SPEED: f32 = 6.2;
-const SPRINT_SPEED: f32 = 12.4;
+const WALK_SPEED: f32 = 4.317;
+const SPRINT_SPEED: f32 = 5.612;
+const FLY_SPEED: f32 = 12.4;
 const LOOK_SENSITIVITY: f32 = 0.0022;
 const TOUCH_LOOK_SENSITIVITY: f32 = 0.0045;
+const EYE_HEIGHT: f32 = 1.62;
+const PLAYER_HEIGHT: f32 = 1.8;
+const PLAYER_HALF_WIDTH: f32 = 0.3;
+const GRAVITY: f32 = 28.0;
+const JUMP_SPEED: f32 = 8.6;
+const TERMINAL_VELOCITY: f32 = 60.0;
 
 struct TouchState {
     id: i32,
@@ -35,10 +42,108 @@ struct Controls {
     stick: [f32; 2],
     touches: Vec<TouchState>,
     canvas: HtmlCanvasElement,
+    velocity_y: f32,
+    on_ground: bool,
+    flying: bool,
+    fly_key_held: bool,
 }
 
 thread_local! {
     static CONTROLS: RefCell<Option<Controls>> = const { RefCell::new(None) };
+    /// When the Java Brain is authoritative it sends the eye position every
+    /// tick. The Body then stops integrating movement entirely: it only owns
+    /// the look direction (camera), never the player physics.
+    static EXTERNAL_POS: std::cell::Cell<Option<[f32; 3]>> = const { std::cell::Cell::new(None) };
+    /// Java also owns yaw/pitch (mouse look runs through its SDL input path).
+    /// Stored in Rust camera radians; `None` until the first pose arrives.
+    static EXTERNAL_ROT: std::cell::Cell<Option<[f32; 2]>> = const { std::cell::Cell::new(None) };
+    /// The hybrid page forwards input through the bridge (and into Java), so the
+    /// renderer's own DOM listeners would apply every delta twice. `true` turns
+    /// them into no-ops; `body.html` leaves this off and stays standalone.
+    static HOST_INPUT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Called from the Java bridge with the player's eye position (`getEyeY`, not
+/// feet). Once set, the debug free-fly integration is disabled.
+pub fn set_external_position(position: [f32; 3]) {
+    EXTERNAL_POS.with(|cell| cell.set(Some(position)));
+}
+
+pub fn clear_external_position() {
+    EXTERNAL_POS.with(|cell| cell.set(None));
+}
+
+/// Java sends Minecraft yaw in degrees (0 = south / +Z, 90 = west / -X) and
+/// pitch in degrees (positive = looking down). The renderer's camera uses
+/// yaw 0 = north / -Z and positive pitch = looking up, so convert once here.
+pub fn set_external_rotation(yaw_degrees: f32, pitch_degrees: f32) {
+    let yaw = (180.0 - yaw_degrees).to_radians();
+    let pitch = (-pitch_degrees).to_radians().clamp(-1.55, 1.55);
+    EXTERNAL_ROT.with(|cell| cell.set(Some([yaw, pitch])));
+}
+
+pub fn clear_external_rotation() {
+    EXTERNAL_ROT.with(|cell| cell.set(None));
+}
+
+/// Enables host-page input forwarding. See `HOST_INPUT`.
+pub fn set_host_input(hosted: bool) {
+    HOST_INPUT.with(|cell| cell.set(hosted));
+}
+
+fn host_input() -> bool {
+    HOST_INPUT.with(|cell| cell.get())
+}
+
+/// Renderer-only input fallback used by `bridge.js` when no Java iframe/SDL
+/// shim is present (the deployed `old_mcweb` page). Works regardless of
+/// `set_host_input`, so the hybrid page can keep its DOM listeners disabled.
+#[wasm_bindgen]
+pub fn set_virtual_key(code: &str, down: bool) {
+    CONTROLS.with(|cell| {
+        if let Some(controls) = cell.borrow_mut().as_mut() {
+            if down {
+                controls.keys.insert(code.to_string());
+            } else {
+                controls.keys.remove(code);
+            }
+        }
+    });
+}
+
+#[wasm_bindgen]
+pub fn set_virtual_stick(x: f32, y: f32) {
+    CONTROLS.with(|cell| {
+        if let Some(controls) = cell.borrow_mut().as_mut() {
+            controls.stick = [x.clamp(-1.0, 1.0), y.clamp(-1.0, 1.0)];
+        }
+    });
+}
+
+#[wasm_bindgen]
+pub fn set_virtual_fly(on: bool) {
+    CONTROLS.with(|cell| {
+        if let Some(controls) = cell.borrow_mut().as_mut() {
+            controls.flying = on;
+            controls.velocity_y = 0.0;
+        }
+    });
+}
+
+/// Direct look for the renderer when there is no Java brain yet (title/loading)
+/// or on the standalone `body.html` harness. Once Java reports a pose every
+/// frame, its rotation wins and this only provides sub-frame responsiveness.
+pub fn apply_look(dx: f32, dy: f32, touch: bool) {
+    let sensitivity = if touch {
+        TOUCH_LOOK_SENSITIVITY
+    } else {
+        LOOK_SENSITIVITY
+    };
+    CONTROLS.with(|cell| {
+        if let Some(controls) = cell.borrow_mut().as_mut() {
+            controls.look(dx, dy, sensitivity);
+        }
+    });
 }
 
 impl Controls {
@@ -52,11 +157,37 @@ impl Controls {
             stick: [0.0, 0.0],
             touches: Vec::new(),
             canvas,
+            velocity_y: 0.0,
+            on_ground: false,
+            flying: false,
+            fly_key_held: false,
         }
     }
 
     fn update(&mut self, dt: f32) {
         let dt = dt.clamp(0.0, 0.05);
+        // Java owns physics: follow its eye position and do not integrate here.
+        if let Some(position) = EXTERNAL_POS.with(|cell| cell.get()) {
+            self.pos = position;
+            // Java also owns rotation. Local look (applied for immediacy while
+            // waiting for the next Java tick) is replaced by the authoritative
+            // mouse-driven rotation here.
+            if let Some([yaw, pitch]) = EXTERNAL_ROT.with(|cell| cell.get()) {
+                self.yaw = yaw;
+                self.pitch = pitch;
+            }
+            return;
+        }
+
+        if self.key("KeyF") {
+            if !self.fly_key_held {
+                self.flying = !self.flying;
+                self.fly_key_held = true;
+            }
+        } else {
+            self.fly_key_held = false;
+        }
+
         let (sin_yaw, cos_yaw) = self.yaw.sin_cos();
         // yaw 0 looks toward -z (north), like standing on the south shore.
         let forward = [-sin_yaw, 0.0, -cos_yaw];
@@ -86,26 +217,76 @@ impl Controls {
             move_z /= length;
         }
 
-        let sprinting = self.key("ShiftLeft") || self.key("ShiftRight");
-        let speed = if sprinting { SPRINT_SPEED } else { WALK_SPEED };
         let dir_x = forward[0] * move_z + right[0] * move_x;
         let dir_z = forward[2] * move_z + right[2] * move_x;
-        self.pos[0] += dir_x * speed * dt;
-        self.pos[2] += dir_z * speed * dt;
 
-        // Vertical: Space/Control on desktop; a second touch drags altitude.
-        let mut lift = 0.0;
-        if self.key("Space") {
-            lift += 1.0;
+        if self.flying {
+            let speed = FLY_SPEED;
+            self.pos[0] += dir_x * speed * dt;
+            self.pos[2] += dir_z * speed * dt;
+            let mut lift = 0.0;
+            if self.key("Space") {
+                lift += 1.0;
+            }
+            if self.key("ControlLeft") || self.key("ControlRight") || self.key("KeyQ") {
+                lift -= 1.0;
+            }
+            self.pos[1] += lift * speed * dt;
+            self.pos[1] = self.pos[1].clamp(-16.0, 300.0);
+            return;
         }
-        if self.key("ControlLeft") || self.key("KeyQ") || self.key("ControlRight") {
-            lift -= 1.0;
+
+        // Vanilla-like walking: horizontal axes are resolved separately, then
+        // gravity and a jump impulse move the eye. Collision uses the block
+        // store above; Java replaces this whole path when connected.
+        let sprinting = self.key("ControlLeft") || self.key("ControlRight");
+        let speed = if sprinting { SPRINT_SPEED } else { WALK_SPEED };
+
+        let next_x = self.pos[0] + dir_x * speed * dt;
+        if !self.collides(next_x, self.pos[1], self.pos[2]) {
+            self.pos[0] = next_x;
         }
-        if self.touches.len() >= 2 {
-            // Two fingers: drag both to fly up/down.
-            lift += self.stick[1] * 0.5;
+        let next_z = self.pos[2] + dir_z * speed * dt;
+        if !self.collides(self.pos[0], self.pos[1], next_z) {
+            self.pos[2] = next_z;
         }
-        self.pos[1] = (self.pos[1] + lift * speed * dt).clamp(-16.0, 220.0);
+
+        if self.key("Space") && self.on_ground {
+            self.velocity_y = JUMP_SPEED;
+            self.on_ground = false;
+        }
+        self.velocity_y = (self.velocity_y - GRAVITY * dt).max(-TERMINAL_VELOCITY);
+        let next_y = self.pos[1] + self.velocity_y * dt;
+        if self.collides(self.pos[0], next_y, self.pos[2]) {
+            if self.velocity_y < 0.0 {
+                self.on_ground = true;
+            }
+            self.velocity_y = 0.0;
+        } else {
+            self.pos[1] = next_y;
+            self.on_ground = false;
+        }
+        self.pos[1] = self.pos[1].clamp(-16.0, 300.0);
+    }
+
+    /// Axis-aligned player box against the opaque block store.
+    fn collides(&self, eye_x: f32, eye_y: f32, eye_z: f32) -> bool {
+        let min_x = (eye_x - PLAYER_HALF_WIDTH).floor() as i32;
+        let max_x = (eye_x + PLAYER_HALF_WIDTH - 1e-4).floor() as i32;
+        let min_y = (eye_y - EYE_HEIGHT).floor() as i32;
+        let max_y = (eye_y - EYE_HEIGHT + PLAYER_HEIGHT - 1e-4).floor() as i32;
+        let min_z = (eye_z - PLAYER_HALF_WIDTH).floor() as i32;
+        let max_z = (eye_z + PLAYER_HALF_WIDTH - 1e-4).floor() as i32;
+        for y in min_y..=max_y {
+            for z in min_z..=max_z {
+                for x in min_x..=max_x {
+                    if crate::bridge::is_solid(x, y, z) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 
     fn key(&self, code: &str) -> bool {
@@ -145,6 +326,9 @@ pub fn install(canvas: HtmlCanvasElement) {
 
     {
         let closure = Closure::<dyn FnMut(KeyboardEvent)>::new(move |event: KeyboardEvent| {
+            if host_input() {
+                return;
+            }
             let code = event.code();
             let down = event.type_() == "keydown";
             CONTROLS.with(|cell| {
@@ -160,7 +344,8 @@ pub fn install(canvas: HtmlCanvasElement) {
                 event.prevent_default();
             }
         });
-        let _ = window.add_event_listener_with_callback("keydown", closure.as_ref().unchecked_ref());
+        let _ =
+            window.add_event_listener_with_callback("keydown", closure.as_ref().unchecked_ref());
         let _ = window.add_event_listener_with_callback("keyup", closure.as_ref().unchecked_ref());
         closure.forget();
     }
@@ -169,14 +354,21 @@ pub fn install(canvas: HtmlCanvasElement) {
     {
         let canvas_for_lock = canvas.clone();
         let closure = Closure::<dyn FnMut(MouseEvent)>::new(move |event: MouseEvent| {
+            if host_input() {
+                return;
+            }
             event.prevent_default();
             let _ = canvas_for_lock.request_pointer_lock();
         });
-        let _ = canvas.add_event_listener_with_callback("mousedown", closure.as_ref().unchecked_ref());
+        let _ =
+            canvas.add_event_listener_with_callback("mousedown", closure.as_ref().unchecked_ref());
         closure.forget();
     }
     {
         let closure = Closure::<dyn FnMut(MouseEvent)>::new(move |event: MouseEvent| {
+            if host_input() {
+                return;
+            }
             if event.type_() != "mousemove" {
                 return;
             }
@@ -194,8 +386,8 @@ pub fn install(canvas: HtmlCanvasElement) {
             });
         });
         if let Some(document) = window.document() {
-            let _ =
-                document.add_event_listener_with_callback("mousemove", closure.as_ref().unchecked_ref());
+            let _ = document
+                .add_event_listener_with_callback("mousemove", closure.as_ref().unchecked_ref());
         }
         closure.forget();
     }
@@ -204,6 +396,9 @@ pub fn install(canvas: HtmlCanvasElement) {
     {
         let closure = Closure::<dyn FnMut(PointerEvent)>::new(move |event: PointerEvent| {
             let pointer_type = event.pointer_type();
+            if host_input() {
+                return;
+            }
             if pointer_type != "touch" && pointer_type != "pen" {
                 return;
             }
@@ -267,10 +462,14 @@ pub fn install(canvas: HtmlCanvasElement) {
             .document()
             .map(|document| document.unchecked_into::<web_sys::EventTarget>())
             .unwrap_or_else(|| window.clone().unchecked_into::<web_sys::EventTarget>());
-        let _ = target.add_event_listener_with_callback("pointerdown", closure.as_ref().unchecked_ref());
-        let _ = target.add_event_listener_with_callback("pointermove", closure.as_ref().unchecked_ref());
-        let _ = target.add_event_listener_with_callback("pointerup", closure.as_ref().unchecked_ref());
-        let _ = target.add_event_listener_with_callback("pointercancel", closure.as_ref().unchecked_ref());
+        let _ = target
+            .add_event_listener_with_callback("pointerdown", closure.as_ref().unchecked_ref());
+        let _ = target
+            .add_event_listener_with_callback("pointermove", closure.as_ref().unchecked_ref());
+        let _ =
+            target.add_event_listener_with_callback("pointerup", closure.as_ref().unchecked_ref());
+        let _ = target
+            .add_event_listener_with_callback("pointercancel", closure.as_ref().unchecked_ref());
         closure.forget();
     }
 
@@ -279,9 +478,32 @@ pub fn install(canvas: HtmlCanvasElement) {
         let closure = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
             event.prevent_default();
         });
-        let _ = document.add_event_listener_with_callback("gesturestart", closure.as_ref().unchecked_ref());
+        let _ = document
+            .add_event_listener_with_callback("gesturestart", closure.as_ref().unchecked_ref());
         closure.forget();
     }
+}
+
+/// Renderer-only spawn. Places the debug camera on the surface found by
+/// `bridge::demo_spawn`. Java, when present, replaces this pose every frame
+/// through `set_java_player`, so it never overrides authoritative physics.
+pub fn set_spawn(position: [f32; 3]) {
+    CONTROLS.with(|cell| {
+        if let Some(controls) = cell.borrow_mut().as_mut() {
+            controls.pos = position;
+            controls.velocity_y = 0.0;
+            controls.on_ground = false;
+        }
+    });
+}
+
+pub fn set_spawn_rotation(yaw: f32, pitch: f32) {
+    CONTROLS.with(|cell| {
+        if let Some(controls) = cell.borrow_mut().as_mut() {
+            controls.yaw = yaw;
+            controls.pitch = pitch;
+        }
+    });
 }
 
 pub struct CameraPose {
@@ -308,6 +530,31 @@ pub fn pose(aspect: f32) -> CameraPose {
 }
 
 /// Advances the camera by one frame.
+/// Debug helper for the headless harness: current eye pose as text.
+#[wasm_bindgen]
+pub fn debug_pose() -> String {
+    CONTROLS.with(|cell| {
+        let borrowed = cell.borrow();
+        match borrowed.as_ref() {
+            Some(controls) => format!(
+                "{:.2},{:.2},{:.2} yaw={:.2} pitch={:.2} vy={:.2} ground={} fly={} stick={:.2},{:.2} blocked={}",
+                controls.pos[0],
+                controls.pos[1],
+                controls.pos[2],
+                controls.yaw,
+                controls.pitch,
+                controls.velocity_y,
+                controls.on_ground,
+                controls.flying,
+                controls.stick[0],
+                controls.stick[1],
+                controls.collides(controls.pos[0], controls.pos[1], controls.pos[2]),
+            ),
+            None => "none".to_string(),
+        }
+    })
+}
+
 pub fn tick(dt: f32) {
     CONTROLS.with(|cell| {
         if let Some(controls) = cell.borrow_mut().as_mut() {

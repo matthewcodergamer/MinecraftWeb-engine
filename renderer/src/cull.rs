@@ -19,12 +19,12 @@ impl Frustum {
 
         // WebGPU clip space: -w <= x,y <= w, 0 <= z <= w.
         let planes = [
-            add(r3, r0),    // left
-            sub(r3, r0),    // right
-            add(r3, r1),    // bottom
-            sub(r3, r1),    // top
-            r2,             // near
-            sub(r3, r2),    // far
+            add(r3, r0), // left
+            sub(r3, r0), // right
+            add(r3, r1), // bottom
+            sub(r3, r1), // top
+            r2,          // near
+            sub(r3, r2), // far
         ];
 
         let mut out = [[0.0f32; 4]; 6];

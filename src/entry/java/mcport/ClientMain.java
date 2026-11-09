@@ -7,6 +7,9 @@ public final class ClientMain {
     public static void main(String[] args) {
         try {
             setOsProperties();
+            // The Rust Body mirrors the Java world. This hook is inert until the
+            // client has a level and player; it never changes Java game state.
+            mcport.bridge.ChunkBridge.install();
             BrowserRuntime.report("stage", "client-main");
             net.minecraft.client.main.Main.main(new String[] {
                     "--version", "26.3",

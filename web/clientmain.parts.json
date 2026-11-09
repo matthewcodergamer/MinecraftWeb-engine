@@ -1,0 +1,23 @@
+{
+  "encoding": "gzip",
+  "total": 279415571,
+  "downloadTotal": 23387557,
+  "partSize": 8388608,
+  "parts": [
+    {
+      "name": "clientmain.part0",
+      "size": 8388608,
+      "sha256": "11d6d1f7f7dbe0632a6a07ef6a16657a2166f7d366001dadc600c70a32e448fc"
+    },
+    {
+      "name": "clientmain.part1",
+      "size": 8388608,
+      "sha256": "5d803c8b6e85c131449a94d69439ff121dcd93e466d5d11675a7e87ff66447e4"
+    },
+    {
+      "name": "clientmain.part2",
+      "size": 6610341,
+      "sha256": "d70a0170795ebc87eead14dec19d72bc4e824852cca67084e167d431b99b7309"
+    }
+  ]
+}

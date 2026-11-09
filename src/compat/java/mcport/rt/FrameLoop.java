@@ -13,6 +13,7 @@ import org.teavm.jso.JSObject;
  */
 public final class FrameLoop {
     private static boolean vsync = true;
+    private static final java.util.List<Runnable> HOOKS = new java.util.ArrayList<>();
 
     private FrameLoop() {
     }
@@ -21,7 +22,19 @@ public final class FrameLoop {
         vsync = on;
     }
 
+    /** Adds a browser-side per-frame consumer (chunk bridge, input bridge, ...). */
+    public static void addHook(Runnable hook) {
+        HOOKS.add(hook);
+    }
+
     public static void endFrame() {
+        for (int i = 0; i < HOOKS.size(); i++) {
+            try {
+                HOOKS.get(i).run();
+            } catch (Throwable ignored) {
+                // A visualization hook must never kill the Java game loop.
+            }
+        }
         frameStats();
         waitForNextFrame(vsync);
     }

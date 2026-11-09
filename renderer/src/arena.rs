@@ -31,7 +31,11 @@ pub struct ChunkArena {
 const MIN_BUFFER: u64 = 4;
 
 impl ChunkArena {
-    pub fn upload(device: &wgpu::Device, queue: &wgpu::Queue, sections: &[SectionMeshData]) -> Self {
+    pub fn upload(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        sections: &[SectionMeshData],
+    ) -> Self {
         let mut arena = Self {
             slots: Vec::with_capacity(sections.len()),
             total_indices: 0,
@@ -101,6 +105,14 @@ impl ChunkArena {
     pub fn len(&self) -> usize {
         self.slots.len()
     }
+
+    /// Drops every draw range. Used when the Java Brain replaces the synthetic
+    /// demo world; the dirty queue then rebuilds the real sections.
+    pub fn clear(&mut self) {
+        self.slots.clear();
+        self.total_indices = 0;
+        self.total_vertices = 0;
+    }
 }
 
 fn create_slot(
@@ -151,9 +163,7 @@ fn capacity(bytes: u64) -> u64 {
 }
 
 fn bytes_of<T>(slice: &[T]) -> &[u8] {
-    unsafe {
-        std::slice::from_raw_parts(slice.as_ptr().cast::<u8>(), std::mem::size_of_val(slice))
-    }
+    unsafe { std::slice::from_raw_parts(slice.as_ptr().cast::<u8>(), std::mem::size_of_val(slice)) }
 }
 
 #[allow(dead_code)]

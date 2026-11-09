@@ -14,6 +14,9 @@
   #boot .bar { width: min(420px, 80vw); height: 6px; background: #333; margin-top: 12px; }
   #boot .bar div { height: 100%; width: 0; background: #e8e8e8; transition: width .2s; }
   #boot pre { color: #f88; max-width: 90vw; white-space: pre-wrap; font-size: 12px; }
+  html.embedded #boot { display: none !important; }
+  html.embedded #stats { display: none !important; }
+  html.embedded, html.embedded body { background: #000; }
   #stats { position: fixed; right: 6px; top: 4px; color: #fff; font: 11px monospace; text-shadow: 1px 1px #000;
     z-index: 5; pointer-events: none; }
 </style>
@@ -29,38 +32,192 @@
 <script src="native/shaders.js"></script>
 <script src="native/stb.js"></script>
 <script src="gpu/webgpu.js"></script>
+<script src="bridge.js"></script>
 <script>
 // Host page of the browser port: loads the client jar's resources (packed from the user's own installation),
 // initialises the WebAssembly shader toolchain and the WebGPU device, then starts the real
 // net.minecraft.client.main.Main compiled by TeaVM (clientmain.js).
 'use strict';
 const params = new URLSearchParams(location.search);
-const msg = (t) => { document.getElementById('boot-msg').textContent = t; };
-const bar = (f) => { document.getElementById('boot-bar').style.width = Math.round(f * 100) + '%'; };
-const fail = (t) => { document.getElementById('boot-err').textContent += t + '\n'; window.__mc = Object.assign(window.__mc || {}, { stage: 'failed', error: t }); };
+const embedded = params.get('embedded') === '1';
+if (embedded) document.documentElement.classList.add('embedded');
+// Direct hits on the canvas host must pass through the ad-supported launcher.
+if (!embedded) {
+  let passOK = false;
+  try {
+    const p = Number(sessionStorage.getItem('mw_play_pass'));
+    passOK = p > 0 && Date.now() - p < 21600000;
+  } catch (e) {}
+  if (!passOK) location.replace('/?from=game');
+}
+
+// World handshake with the page that owns the menus. Java's ChunkBridge reads
+// these globals when the title screen is idle, so the host can apply the name,
+// seed, mode, difficulty and toggles from the Create/Select World screens.
+window.__mcWorldAuto = !embedded && params.get('world') !== '0';
+window.__mcWorldRequested = null;
+// Set by the owning page when the player imports a saves folder. The manifest
+// lists every file the host stored in IndexedDB (`mc-world-files`); the Java
+// side can stream those same entries and run DataFixerUpper on old formats.
+window.__mcWorldImport = null;
+if (params.has('name') || params.has('seed') || params.has('mode')) {
+  window.__mcWorldRequested = {
+    name: params.get('name') || 'World',
+    seed: params.get('seed') || '',
+    mode: params.get('mode') || 'survival',
+    difficulty: params.get('difficulty') || 'normal',
+    type: params.get('type') || 'normal',
+    commands: params.get('commands') === '1',
+    structures: params.get('structures') !== '0',
+    bonus: params.get('bonus') === '1',
+  };
+}
+window.addEventListener('message', (event) => {
+  const data = event.data;
+  if (!data || data.source !== 'mc-host') return;
+  if (data.type === 'world-play' || data.type === 'world-create' || data.type === 'world-edit') {
+    window.__mcWorldRequested = data.world || {};
+    window.__mcWorldAuto = true;
+    window.__mcWorldImport = null;
+  } else if (data.type === 'world-import') {
+    // Let the Java layer pick up the world metadata and the stored manifest.
+    window.__mcWorldRequested = data.world || {};
+    window.__mcWorldImport = {
+      world: data.world || {},
+      manifest: Array.isArray(data.manifest) ? data.manifest : [],
+      store: 'mc-world-files',
+      id: (data.world && data.world.id) || null,
+    };
+    window.__mcWorldAuto = false;
+  } else if (data.type === 'world-stop') {
+    window.__mcWorldRequested = null;
+    window.__mcWorldImport = null;
+    window.__mcWorldAuto = false;
+  }
+});
+
+let progressLabel = 'Building terrain...';
+const msg = (t) => {
+  progressLabel = t;
+  const el = document.getElementById('boot-msg');
+  if (el) el.textContent = t;
+  if (window.mcBridge) mcBridge.setProgress(window.__mcProgress || 0, t);
+};
+const bar = (f) => {
+  window.__mcProgress = f;
+  const el = document.getElementById('boot-bar');
+  if (el) el.style.width = Math.round(f * 100) + '%';
+  if (window.mcBridge) mcBridge.setProgress(f, progressLabel);
+};
+const fail = (t) => {
+  const el = document.getElementById('boot-err');
+  if (el) el.textContent += t + '\n';
+  window.__mc = Object.assign(window.__mc || {}, { stage: 'failed', error: t });
+  if (window.mcBridge) mcBridge.javaError(t);
+};
 Error.stackTraceLimit = 100;
 window.__mcLog = (lvl, text) => console.log('[' + lvl + '] ' + text);
-window.__mcExit = (status) => { msg('Minecraft exited (' + status + ')'); document.getElementById('boot').style.display = 'flex'; };
+window.__mcExit = (status) => {
+  msg('Minecraft exited (' + status + ')');
+  const boot = document.getElementById('boot');
+  if (boot) boot.style.display = 'flex';
+  if (window.mcBridge && status) mcBridge.javaError('Minecraft exited (' + status + ')');
+};
 window.addEventListener('error', (e) => fail('ERROR: ' + e.message));
 window.addEventListener('unhandledrejection', (e) => fail('REJECTION: ' + (e.reason && e.reason.stack || e.reason)));
 
 async function fetchWithProgress(url, label, from, to) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(url + ': HTTP ' + res.status);
-  const total = +res.headers.get('content-length') || 0;
-  if (!res.body || !total) { const b = await res.arrayBuffer(); bar(to); return b; }
-  const out = new Uint8Array(total);
-  const reader = res.body.getReader();
-  let got = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    out.set(value, got);
-    got += value.length;
-    msg(label + ' ' + (got / 1048576).toFixed(0) + ' / ' + (total / 1048576).toFixed(0) + ' MiB');
-    bar(from + (to - from) * got / total);
+  // Shared with the host page: ./-relative, range-chunked, resumable. iOS
+  // Safari cannot survive a single 31 MB arrayBuffer() when backgrounded.
+  return mcBridge.fetchAsset('./' + url, {
+    retries: 2,
+    onProgress: (fraction, got, total) => {
+      const mb = (n) => (n / 1048576).toFixed(0);
+      msg(label + ' ' + mb(got) + ' / ' + mb(total || got) + ' MiB');
+      bar(from + (to - from) * (fraction || 0));
+    },
+  });
+}
+
+function loadClassicScript(src) {
+  return new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = res;
+    s.onerror = () => rej(new Error('failed to load ' + s.src));
+    document.body.appendChild(s);
+  });
+}
+
+async function loadBrain() {
+  const explicit = params.get('js');
+  if (explicit) {
+    await loadClassicScript(explicit + '.js');
+    return;
   }
-  return out.buffer;
+  // GitHub Pages caps a single file at 100 MB, so the ~266 MiB TeaVM bundle
+  // ships as parts and is reassembled here. Falls back to a single script.
+  let manifest = null;
+  try {
+    const r = await fetch('./clientmain.parts.json', { cache: 'no-cache' });
+    if (r.ok) manifest = await r.json();
+  } catch (e) { manifest = null; }
+  if (!manifest || !Array.isArray(manifest.parts) || !manifest.parts.length) {
+    await loadClassicScript('clientmain.js');
+    return;
+  }
+  const parts = manifest.parts.map((p) => typeof p === 'string' ? { name: p } : p);
+  const downloadTotal = manifest.downloadTotal
+    || parts.reduce((n, p) => n + (p.size || 0), 0);
+  const rawTotal = manifest.total || downloadTotal;
+  const buffers = new Array(parts.length);
+  const got = new Array(parts.length).fill(0);
+  const mb = (n) => (n / 1048576).toFixed(0);
+  const report = () => {
+    const sum = got.reduce((a, b) => a + b, 0);
+    bar(0.9 + 0.08 * (sum / (downloadTotal || 1)));
+    msg('Loading Minecraft ' + mb(sum) + ' / ' + mb(downloadTotal) + ' MiB');
+  };
+  // Several smaller gzip parts download in parallel, then the whole stream is
+  // decompressed in one pass. A single uncompressed fallback also works.
+  let next = 0;
+  const worker = async () => {
+    while (true) {
+      const i = next++;
+      if (i >= parts.length) return;
+      const name = parts[i].name;
+      // The launcher pre-downloads the parts into CacheStorage, so this is
+      // normally an instant local read instead of a second 23 MB download.
+      let cached = null;
+      try {
+        if ('caches' in window) {
+          const c = await caches.open('mw-game-v1');
+          const r = await c.match(new URL('./' + name, location.href).href);
+          if (r) cached = await r.arrayBuffer();
+        }
+      } catch (e) {}
+      buffers[i] = cached || await mcBridge.fetchAsset('./' + name, {
+        retries: 2,
+        onProgress: (fraction, gotBytes) => { got[i] = gotBytes; report(); },
+      });
+      got[i] = buffers[i].byteLength;
+      report();
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(3, parts.length) }, worker));
+  const packed = new Blob(buffers);
+  let scriptData = packed;
+  if (manifest.encoding === 'gzip') {
+    if (typeof DecompressionStream !== 'function') {
+      throw new Error('This browser cannot decompress the client bundle (no DecompressionStream gzip).');
+    }
+    msg('Unpacking Minecraft ' + mb(rawTotal) + ' MiB…');
+    bar(0.985);
+    const stream = packed.stream().pipeThrough(new DecompressionStream('gzip'));
+    scriptData = new Blob([await new Response(stream).arrayBuffer()], { type: 'text/javascript' });
+  }
+  bar(1);
+  await loadClassicScript(URL.createObjectURL(scriptData));
 }
 
 async function loadResources() {
@@ -97,13 +254,7 @@ function showStats() {
     console.log(webgpu ? 'Graphics: WebGPU (' + __mcWebGPU.adapterName + ')' : 'Graphics: WebGPU unavailable, using WebGL2');
     msg('Loading Minecraft…');
     bar(0.9);
-    await new Promise((res, rej) => {
-      const s = document.createElement('script');
-      s.src = (params.get('js') || 'clientmain') + '.js';
-      s.onload = res;
-      s.onerror = () => rej(new Error('failed to load ' + s.src));
-      document.body.appendChild(s);
-    });
+    await loadBrain();
     bar(1);
     showStats();
     // The Minecraft window (the canvas) appears when the client creates it; hide the boot screen then.

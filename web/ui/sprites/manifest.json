@@ -1,0 +1,364 @@
+{
+  "dialog/warning_button": {
+    "meta": null
+  },
+  "dialog/warning_button_disabled": {
+    "meta": null
+  },
+  "dialog/warning_button_highlighted": {
+    "meta": null
+  },
+  "gamemode_switcher/selection": {
+    "meta": null
+  },
+  "gamemode_switcher/slot": {
+    "meta": null
+  },
+  "icon/accessibility": {
+    "meta": null
+  },
+  "icon/checkmark": {
+    "meta": null
+  },
+  "icon/info": {
+    "meta": null
+  },
+  "icon/language": {
+    "meta": null
+  },
+  "icon/link": {
+    "meta": null
+  },
+  "icon/link_highlighted": {
+    "meta": null
+  },
+  "icon/music_notes": {
+    "meta": {
+      "animation": {
+        "frametime": 2
+      }
+    }
+  },
+  "icon/news": {
+    "meta": null
+  },
+  "icon/search": {
+    "meta": null
+  },
+  "icon/unseen_notification": {
+    "meta": null
+  },
+  "icon/video_link": {
+    "meta": null
+  },
+  "icon/video_link_highlighted": {
+    "meta": null
+  },
+  "pause_menu/bug": {
+    "meta": null
+  },
+  "pause_menu/player_reporting": {
+    "meta": null
+  },
+  "pause_menu/social_interactions": {
+    "meta": null
+  },
+  "popup/background": {
+    "meta": {
+      "gui": {
+        "scaling": {
+          "border": 6,
+          "height": 34,
+          "type": "nine_slice",
+          "width": 236
+        }
+      }
+    }
+  },
+  "server_list/incompatible": {
+    "meta": null
+  },
+  "server_list/unreachable": {
+    "meta": null
+  },
+  "tooltip/background": {
+    "meta": {
+      "gui": {
+        "scaling": {
+          "border": 9,
+          "height": 100,
+          "type": "nine_slice",
+          "width": 100
+        }
+      }
+    }
+  },
+  "tooltip/frame": {
+    "meta": {
+      "gui": {
+        "scaling": {
+          "border": 10,
+          "height": 100,
+          "stretch_inner": true,
+          "type": "nine_slice",
+          "width": 100
+        }
+      }
+    }
+  },
+  "transferable_list/select": {
+    "meta": null
+  },
+  "transferable_list/unselect": {
+    "meta": null
+  },
+  "widget/button": {
+    "meta": {
+      "gui": {
+        "scaling": {
+          "border": 3,
+          "height": 20,
+          "type": "nine_slice",
+          "width": 200
+        }
+      }
+    }
+  },
+  "widget/button_disabled": {
+    "meta": {
+      "gui": {
+        "scaling": {
+          "border": 1,
+          "height": 20,
+          "type": "nine_slice",
+          "width": 200
+        }
+      }
+    }
+  },
+  "widget/button_highlighted": {
+    "meta": {
+      "gui": {
+        "scaling": {
+          "border": 3,
+          "height": 20,
+          "type": "nine_slice",
+          "width": 200
+        }
+      }
+    }
+  },
+  "widget/checkbox": {
+    "meta": null
+  },
+  "widget/checkbox_highlighted": {
+    "meta": null
+  },
+  "widget/checkbox_selected": {
+    "meta": null
+  },
+  "widget/checkbox_selected_highlighted": {
+    "meta": null
+  },
+  "widget/scroller": {
+    "meta": {
+      "gui": {
+        "scaling": {
+          "border": 1,
+          "height": 32,
+          "type": "nine_slice",
+          "width": 6
+        }
+      }
+    }
+  },
+  "widget/scroller_background": {
+    "meta": {
+      "gui": {
+        "scaling": {
+          "border": 1,
+          "height": 32,
+          "type": "nine_slice",
+          "width": 6
+        }
+      }
+    }
+  },
+  "widget/slider": {
+    "meta": {
+      "gui": {
+        "scaling": {
+          "border": 1,
+          "height": 20,
+          "type": "nine_slice",
+          "width": 200
+        }
+      }
+    }
+  },
+  "widget/slider_handle": {
+    "meta": {
+      "gui": {
+        "scaling": {
+          "border": {
+            "bottom": 3,
+            "left": 2,
+            "right": 2,
+            "top": 2
+          },
+          "height": 20,
+          "type": "nine_slice",
+          "width": 8
+        }
+      }
+    }
+  },
+  "widget/slider_handle_highlighted": {
+    "meta": {
+      "gui": {
+        "scaling": {
+          "border": {
+            "bottom": 3,
+            "left": 2,
+            "right": 2,
+            "top": 2
+          },
+          "height": 20,
+          "type": "nine_slice",
+          "width": 8
+        }
+      }
+    }
+  },
+  "widget/slider_highlighted": {
+    "meta": {
+      "gui": {
+        "scaling": {
+          "border": 1,
+          "height": 20,
+          "type": "nine_slice",
+          "width": 200
+        }
+      }
+    }
+  },
+  "widget/slot_frame": {
+    "meta": null
+  },
+  "widget/tab": {
+    "meta": {
+      "gui": {
+        "scaling": {
+          "border": {
+            "bottom": 0,
+            "left": 2,
+            "right": 2,
+            "top": 2
+          },
+          "height": 24,
+          "type": "nine_slice",
+          "width": 130
+        }
+      }
+    }
+  },
+  "widget/tab_highlighted": {
+    "meta": {
+      "gui": {
+        "scaling": {
+          "border": {
+            "bottom": 0,
+            "left": 2,
+            "right": 2,
+            "top": 2
+          },
+          "height": 24,
+          "type": "nine_slice",
+          "width": 130
+        }
+      }
+    }
+  },
+  "widget/tab_selected": {
+    "meta": {
+      "gui": {
+        "scaling": {
+          "border": {
+            "bottom": 0,
+            "left": 2,
+            "right": 2,
+            "top": 2
+          },
+          "height": 24,
+          "type": "nine_slice",
+          "width": 130
+        }
+      }
+    }
+  },
+  "widget/tab_selected_highlighted": {
+    "meta": {
+      "gui": {
+        "scaling": {
+          "border": {
+            "bottom": 0,
+            "left": 2,
+            "right": 2,
+            "top": 2
+          },
+          "height": 24,
+          "type": "nine_slice",
+          "width": 130
+        }
+      }
+    }
+  },
+  "widget/text_field": {
+    "meta": {
+      "gui": {
+        "scaling": {
+          "border": 1,
+          "height": 20,
+          "type": "nine_slice",
+          "width": 200
+        }
+      }
+    }
+  },
+  "widget/text_field_highlighted": {
+    "meta": {
+      "gui": {
+        "scaling": {
+          "border": 1,
+          "height": 20,
+          "type": "nine_slice",
+          "width": 200
+        }
+      }
+    }
+  },
+  "world_list/error": {
+    "meta": null
+  },
+  "world_list/error_highlighted": {
+    "meta": null
+  },
+  "world_list/join": {
+    "meta": null
+  },
+  "world_list/join_highlighted": {
+    "meta": null
+  },
+  "world_list/marked_join": {
+    "meta": null
+  },
+  "world_list/marked_join_highlighted": {
+    "meta": null
+  },
+  "world_list/warning": {
+    "meta": null
+  },
+  "world_list/warning_highlighted": {
+    "meta": null
+  }
+}
