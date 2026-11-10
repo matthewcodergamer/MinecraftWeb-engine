@@ -94,8 +94,8 @@ jobs:
         run: |
           command -v "$CHROME"
           python3 -m http.server 8765 --bind 127.0.0.1 --directory build/web > /tmp/mc-http.log 2>&1 &
-          python3 scripts/cdp.py "http://127.0.0.1:8765/run.html?js=m2main" \\
-            --until-js "window.__mc && window.__mc.stage === 'm2-complete'" \\
+          python3 scripts/cdp.py "http://127.0.0.1:8765/run.html?js=m2main" \
+            --until-js "window.__mc && window.__mc.stage === 'm2-complete'" \
             --timeout 180 --eval "JSON.stringify(window.__mc)"
 
       - name: Confirm extracted server artifact
