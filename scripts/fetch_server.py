@@ -15,7 +15,6 @@ Output:
     <dest>/libraries/<maven path from libraries.list>
 """
 import argparse
-import concurrent.futures
 import hashlib
 import json
 import os
@@ -100,6 +99,21 @@ def parse_list(data, fields, label):
     return rows
 
 
+def verify_server_runtime(runtime_path):
+    """Fail closed unless this is the dedicated server runtime, not the client jar."""
+    with zipfile.ZipFile(runtime_path) as runtime:
+        names = set(runtime.namelist())
+    required = {
+        "net/minecraft/server/Main.class",
+        "net/minecraft/server/level/ServerLevel.class",
+    }
+    missing = sorted(required - names)
+    if missing:
+        raise RuntimeError("dedicated server runtime is missing required classes: " + ", ".join(missing))
+    if "net/minecraft/client/Minecraft.class" in names:
+        raise RuntimeError("extracted runtime unexpectedly contains the client Minecraft entry point")
+
+
 def extract_bundle(bundle_path, version, version_dir, libraries_dir):
     os.makedirs(version_dir, exist_ok=True)
     os.makedirs(libraries_dir, exist_ok=True)
@@ -125,6 +139,7 @@ def extract_bundle(bundle_path, version, version_dir, libraries_dir):
             if actual_hash.lower() != expected_hash.lower():
                 raise RuntimeError(f"SHA-256 mismatch for bundled server runtime: expected {expected_hash}, got {actual_hash}")
             os.replace(temporary, runtime)
+            verify_server_runtime(runtime)
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)
