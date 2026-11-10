@@ -1,0 +1,107 @@
+name: Verify real Minecraft client in browser
+
+on:
+  push:
+    paths:
+      - "src/**"
+      - "patches/**"
+      - "scripts/**"
+      - "web/**"
+      - "renderer/**"
+      - ".github/workflows/verify-client-browser.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "patches/**"
+      - "scripts/**"
+      - "web/**"
+      - "renderer/**"
+      - ".github/workflows/verify-client-browser.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  client-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-bindgen
+        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
+
+      - name: Fetch official Minecraft 26.3 client and asset index
+        env:
+          MC_DIR: ${{ runner.temp }}/minecraft
+          MC_VERSION: "26.3"
+        run: python3 scripts/fetch_minecraft.py --version "$MC_VERSION" --dest "$MC_DIR"
+
+      - name: Fetch TeaVM toolchain
+        run: |
+          python3 scripts/fetch_deps.py \
+            org.teavm:teavm-tooling:0.16.0 \
+            org.teavm:teavm-classlib:0.16.0 \
+            org.teavm:teavm-jso-apis:0.16.0 \
+            org.teavm:teavm-jso-impl:0.16.0 \
+            org.teavm:teavm-platform:0.16.0
+
+      - name: Build the actual Minecraft client entry point
+        env:
+          MC_DIR: ${{ runner.temp }}/minecraft
+          MC_VERSION: "26.3"
+          JDK: ${{ env.JAVA_HOME }}
+          PORT_HEAP: 6g
+          PORT_OPT: SIMPLE
+          PORT_LENIENT: "true"
+        run: bash scripts/build_client_probe.sh
+
+      - name: Stage client page and vanilla resources
+        env:
+          MC_DIR: ${{ runner.temp }}/minecraft
+          MC_VERSION: "26.3"
+        run: |
+          mkdir -p build/web
+          cp -R web/. build/web/
+          python3 scripts/pack_resources.py --mc-dir "$MC_DIR" --version "$MC_VERSION" --jar-only --out build/web/client-resources.bin
+          test -s build/web/client-resources.bin
+          test -s build/web/client-textures.bin
+          test -s build/web/assets/indexes/26.3.json || test -s "$MC_DIR/assets/indexes/$(python3 -c 'import json,os; print(json.load(open(os.environ["MC_DIR"]+"/versions/26.3/26.3.json"))["assetIndex"]["id"])').json"
+
+      - name: Build Rust WebGPU Body
+        run: bash scripts/build_body.sh
+
+      - name: Check browser and JavaScript syntax
+        run: |
+          google-chrome --version
+          python3 -m py_compile scripts/fetch_minecraft.py scripts/cdp.py
+          bash -n scripts/build_client_probe.sh scripts/build_body.sh
+
+      - name: Run real client singleplayer-to-Rust smoke test
+        env:
+          CHROME: /usr/bin/google-chrome
+        run: |
+          python3 -m http.server 8765 --bind 127.0.0.1 --directory build/web > /tmp/minecraft-http.log 2>&1 &
+          python3 scripts/cdp.py "http://127.0.0.1:8765/game.html?smoke-world=1" \
+            --preload-js "try{sessionStorage.setItem('mw_play_pass',String(Date.now()))}catch(e){}" \
+            --until-js "window.__mcBodyReady && window.mcBridge && window.mcBridge.state.sections > 0" \
+            --timeout 600 \
+            --eval "JSON.stringify({bodyReady:window.__mcBodyReady,javaReady:window.__mcJavaReady,sections:window.mcBridge&&window.mcBridge.state.sections,javaError:window.mcBridge&&window.mcBridge.state.error,stage:window.__mc&&window.__mc.stage})"
