@@ -100,6 +100,20 @@ jobs:
             --until-js "window.__mc && window.__mc.stage === 'm2-complete'" \
             --timeout 180 --eval "JSON.stringify(window.__mc)"
 
+      - name: Inspect dedicated server chunk APIs
+        env:
+          SERVER_JAR: ${{ runner.temp }}/minecraft/versions/26.3/server.jar
+        run: |
+          mkdir -p build
+          javap -classpath "$SERVER_JAR" -p \\
+            net.minecraft.server.MinecraftServer \\
+            net.minecraft.server.level.ServerLevel \\
+            net.minecraft.server.level.ServerChunkCache \\
+            net.minecraft.world.level.chunk.LevelChunk \\
+            net.minecraft.world.level.chunk.LevelChunkSection \\
+            > build/server-chunk-api.txt
+          grep -E 'getLevel|getAllLevels|getChunk|getSections|getBlockState|getLightEngine|getSectionYFromSectionIndex|isRunning|startServer' build/server-chunk-api.txt || true
+
       - name: Diagnose TeaVM build of the real dedicated server entry point
         continue-on-error: true
         env:
