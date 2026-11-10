@@ -2934,12 +2934,12 @@
         state.rust = 0.4;
         progress();
 
-        // Hard cap by device class: 4 chunks on phones / <=4 GB, 6 elsewhere.
-        // Both the Java brain's streaming radius and this draw radius stay
-        // inside Safari's per-tab working set (the old 8 caused "Aw Snap").
+        // Keep both the framebuffer and chunk working set conservative on
+        // touch devices and laptops with 8 GB RAM or less.
         const mem = Number(navigator.deviceMemory) || 0;
-        const lowMemory = MCInput.isTouch || (mem > 0 && mem <= 4);
-        body.set_render_distance(lowMemory ? 4 : 6);
+        const lowMemory = MCInput.isTouch || (mem > 0 && mem <= 8);
+        window.__mcDprCap = lowMemory ? 1 : 2;
+        body.set_render_distance(lowMemory ? 2 : 6);
         // The scene target now matches the swap-chain format, so the grade is
         // valid on BGRA as well; `?post=0` keeps the direct path for A/B tests.
         const preferred = navigator.gpu.getPreferredCanvasFormat
