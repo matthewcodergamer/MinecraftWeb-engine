@@ -32,11 +32,28 @@ The expected output includes:
 The `Verify dedicated server artifact` GitHub Actions workflow runs the offline
 extractor tests and fetches/verifies the official 26.3 artifact.
 
-## What is not established yet
+## Server-first TeaVM bootstrap probe
 
-This artifact milestone does **not** claim that the server runs under TeaVM or that
-world generation works in the browser. The existing `scripts/build.sh` still targets
-the client JAR and client entry points. The existing `ChunkBridge` still imports
+The existing build script now has an opt-in server-first classpath. The normal
+client build is unchanged. After fetching both artifacts, run:
+
+```sh
+python3 scripts/fetch_minecraft.py --version 26.3 --dest "$MC_DIR"
+python3 scripts/fetch_server.py --version 26.3 --dest "$MC_DIR"
+MC_SERVER_JAR="$MC_DIR/versions/26.3/server.jar" \
+MC_SERVER_LIB_LIST="$MC_DIR/versions/26.3/server-libraries.list" \
+MC_DIR="$MC_DIR" bash scripts/build_server_probe.sh
+```
+
+The probe compiles the existing built-in registry bootstrap entry point
+(`mcport.M2Main`) with the extracted dedicated-server runtime and its bundled
+libraries ahead of the client artifacts. CI runs this build to expose actual
+TeaVM linkage problems without changing the production client entry point.
+
+This proves only that the server-first classpath can be presented to TeaVM and
+that the built-in bootstrap can be compiled. It does **not** claim that
+`net.minecraft.server.Main` runs under TeaVM or that a server level/world
+generation works in the browser. The existing `ChunkBridge` still imports
 `Minecraft`, `TitleScreen`, and `FrameLoop`.
 
 The migration matrix also records these prerequisites as unfinished:
