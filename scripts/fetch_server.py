@@ -168,9 +168,9 @@ def extract_bundle(bundle_path, version, version_dir, libraries_dir):
                     os.unlink(temporary)
 
         library_manifest = os.path.join(version_dir, "server-libraries.list")
-        with open(library_manifest, "w", encoding="utf-8", newline="\\n") as output:
+        with open(library_manifest, "w", encoding="utf-8") as output:
             for _, _, library_path in library_rows:
-                output.write(library_path + "\\n")
+                output.write(library_path + "\n")
     return runtime, len(library_rows)
 
 
