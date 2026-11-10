@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline tests for the Mojang server bundle extractor."""
 import hashlib
+import io
 import os
 import sys
 import tempfile
@@ -13,7 +14,11 @@ import fetch_server
 
 class FetchServerTests(unittest.TestCase):
     def test_extracts_and_verifies_runtime_and_libraries(self):
-        runtime_bytes = b"synthetic server runtime jar"
+        runtime_stream = io.BytesIO()
+        with zipfile.ZipFile(runtime_stream, "w") as runtime_archive:
+            runtime_archive.writestr("net/minecraft/server/Main.class", b"main")
+            runtime_archive.writestr("net/minecraft/server/level/ServerLevel.class", b"level")
+        runtime_bytes = runtime_stream.getvalue()
         library_bytes = b"synthetic bundled library"
         runtime_hash = hashlib.sha256(runtime_bytes).hexdigest()
         library_hash = hashlib.sha256(library_bytes).hexdigest()
@@ -45,7 +50,11 @@ class FetchServerTests(unittest.TestCase):
                 fetch_server.safe_output(temporary, "../outside.jar")
 
     def test_rejects_wrong_release_entry(self):
-        runtime_bytes = b"runtime"
+        runtime_stream = io.BytesIO()
+        with zipfile.ZipFile(runtime_stream, "w") as runtime_archive:
+            runtime_archive.writestr("net/minecraft/server/Main.class", b"main")
+            runtime_archive.writestr("net/minecraft/server/level/ServerLevel.class", b"level")
+        runtime_bytes = runtime_stream.getvalue()
         runtime_hash = hashlib.sha256(runtime_bytes).hexdigest()
         with tempfile.TemporaryDirectory() as temporary:
             bundle = os.path.join(temporary, "server-bundled.jar")
