@@ -144,8 +144,8 @@ def extract_bundle(bundle_path, version, version_dir, libraries_dir):
             if os.path.exists(temporary):
                 os.unlink(temporary)
 
-        library_rows = parse_list(bundle.read("META-INF/libraries.list"), 2, "libraries.list")
-        for expected_hash, library_path in library_rows:
+        library_rows = parse_list(bundle.read("META-INF/libraries.list"), 3, "libraries.list")
+        for expected_hash, _library_coordinate, library_path in library_rows:
             if len(expected_hash) != 64:
                 raise RuntimeError(f"unexpected library hash format for {library_path}")
             destination = safe_output(libraries_dir, library_path)
