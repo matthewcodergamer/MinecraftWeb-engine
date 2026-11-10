@@ -79,6 +79,25 @@ jobs:
           PORT_LENIENT: "true"
         run: bash scripts/build_server_probe.sh
 
+      - name: Prepare browser resources for bootstrap smoke test
+        env:
+          MC_DIR: ${{ runner.temp }}/minecraft
+          MC_VERSION: "26.3"
+        run: |
+          mkdir -p build/web
+          cp -R web/. build/web/
+          python3 scripts/pack_resources.py --mc-dir "$MC_DIR" --version "$MC_VERSION" --jar-only --out build/web/client-resources.bin
+
+      - name: Run server-first bootstrap in headless Chrome
+        env:
+          CHROME: /usr/bin/google-chrome
+        run: |
+          command -v "$CHROME"
+          python3 -m http.server 8765 --bind 127.0.0.1 --directory build/web > /tmp/mc-http.log 2>&1 &
+          python3 scripts/cdp.py "http://127.0.0.1:8765/run.html?js=m2main" \\
+            --until-js "window.__mc && window.__mc.stage === 'm2-complete'" \\
+            --timeout 180 --eval "JSON.stringify(window.__mc)"
+
       - name: Confirm extracted server artifact
         env:
           SERVER_JAR: ${{ runner.temp }}/minecraft/versions/26.3/server.jar
