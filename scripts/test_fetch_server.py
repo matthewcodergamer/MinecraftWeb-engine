@@ -29,7 +29,7 @@ class FetchServerTests(unittest.TestCase):
                 archive.writestr("META-INF/versions.list",
                                  f"{runtime_hash}\t26.3\t26.3/server-26.3.jar\n")
                 archive.writestr("META-INF/libraries.list",
-                                 f"{library_hash}\torg/example/demo/1.0/demo-1.0.jar\n")
+                                 f"{library_hash}\torg.example:demo:1.0\torg/example/demo/1.0/demo-1.0.jar\n")
                 archive.writestr("META-INF/versions/26.3/server-26.3.jar", runtime_bytes)
                 archive.writestr("META-INF/libraries/org/example/demo/1.0/demo-1.0.jar", library_bytes)
 
