@@ -24,11 +24,23 @@ to M2c.
 
 ## 2. Repo reality (important)
 
-This repository does **not** yet compile the Java client to WASM. The current build is
-TeaVM → JavaScript: `build/web/clientmain.js` (~279 MB) boots the real Minecraft 26.3
-client through registries/bootstrap and now reaches window creation, where it stops on a
-Vulkan feature-struct probe (`VkPhysicalDeviceFeatures2 … required member null`). There is
-no world generation, game loop or rendering in the browser build yet.
+The Java client is compiled by TeaVM to JavaScript (not WASM): `ClientMain`
+calls Mojang's real `net.minecraft.client.main.Main`. The browser port does not
+pretend that a graphics context exists. It routes renderpearl's preferred backend
+to the custom WebGPU implementation (`GraphicsPatches` /
+`WebGpuBackend`), creates an SDL-compatible DOM canvas, and redirects the
+Vulkan feature-table bootstrap away from LWJGL's Vulkan structs
+(`patches/rules.txt`). The Java brain runs in an off-screen iframe in the hybrid
+page; `web/bridge.js` forwards its real client-level section snapshots to the
+Rust Body in the parent page.
+
+The old `VkPhysicalDeviceFeatures2 … required member null` note above was the
+historical blocker that motivated those targeted patches; it is not proof that
+the current code still fails there. The dedicated CI workflow
+`verify-client-browser.yml` now builds the actual `ClientMain`, builds the Rust
+WebGPU Body, launches an isolated singleplayer smoke world, and waits for a real
+Java section to reach the Rust bridge. Until that browser workflow passes, do
+not treat world generation or Java-to-Rust delivery as verified.
 
 Consequences:
 
