@@ -4,16 +4,22 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="icon" type="image/png" sizes="16x16" href="ui/icon_16x16.png">
+<link rel="icon" type="image/png" sizes="32x32" href="ui/icon_32.png">
 <title>Minecraft</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; overscroll-behavior: none; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; overflow-x: hidden; overscroll-behavior: none; }
   body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   #mc-canvas { position: fixed; inset: 0; }
   #boot { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
     color: #ddd; font: 14px/1.5 system-ui, sans-serif; background: #1e1e1e; z-index: 10; }
   #boot .bar { width: min(420px, 80vw); height: 6px; background: #333; margin-top: 12px; }
   #boot .bar div { height: 100%; width: 0; background: #e8e8e8; transition: width .2s; }
-  #boot pre { color: #f88; max-width: 90vw; white-space: pre-wrap; font-size: 12px; }
+  #boot pre { color: #fff; background: rgba(150,20,20,.95); border: 2px solid #ff5555; border-radius: 4px;
+    padding: 10px 12px; margin: 14px 0 0; max-width: min(720px, 92vw); max-height: 42vh; overflow: auto;
+    white-space: pre-wrap; font: 12px/1.45 ui-monospace, monospace; display: none;
+    box-shadow: 0 4px 18px rgba(0,0,0,.6); }
+  #boot pre.show { display: block; }
   html.embedded #boot { display: none !important; }
   html.embedded #stats { display: none !important; }
   html.embedded, html.embedded body { background: #000; }
@@ -40,6 +46,9 @@
 'use strict';
 const params = new URLSearchParams(location.search);
 const embedded = params.get('embedded') === '1';
+// All game parts live on the Hugging Face Space. The same files are also
+// available next to this page, which is used as an offline fallback.
+const HF_BASE = 'https://huggingface.co/spaces/matthewcodergamer/minecraft-browser/resolve/main/';
 if (embedded) document.documentElement.classList.add('embedded');
 // Direct hits on the canvas host must pass through the ad-supported launcher.
 if (!embedded) {
@@ -72,6 +81,18 @@ if (params.has('name') || params.has('seed') || params.has('mode')) {
     bonus: params.get('bonus') === '1',
   };
 }
+function ackWorld(type) {
+  // Tell the owning page the brain has the settings and will start generating.
+  if (window.parent === window) return;
+  try {
+    window.parent.postMessage({
+      source: 'mc-brain',
+      type: 'world-ack',
+      request: type,
+      world: window.__mcWorldRequested || null,
+    }, '*');
+  } catch (e) { /* ignore */ }
+}
 window.addEventListener('message', (event) => {
   const data = event.data;
   if (!data || data.source !== 'mc-host') return;
@@ -79,6 +100,7 @@ window.addEventListener('message', (event) => {
     window.__mcWorldRequested = data.world || {};
     window.__mcWorldAuto = true;
     window.__mcWorldImport = null;
+    ackWorld(data.type);
   } else if (data.type === 'world-import') {
     // Let the Java layer pick up the world metadata and the stored manifest.
     window.__mcWorldRequested = data.world || {};
@@ -89,6 +111,7 @@ window.addEventListener('message', (event) => {
       id: (data.world && data.world.id) || null,
     };
     window.__mcWorldAuto = false;
+    ackWorld(data.type);
   } else if (data.type === 'world-stop') {
     window.__mcWorldRequested = null;
     window.__mcWorldImport = null;
@@ -111,7 +134,12 @@ const bar = (f) => {
 };
 const fail = (t) => {
   const el = document.getElementById('boot-err');
-  if (el) el.textContent += t + '\n';
+  if (el) {
+    el.textContent += t + '\n';
+    el.classList.add('show');
+  }
+  const boot = document.getElementById('boot');
+  if (boot) boot.style.display = 'flex';
   window.__mc = Object.assign(window.__mc || {}, { stage: 'failed', error: t });
   if (window.mcBridge) mcBridge.javaError(t);
 };
@@ -149,6 +177,57 @@ function loadClassicScript(src) {
   });
 }
 
+async function timedFetch(url, options, ms) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms || 45000);
+  try {
+    return await fetch(url, Object.assign({ cache: 'no-store' }, options || {}, { signal: ctrl.signal }));
+  } catch (e) {
+    const err = new Error((e.name === 'AbortError'
+      ? 'timed out after ' + Math.round((ms || 45000) / 1000) + 's'
+      : e.name + ': ' + e.message) + ' — ' + url);
+    err.url = url;
+    err.kind = 'network';
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Reads one part straight off the response body so the progress bar follows
+// the real bytes received (ReadableStream), not a timer.
+async function downloadPart(url, expected, onBytes) {
+  const res = await timedFetch(url, {}, 60000);
+  if (!res.ok) {
+    const err = new Error('HTTP ' + res.status + ' ' + res.statusText + ' — ' + url);
+    err.status = res.status;
+    err.url = url;
+    err.kind = 'http';
+    throw err;
+  }
+  const chunks = [];
+  let received = 0;
+  if (res.body && res.body.getReader) {
+    const reader = res.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      onBytes && onBytes(value.length, received);
+    }
+  } else {
+    const view = new Uint8Array(await res.arrayBuffer());
+    chunks.push(view);
+    received = view.length;
+    onBytes && onBytes(received, received);
+  }
+  if (expected && received !== expected) {
+    console.warn('part size mismatch: expected ' + expected + ', got ' + received + ' — ' + url);
+  }
+  return chunks;
+}
+
 async function loadBrain() {
   const explicit = params.get('js');
   if (explicit) {
@@ -158,10 +237,13 @@ async function loadBrain() {
   // GitHub Pages caps a single file at 100 MB, so the ~266 MiB TeaVM bundle
   // ships as parts and is reassembled here. Falls back to a single script.
   let manifest = null;
-  try {
-    const r = await fetch('./clientmain.parts.json', { cache: 'no-cache' });
-    if (r.ok) manifest = await r.json();
-  } catch (e) { manifest = null; }
+  let manifestBase = './';
+  for (const base of [HF_BASE, './']) {
+    try {
+      const r = await timedFetch(base + 'clientmain.parts.json', {}, 15000);
+      if (r.ok) { manifest = await r.json(); manifestBase = base; break; }
+    } catch (e) { console.warn('manifest ' + base + ' failed', e); }
+  }
   if (!manifest || !Array.isArray(manifest.parts) || !manifest.parts.length) {
     await loadClassicScript('clientmain.js');
     return;
@@ -170,53 +252,75 @@ async function loadBrain() {
   const downloadTotal = manifest.downloadTotal
     || parts.reduce((n, p) => n + (p.size || 0), 0);
   const rawTotal = manifest.total || downloadTotal;
+  const received = new Array(parts.length).fill(0);
   const buffers = new Array(parts.length);
-  const got = new Array(parts.length).fill(0);
-  const mb = (n) => (n / 1048576).toFixed(0);
+  const mb = (n) => (n / 1048576).toFixed(1);
   const report = () => {
-    const sum = got.reduce((a, b) => a + b, 0);
+    const sum = received.reduce((a, b) => a + b, 0);
     bar(0.9 + 0.08 * (sum / (downloadTotal || 1)));
-    msg('Loading Minecraft ' + mb(sum) + ' / ' + mb(downloadTotal) + ' MiB');
+    msg('Downloading Java brain ' + mb(sum) + ' / ' + mb(downloadTotal) + ' MiB');
   };
-  // Several smaller gzip parts download in parallel, then the whole stream is
-  // decompressed in one pass. A single uncompressed fallback also works.
+  report();
+  // Download the gzip parts in parallel, each with a ReadableStream reader so
+  // progress is measured in received bytes. Hugging Face is the primary source;
+  // the same-origin copy is a fallback.
   let next = 0;
   const worker = async () => {
-    while (true) {
+    for (;;) {
       const i = next++;
       if (i >= parts.length) return;
       const name = parts[i].name;
-      // The launcher pre-downloads the parts into CacheStorage, so this is
-      // normally an instant local read instead of a second 23 MB download.
-      let cached = null;
-      try {
-        if ('caches' in window) {
-          const c = await caches.open('mw-game-v1');
-          const r = await c.match(new URL('./' + name, location.href).href);
-          if (r) cached = await r.arrayBuffer();
+      const expected = parts[i].size || 0;
+      const sources = manifestBase === './' ? ['./'] : [manifestBase, './'];
+      let lastError = null;
+      let done = false;
+      for (const base of sources) {
+        try {
+          buffers[i] = await downloadPart(base + name, expected, (n, got) => {
+            received[i] = got;
+            report();
+          });
+          done = true;
+          break;
+        } catch (e) {
+          lastError = e;
+          received[i] = 0;
+          report();
+          console.warn('part ' + name + ' from ' + base + ' failed', e);
         }
-      } catch (e) {}
-      buffers[i] = cached || await mcBridge.fetchAsset('./' + name, {
-        retries: 2,
-        onProgress: (fraction, gotBytes) => { got[i] = gotBytes; report(); },
-      });
-      got[i] = buffers[i].byteLength;
+      }
+      if (!done) throw lastError || new Error('failed to download ' + name);
       report();
     }
   };
   await Promise.all(Array.from({ length: Math.min(3, parts.length) }, worker));
-  const packed = new Blob(buffers);
+  // buffers[i] is an array of stream chunks; flatten them into one Blob.
+  const packed = new Blob([].concat.apply([], buffers));
   let scriptData = packed;
   if (manifest.encoding === 'gzip') {
     if (typeof DecompressionStream !== 'function') {
       throw new Error('This browser cannot decompress the client bundle (no DecompressionStream gzip).');
     }
-    msg('Unpacking Minecraft ' + mb(rawTotal) + ' MiB…');
+    msg('Extracting Java Brain…');
     bar(0.985);
     const stream = packed.stream().pipeThrough(new DecompressionStream('gzip'));
-    scriptData = new Blob([await new Response(stream).arrayBuffer()], { type: 'text/javascript' });
+    const reader = stream.getReader();
+    const chunks = [];
+    let extracted = 0;
+    for (;;) {
+      const step = await reader.read();
+      if (step.done) break;
+      chunks.push(step.value);
+      extracted += step.value.length;
+      if (rawTotal) {
+        bar(Math.min(1, 0.985 + 0.015 * (extracted / rawTotal)));
+        msg('Extracting Java Brain… ' + mb(extracted) + ' / ' + mb(rawTotal) + ' MiB');
+      }
+    }
+    scriptData = new Blob(chunks, { type: 'text/javascript' });
   }
   bar(1);
+  msg('Starting Java client…');
   await loadClassicScript(URL.createObjectURL(scriptData));
 }
 

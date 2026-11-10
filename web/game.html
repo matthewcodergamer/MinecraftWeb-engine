@@ -16,7 +16,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#ef323d">
-<link rel="icon" href="ui/dirt_block.png">
+<link rel="icon" type="image/png" sizes="32x32" href="ui/icon_32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="ui/icon_16x16.png">
 <link rel="stylesheet" href="ui/sprites/sprites.css">
 <title>Minecraft</title>
 <style>
@@ -34,15 +35,19 @@
     --kb: 0px;
   }
   html, body {
-    margin: 0; height: 100%; background: #000; overflow: hidden;
-    overscroll-behavior: none; -webkit-user-select: none; user-select: none;
+    margin: 0; height: 100%; background: #000; overflow: hidden; overflow-x: hidden;
+    max-width: 100%; overscroll-behavior: none; -webkit-user-select: none; user-select: none;
     -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
     font-family: var(--mc-font); touch-action: none;
     /* The Minecraft font is a bitmap atlas converted to a vector WOFF. Keep
        the browser from synthesising weights/italics (which smears the pixel
        edges) and from kerning glyphs apart. */
     font-synthesis: none; font-kerning: none; font-variant-ligatures: none;
-    -webkit-font-smoothing: antialiased; text-rendering: geometricPrecision;
+    /* The font is the real ascii.png atlas vectorised into a WOFF. Disable
+       grayscale smoothing so it stays pixel-crisp like Java instead of
+       blurring at fractional GUI scales. */
+    -webkit-font-smoothing: none; -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeSpeed;
   }
   button { font-family: inherit; }
   /* Pixel text must never be clipped by a fixed-height line box. */
@@ -1182,6 +1187,7 @@
       java: 0,
       bodyReady: false,
       javaReady: params.get('java') === '0',
+      worldAck: false,
       brainMissing: false,
       minUntil: performance.now() + 700,
       firstChunk: false,
@@ -1324,8 +1330,21 @@
     }
 
     // Java-only failures are survivable: the Rust body still draws its arena.
-    function offerRendererOnly(note) {
+    function enableRendererOnly() {
+      state.failed = false;
+      state.javaReady = true;
+      state.firstChunk = true;
+      state.firstChunkAt = performance.now() - 5000;
+      loading.classList.remove('error');
+      errorBox.style.display = 'none';
+      errorBox.textContent = '';
+      errorActions.innerHTML = '';
+      maybeFinish();
+    }
+
+    function offerRendererOnly(note, auto) {
       if (!state.bodyReady || state.done) return;
+      if (auto) { enableRendererOnly(); return; }
       if ($('renderer-only')) return;
       if (note) { errorBox.style.display = 'block'; errorBox.textContent = note; }
       const button = document.createElement('button');
@@ -1333,17 +1352,7 @@
       button.className = 'mc-button sprite-widget-button';
       button.style.width = '240px';
       button.textContent = 'Continue with renderer only';
-      button.onclick = () => {
-        state.failed = false;
-        state.javaReady = true;
-        state.firstChunk = true;
-        state.firstChunkAt = performance.now() - 5000;
-        loading.classList.remove('error');
-        errorBox.style.display = 'none';
-        errorBox.textContent = '';
-        errorActions.innerHTML = '';
-        maybeFinish();
-      };
+      button.onclick = enableRendererOnly;
       button.id = 'renderer-only';
       errorActions.appendChild(button);
     }
@@ -1404,6 +1413,7 @@
       if (!state.bodyReady || !state.javaReady || !state.firstChunk) return;
       if (now < state.minUntil || now < state.firstChunkAt + 150) return;
       state.done = true;
+      if (state.javaFallbackTimer) { clearInterval(state.javaFallbackTimer); state.javaFallbackTimer = 0; }
       window.__mcLoadingFinished = true;
       progress();
       loading.classList.add('done');
@@ -1505,16 +1515,44 @@
     function postToBrain(message) {
       const frame = $('mc-brain');
       if (!frame || !frame.contentWindow) return false;
+      const msg = Object.assign({ source: 'mc-host' }, message);
+      // The brain iframe starts as about:blank and only points at play.html
+      // once the boot probe finds the parts. Queue world packets until then,
+      // otherwise "Create New World" is silently dropped.
+      const src = frame.getAttribute('src') || '';
+      if (!src || src === 'about:blank') {
+        (state.brainQueue || (state.brainQueue = [])).push(msg);
+        return false;
+      }
       try {
-        frame.contentWindow.postMessage(Object.assign({ source: 'mc-host' }, message), '*');
+        frame.contentWindow.postMessage(msg, '*');
         return true;
       } catch (e) { return false; }
+    }
+
+    function flushBrainQueue() {
+      const frame = $('mc-brain');
+      if (!frame || !frame.contentWindow) return;
+      const queue = state.brainQueue || [];
+      state.brainQueue = [];
+      for (const msg of queue) {
+        try { frame.contentWindow.postMessage(msg, '*'); } catch (e) { /* ignore */ }
+      }
     }
 
     window.addEventListener('message', (event) => {
       const data = event.data;
       if (!data || data.source !== 'mc-brain') return;
-      if (data.type === 'world-upgrade-progress') {
+      if (data.type === 'world-ack') {
+        // The Java brain received the seed / game mode and started generating.
+        state.worldAck = true;
+        if (!state.done && !state.failed) status('Java brain connected — generating world…');
+      } else if (data.type === 'ready') {
+        state.javaReady = true;
+        state.java = 1;
+        if (!state.done && !state.failed) status('Java brain ready — waiting for terrain…');
+        progress();
+      } else if (data.type === 'world-upgrade-progress') {
         const total = Math.max(1, Number(data.total) || 1);
         const done = Math.max(0, Math.min(total, Number(data.done) || 0));
         $('wu-total').textContent = String(total);
@@ -2361,7 +2399,11 @@
     /* ------------------------------------------------------------ game start */
     function startGame(world) {
       if (!state.menuOpen) return;
-      if (!state.booted) { toast('Still starting up...'); return; }
+      if (state.failed) { toast('The renderer failed to start.'); return; }
+      // Do not abort when the WebGPU body is still booting: the loading screen
+      // is driven by maybeFinish() and will complete as soon as bodyReady and
+      // javaReady land. Aborting here was why Create New World looked dead on
+      // a cold load.
       state.menuOpen = false;
       state.currentWorld = world || null;
       state.minUntil = performance.now() + 700;
@@ -2386,6 +2428,20 @@
           }
           progress();
           maybeFinish();
+          // If the Java brain finishes downloading but never emits a section
+          // (e.g. the deployed TeaVM build throws NoSuchMethodError), do not
+          // leave the player on a dead loading screen: continue with the Rust
+          // renderer once the brain has clearly stopped making progress.
+          if (state.javaFallbackTimer) clearInterval(state.javaFallbackTimer);
+          state.javaFallbackTimer = setInterval(() => {
+            if (state.done || state.failed || state.javaReady) {
+              clearInterval(state.javaFallbackTimer); state.javaFallbackTimer = 0; return;
+            }
+            if (mcBridge.state.progress >= 0.98) {
+              clearInterval(state.javaFallbackTimer); state.javaFallbackTimer = 0;
+              offerRendererOnly('The Java client stopped before producing a world. Continuing with the built-in renderer.', true);
+            }
+          }, 4000);
         }, 80);
       }, 280);
     }
@@ -2481,7 +2537,10 @@
           const icon = slot.querySelector('.item');
           if (icon) icon.style.display = creative ? '' : 'none';
         }
-        statusHud.classList.toggle('show', on && !creative);
+        // `on` was never in scope here, so this threw and aborted
+        // beginWorld() before startGame(). Mirror the current HUD visibility.
+        const visible = hotbar.classList.contains('show');
+        statusHud.classList.toggle('show', visible && !creative);
       },
       openInventory(on = true) {
         $('inventory').classList.toggle('open', on);
@@ -2802,8 +2861,10 @@
               brain = (await fetch('./clientmain.js', { method: 'HEAD' })).ok;
             }
           } catch (e) { brain = false; }
-          if (brain) $('mc-brain').src = 'play.html?embedded=1&scale=0.5&stats=0';
-          else {
+          if (brain) {
+            $('mc-brain').addEventListener('load', flushBrainQueue);
+            $('mc-brain').src = 'play.html?embedded=1&scale=0.5&stats=0';
+          } else {
             console.warn('clientmain.js not deployed — renderer-only mode');
             state.javaReady = true;
             state.java = 1;
