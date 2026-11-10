@@ -39,11 +39,14 @@ jobs:
         run: python3 scripts/fetch_server.py --version 26.3 --dest "$RUNNER_TEMP/minecraft"
 
       - name: Confirm extracted server artifact
+        env:
+          SERVER_JAR: \${{ runner.temp }}/minecraft/versions/26.3/server.jar
         run: |
-          test -s "$RUNNER_TEMP/minecraft/versions/26.3/server.jar"
+          test -s "$SERVER_JAR"
           python3 - <<'PY'
+          import os
           import zipfile
-          path = "$RUNNER_TEMP/minecraft/versions/26.3/server.jar"
+          path = os.environ["SERVER_JAR"]
           with zipfile.ZipFile(path) as jar:
               names = set(jar.namelist())
           assert "net/minecraft/server/Main.class" in names
