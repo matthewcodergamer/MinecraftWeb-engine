@@ -6,11 +6,15 @@ on:
       - "scripts/fetch_server.py"
       - "scripts/build.sh"
       - "scripts/build_server_probe.sh"
+      - "scripts/build.sh"
+      - "scripts/build_server_probe.sh"
       - "scripts/test_fetch_server.py"
       - ".github/workflows/verify-server-artifact.yml"
   pull_request:
     paths:
       - "scripts/fetch_server.py"
+      - "scripts/build.sh"
+      - "scripts/build_server_probe.sh"
       - "scripts/test_fetch_server.py"
       - ".github/workflows/verify-server-artifact.yml"
   workflow_dispatch:
