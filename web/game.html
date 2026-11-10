@@ -2428,19 +2428,22 @@
           }
           progress();
           maybeFinish();
-          // If the Java brain finishes downloading but never emits a section
-          // (e.g. the deployed TeaVM build throws NoSuchMethodError), do not
-          // leave the player on a dead loading screen: continue with the Rust
-          // renderer once the brain has clearly stopped making progress.
+          // The brain's reported progress reaches 1.0 when its JavaScript has
+          // been extracted, not when Java has generated a world. Boot from
+          // there takes another minute or two, so do not treat 100% download
+          // as a stall. Java errors surface through mcBridge.onError; this is
+          // only the last-resort net for a brain that goes silent forever.
           if (state.javaFallbackTimer) clearInterval(state.javaFallbackTimer);
+          let fallbackSince = 0;
           state.javaFallbackTimer = setInterval(() => {
             if (state.done || state.failed || state.javaReady) {
               clearInterval(state.javaFallbackTimer); state.javaFallbackTimer = 0; return;
             }
-            if (mcBridge.state.progress >= 0.98) {
-              clearInterval(state.javaFallbackTimer); state.javaFallbackTimer = 0;
-              offerRendererOnly('The Java client stopped before producing a world. Continuing with the built-in renderer.', true);
-            }
+            if (mcBridge.state.progress < 0.98) { fallbackSince = 0; return; }
+            if (!fallbackSince) { fallbackSince = performance.now(); return; }
+            if (performance.now() - fallbackSince < 240000) return;
+            clearInterval(state.javaFallbackTimer); state.javaFallbackTimer = 0;
+            offerRendererOnly('The Java client stopped before producing a world. Continuing with the built-in renderer.', true);
           }, 4000);
         }, 80);
       }, 280);
@@ -2825,6 +2828,9 @@
     };
     mcBridge.state.onJavaReady = () => { state.javaReady = true; state.java = 1; progress(); };
     mcBridge.state.onError = (text) => {
+      // A late crash after the renderer fallback must not yank a playing
+      // session back to the error screen.
+      if (state.done) { console.warn('Java after fallback: ' + text); return; }
       fail(new Error('Java: ' + text), 'The Rust renderer is running. You can continue without the Java client.');
       offerRendererOnly(null);
     };

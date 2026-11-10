@@ -36,18 +36,33 @@
     if (i > 0 && G.obj[i]) { G.obj[i] = null; G.free.push(i); }
   }
 
+  /** Rejects if `promise` does not settle in `ms`; the timer is always cleared. */
+  function withTimeout(promise, ms, label) {
+    let timer = 0;
+    const guard = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(label + ' timed out after ' + Math.round(ms / 1000) + 's')), ms);
+    });
+    return Promise.race([promise, guard]).finally(() => clearTimeout(timer));
+  }
+
   /** Called by the host page before Java starts; resolves to false when WebGPU is unavailable. */
   G.init = async function () {
     if (!navigator.gpu) return false;
     const params = new URLSearchParams(location.search);
     if (params.get('gpu') === 'webgl2') return false;
     try {
-      G.adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+      // Two WebGPU contexts on one page (the Rust body plus this Java brain) can
+      // leave requestAdapter pending forever on some drivers. Never let that
+      // stall the boot screen: hang up and fall back to WebGL2 instead. 30s is
+      // the ceiling: hardware GPUs answer in well under a second, while
+      // software rasterizers (SwiftShader) can take ~20s on a busy machine.
+      G.adapter = await withTimeout(navigator.gpu.requestAdapter({ powerPreference: 'high-performance' }),
+        30000, 'WebGPU adapter request');
       if (!G.adapter) return false;
       const want = ['depth32float-stencil8', 'float32-filterable', 'rg11b10ufloat-renderable', 'indirect-first-instance'];
       const requiredFeatures = want.filter((f) => G.adapter.features.has(f));
       const L = G.adapter.limits;
-      G.device = await G.adapter.requestDevice({
+      G.device = await withTimeout(G.adapter.requestDevice({
         requiredFeatures,
         requiredLimits: {
           maxTextureDimension2D: L.maxTextureDimension2D,
@@ -63,7 +78,7 @@
           maxVertexBuffers: L.maxVertexBuffers,
           maxColorAttachments: L.maxColorAttachments,
         },
-      });
+      }, 20000, 'WebGPU device request'));
       G.features = new Set(requiredFeatures);
       G.queue = G.device.queue;
       G.device.lost.then((info) => { G.lost = info; console.error('WebGPU device lost: ' + info.message); });

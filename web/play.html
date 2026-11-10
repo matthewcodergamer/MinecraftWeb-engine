@@ -133,6 +133,9 @@ const bar = (f) => {
   if (window.mcBridge) mcBridge.setProgress(f, progressLabel);
 };
 const fail = (t) => {
+  // The Java client can report a fatal error more than once (crash report +
+  // shutdown path); keep the first message instead of stacking duplicates.
+  if (window.__mc && window.__mc.failedShown) return;
   const el = document.getElementById('boot-err');
   if (el) {
     el.textContent += t + '\n';
@@ -140,7 +143,7 @@ const fail = (t) => {
   }
   const boot = document.getElementById('boot');
   if (boot) boot.style.display = 'flex';
-  window.__mc = Object.assign(window.__mc || {}, { stage: 'failed', error: t });
+  window.__mc = Object.assign(window.__mc || {}, { stage: 'failed', error: t, failedShown: true });
   if (window.mcBridge) mcBridge.javaError(t);
 };
 Error.stackTraceLimit = 100;
@@ -369,6 +372,14 @@ function showStats() {
       }
     }, 100);
     main([]);
+    // The Java client reports fatal startup errors by setting
+    // window.__mc.stage = 'failed'. Mirror that on the boot screen (and in the
+    // owning page) instead of leaving the player on "Starting Java client…".
+    const watchJava = setInterval(() => {
+      if (!window.__mc || window.__mc.stage !== 'failed') return;
+      clearInterval(watchJava);
+      fail(String(window.__mc.error || 'The Java client stopped while starting.'));
+    }, 500);
   } catch (e) {
     fail(String(e && e.stack || e));
   }
