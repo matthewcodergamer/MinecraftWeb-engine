@@ -119,7 +119,14 @@ def main():
             "--no-proxy-server",
             "--no-first-run", "--window-size=1280,720", "--enable-unsafe-webgpu", "about:blank"]
     if not a.gpu:
-        args.insert(2, "--use-angle=swiftshader")
+        # GitHub-hosted Linux runners have no physical GPU; explicitly select
+        # SwiftShader's Vulkan backend for WebGPU as well as ANGLE for WebGL.
+        args[1:1] = [
+            "--enable-features=Vulkan",
+            "--use-vulkan=swiftshader",
+            "--disable-vulkan-surface",
+            "--use-angle=swiftshader",
+        ]
     chrome = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     ok = False
     try:
