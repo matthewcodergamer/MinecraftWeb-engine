@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: verify-server-artifact-${{ github.head_ref || github.ref }}
+  group: verify-server-artifact-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
