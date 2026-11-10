@@ -84,12 +84,12 @@ class WS:
         finally:
             self.sock.settimeout(None)
 
-    def call(self, method, params=None, pump=None):
+    def call(self, method, params=None, pump=None, timeout_sec=10):
         self.next_id += 1
         mid = self.next_id
         self.send({"id": mid, "method": method, "params": params or {}})
         while True:
-            msg = self.recv(120)
+            msg = self.recv(timeout_sec)
             if msg is None:
                 raise TimeoutError(method)
             if msg.get("id") == mid:
@@ -102,7 +102,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("url")
     ap.add_argument("--until-js", default="window.__mc && /complete|failed/.test(window.__mc.stage)")
-    ap.add_argument("--timeout", type=float, default=120)
+    ap.add_argument("--timeout", type=float, default=600)
     ap.add_argument("--screenshot")
     ap.add_argument("--eval", action="append", default=[])
     ap.add_argument("--preload-js", help="JavaScript evaluated in every new document before page scripts")
@@ -174,11 +174,25 @@ def main():
             if msg:
                 pump(msg)
                 continue
-            r = ws.call("Runtime.evaluate", {"expression": f"!!({a.until_js})", "returnByValue": True}, pump=pump)
+            try:
+                r = ws.call("Runtime.evaluate", {"expression": f"!!({a.until_js})", "returnByValue": True},
+                            pump=pump, timeout_sec=10)
+            except TimeoutError:
+                print(f"{time.time() - t0:7.2f}s CDP evaluate stalled; main thread may be blocked", flush=True)
+                continue
             if r.get("result", {}).get("result", {}).get("value"):
                 ok = True
                 break
         print(f"{time.time() - t0:7.2f}s condition {'met' if ok else 'NOT met (timeout)'}", flush=True)
+        if not ok:
+            diagnostic_path = a.screenshot or "cdp-timeout.png"
+            try:
+                shot = ws.call("Page.captureScreenshot", {"format": "png"}, pump=pump, timeout_sec=10)
+                with open(diagnostic_path, "wb") as f:
+                    f.write(base64.b64decode(shot["result"]["data"]))
+                print(f"timeout screenshot -> {diagnostic_path}", flush=True)
+            except Exception as exc:
+                print(f"timeout screenshot unavailable: {type(exc).__name__}: {exc}", flush=True)
         assert_ok = True
         for expr in a.assert_js:
             r = ws.call("Runtime.evaluate", {"expression": f"!!({expr})", "returnByValue": True}, pump=pump)
