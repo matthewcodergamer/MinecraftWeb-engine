@@ -54,7 +54,3 @@ jobs:
           assert "net/minecraft/client/Minecraft.class" not in names
           print("Dedicated server classes present; client entry point absent.")
           PY
-
-# Re-run against the latest bundle parser changes.
-
-# Validate the three-column libraries.list parser.
