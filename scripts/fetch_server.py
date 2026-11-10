@@ -94,7 +94,7 @@ def parse_list(data, fields, label):
             continue
         columns = raw.split("\t")
         if len(columns) != fields:
-            raise RuntimeError(f"invalid {label} row {line_number}: expected {fields} tab-separated fields")
+            raise RuntimeError(f"invalid {label} row {line_number}: expected {fields} tab-separated fields, got {len(columns)}: {raw!r}")
         rows.append(columns)
     return rows
 
