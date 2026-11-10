@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 MC_VERSION="${MC_VERSION:-26.3}"
-MC_DIR="${MC_DIR:-$HOME/.minecraft}"
+MC_DIR="${MC_DIR:-$HOME/Library/Application Support/minecraft}"
 export MC_SERVER_JAR="${MC_SERVER_JAR:-$MC_DIR/versions/$MC_VERSION/server.jar}"
 export MC_SERVER_LIB_LIST="${MC_SERVER_LIB_LIST:-$MC_DIR/versions/$MC_VERSION/server-libraries.list}"
 [ -f "$MC_SERVER_JAR" ] || { echo "missing server runtime: $MC_SERVER_JAR (run scripts/fetch_server.py first)" >&2; exit 1; }
