@@ -1,0 +1,53 @@
+name: Verify dedicated server artifact
+
+on:
+  push:
+    paths:
+      - "scripts/fetch_server.py"
+      - "scripts/test_fetch_server.py"
+      - ".github/workflows/verify-server-artifact.yml"
+  pull_request:
+    paths:
+      - "scripts/fetch_server.py"
+      - "scripts/test_fetch_server.py"
+      - ".github/workflows/verify-server-artifact.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check Python syntax
+        run: python3 -m py_compile scripts/fetch_server.py scripts/test_fetch_server.py
+
+      - name: Test bundle extraction offline
+        run: python3 -m unittest discover -s scripts -p 'test_fetch_server.py' -v
+
+      - name: Fetch and verify official Minecraft 26.3 server
+        run: python3 scripts/fetch_server.py --version 26.3 --dest "$RUNNER_TEMP/minecraft"
+
+      - name: Confirm extracted server artifact
+        run: |
+          test -s "$RUNNER_TEMP/minecraft/versions/26.3/server.jar"
+          python3 - <<'PY'
+          import zipfile
+          path = "$RUNNER_TEMP/minecraft/versions/26.3/server.jar"
+          with zipfile.ZipFile(path) as jar:
+              names = set(jar.namelist())
+          assert "net/minecraft/server/Main.class" in names
+          assert "net/minecraft/server/level/ServerLevel.class" in names
+          assert "net/minecraft/client/Minecraft.class" not in names
+          print("Dedicated server classes present; client entry point absent.")
+          PY
