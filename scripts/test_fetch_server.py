@@ -37,12 +37,14 @@ class FetchServerTests(unittest.TestCase):
                 bundle, "26.3", os.path.join(temporary, "versions", "26.3"),
                 os.path.join(temporary, "libraries")
             )
-            self.assertEqual(open(runtime, "rb").read(), runtime_bytes)
+            with open(runtime, "rb") as extracted_runtime:
+                self.assertEqual(extracted_runtime.read(), runtime_bytes)
             self.assertEqual(count, 1)
             extracted_library = os.path.join(
                 temporary, "libraries", "org", "example", "demo", "1.0", "demo-1.0.jar"
             )
-            self.assertEqual(open(extracted_library, "rb").read(), library_bytes)
+            with open(extracted_library, "rb") as extracted_library_file:
+                self.assertEqual(extracted_library_file.read(), library_bytes)
 
     def test_rejects_path_traversal(self):
         with tempfile.TemporaryDirectory() as temporary:
