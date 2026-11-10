@@ -9,6 +9,8 @@ ROOT="$PWD"
 MC_DIR="${MC_DIR:-$HOME/Library/Application Support/minecraft}"
 MC_VERSION="${MC_VERSION:-26.3}"
 MC_JAR="$MC_DIR/versions/$MC_VERSION/$MC_VERSION.jar"
+MC_SERVER_JAR="${MC_SERVER_JAR:-}"
+MC_SERVER_LIB_LIST="${MC_SERVER_LIB_LIST:-$MC_DIR/versions/$MC_VERSION/server-libraries.list}"
 MC_JSON="$MC_DIR/versions/$MC_VERSION/$MC_VERSION.json"
 JDK="${JDK:-$MC_DIR/runtime/java-runtime-epsilon/osx/java-runtime-epsilon/jre.bundle/Contents/Home}"
 ENTRY="${1:?entry class}"
@@ -16,6 +18,17 @@ TARGET="${2:-js}"
 OUT="$ROOT/build/web"
 
 [ -f "$MC_JAR" ] || { echo "missing client jar: $MC_JAR" >&2; exit 1; }
+SERVER_LIBS=()
+if [ -n "$MC_SERVER_JAR" ]; then
+  [ -f "$MC_SERVER_JAR" ] || { echo "missing dedicated server jar: $MC_SERVER_JAR" >&2; exit 1; }
+  [ -f "$MC_SERVER_LIB_LIST" ] || { echo "missing server library manifest: $MC_SERVER_LIB_LIST (run scripts/fetch_server.py first)" >&2; exit 1; }
+  while IFS= read -r relative; do
+    [ -n "$relative" ] && SERVER_LIBS+=("$MC_DIR/libraries/$relative")
+  done < "$MC_SERVER_LIB_LIST"
+  for library in "${SERVER_LIBS[@]}"; do
+    [ -f "$library" ] || { echo "missing server library: $library" >&2; exit 1; }
+  done
+fi
 "$JDK/bin/java" -version 2>&1 | head -1
 
 # Minecraft's declared libraries (Java parts only; native jars are irrelevant in a browser).
@@ -58,6 +71,11 @@ cp -R src/compat/resources/. build/classes/ 2>/dev/null || true
 
 # Compat classes come first so they shadow the original library classes.
 IFS=: read -ra LIBARR <<< "$MC_LIBS"
+MC_TEA_CP=()
+if [ -n "$MC_SERVER_JAR" ]; then
+  MC_TEA_CP+=("$MC_SERVER_JAR" "${SERVER_LIBS[@]}")
+fi
+MC_TEA_CP+=("$MC_JAR" "${LIBARR[@]}")
 # TeaVM's Java class library + JS interop runtime (what replaces the JDK in the browser).
 TEAVM_RT=()
 for a in core classlib jso jso-apis jso-impl interop platform metaprogramming-api metaprogramming-impl extension-apis; do
@@ -68,5 +86,5 @@ TEAVM_RT+=("$ROOT/tools/lib/jzlib-1.1.3.jar")
 NAME="$(echo "${ENTRY##*.}" | tr 'A-Z' 'a-z').${TARGET/wasm/wasm}"
 [ "$TARGET" = js ] && NAME="${NAME%.js}.js"
 time "$JDK/bin/java" -Xss1g -Xmx${PORT_HEAP:-3g} -Dport.rules="$ROOT/patches/rules.txt" -Dport.lenientLinkage=${PORT_LENIENT:-true} ${PORT_JAVA_OPTS:-} -cp "build/tools:$TEAVM_CP" PortBuilder "$TARGET" "$ENTRY" "$OUT" "$NAME" \
-  "$ROOT/build/classes" "$MC_JAR" "${LIBARR[@]}" "${TEAVM_RT[@]}" 2>&1 | tee "build/$ENTRY.$TARGET.log" | grep -vE "^\s*at " | tail -${PORT_LOG_LINES:-60}
+  "$ROOT/build/classes" "${MC_TEA_CP[@]}" "${TEAVM_RT[@]}" 2>&1 | tee "build/$ENTRY.$TARGET.log" | grep -vE "^\s*at " | tail -${PORT_LOG_LINES:-60}
 exit "${PIPESTATUS[0]}"
