@@ -78,6 +78,14 @@ def main() -> int:
             f.write(r.read())
     version = json.load(open(vjson_path))
 
+    # The browser-side IndexedAssetSource patch reads this JSON from the
+    # packed resource archive. Fetch the small index metadata even when the
+    # external asset objects are intentionally omitted from a smoke build.
+    asset_index = version.get("assetIndex")
+    if asset_index and asset_index.get("url"):
+        index_dest = os.path.join(args.dest, "assets", "indexes", f"{asset_index['id']}.json")
+        download(asset_index["url"], index_dest, asset_index.get("sha1"), asset_index.get("size"))
+
     jobs = []
     client = version["downloads"]["client"]
     jobs.append((client["url"], os.path.join(vdir, f"{args.version}.jar"),
