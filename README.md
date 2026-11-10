@@ -65,6 +65,17 @@ debugging; `body.html` and `play.html` remain standalone.
 porting worklist. `PORT_JAVA_OPTS=-Dport.why=<class prefix>` prints the call chain that pulls a
 class into the build.
 
+## Dedicated-server feasibility
+
+The first headless pivot milestone is available separately from the existing client build:
+`python3 scripts/fetch_server.py --version 26.3 --dest "$MC_DIR"` downloads and
+hash-verifies Mojang's dedicated-server bundle, extracts its runtime and bundled
+libraries, and confirms the server entry-point classes are present without the
+client entry point. See [docs/HEADLESS_SERVER_PIVOT.md](docs/HEADLESS_SERVER_PIVOT.md)
+for the remaining TeaVM, data-pack, world-generation, and bridge gates.
+
+This does not yet start a headless server or generate browser chunks.
+
 ## Layout
 
 | Path | Purpose |
