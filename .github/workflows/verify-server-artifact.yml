@@ -56,3 +56,5 @@ jobs:
           PY
 
 # Re-run against the latest bundle parser changes.
+
+# Validate the three-column libraries.list parser.
