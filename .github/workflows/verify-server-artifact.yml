@@ -19,7 +19,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -37,6 +37,39 @@ jobs:
 
       - name: Fetch and verify official Minecraft 26.3 server
         run: python3 scripts/fetch_server.py --version 26.3 --dest "$RUNNER_TEMP/minecraft"
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Fetch client jar and declared libraries
+        env:
+          MC_DIR: ${{ runner.temp }}/minecraft
+          MC_VERSION: "26.3"
+        run: python3 scripts/fetch_minecraft.py --version "$MC_VERSION" --dest "$MC_DIR"
+
+      - name: Fetch TeaVM toolchain
+        run: |
+          python3 scripts/fetch_deps.py \\
+            org.teavm:teavm-tooling:0.16.0 \\
+            org.teavm:teavm-classlib:0.16.0 \\
+            org.teavm:teavm-jso-apis:0.16.0 \\
+            org.teavm:teavm-jso-impl:0.16.0 \\
+            org.teavm:teavm-platform:0.16.0
+
+      - name: Compile built-in bootstrap with server-first TeaVM classpath
+        env:
+          MC_DIR: ${{ runner.temp }}/minecraft
+          MC_VERSION: "26.3"
+          MC_SERVER_JAR: ${{ runner.temp }}/minecraft/versions/26.3/server.jar
+          MC_SERVER_LIB_LIST: ${{ runner.temp }}/minecraft/versions/26.3/server-libraries.list
+          JDK: ${{ env.JAVA_HOME }}
+          PORT_HEAP: 6g
+          PORT_OPT: SIMPLE
+          PORT_LENIENT: "true"
+        run: bash scripts/build_server_probe.sh
 
       - name: Confirm extracted server artifact
         env:
