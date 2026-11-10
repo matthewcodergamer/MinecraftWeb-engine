@@ -394,7 +394,7 @@ fn definition(raw: &str) -> Option<Material> {
         "oak_log" | "oak_wood" | "stripped_oak_log" | "stripped_oak_wood" => {
             Material::column_top(L_LOG_TOP, L_LOG)
         }
-        "oak_leaves" => Material::cutout(L_LEAVES),
+        "oak_leaves" => Material::foliage(L_LEAVES),
         "oak_planks" | "spruce_planks" | "birch_planks" | "jungle_planks" | "acacia_planks"
         | "dark_oak_planks" | "mangrove_planks" | "cherry_planks" | "bamboo_planks" => {
             Material::solid(L_PLANKS)
@@ -454,7 +454,7 @@ fn definition(raw: &str) -> Option<Material> {
         _ if name.ends_with("_log") || name.ends_with("_wood") => {
             Material::column_top(L_LOG_TOP, L_LOG)
         }
-        _ if name.ends_with("_leaves") => Material::cutout(L_LEAVES),
+        _ if name.ends_with("_leaves") => Material::foliage(L_LEAVES),
         _ if name.ends_with("_planks") => Material::solid(L_PLANKS),
         _ if name.ends_with("_ore") => Material::solid(L_STONE),
         _ if name.ends_with("_sand") => Material::solid(L_SAND),
