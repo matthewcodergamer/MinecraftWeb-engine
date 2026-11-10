@@ -84,7 +84,19 @@ jobs:
           python3 scripts/pack_resources.py --mc-dir "$MC_DIR" --version "$MC_VERSION" --jar-only --out build/web/client-resources.bin
           test -s build/web/client-resources.bin
           test -s build/web/client-textures.bin
-          test -s build/web/assets/indexes/26.3.json || test -s "$MC_DIR/assets/indexes/$(python3 -c 'import json,os; print(json.load(open(os.environ["MC_DIR"]+"/versions/26.3/26.3.json"))["assetIndex"]["id"])').json"
+          python3 - <<'PY'
+          import json, os, struct
+          path = "build/web/client-resources.bin"
+          with open(path, "rb") as f:
+              assert f.read(4) == b"MCRS"
+              length = struct.unpack("<I", f.read(4))[0]
+              index = json.loads(f.read(length))
+          meta = json.load(open(os.path.join(os.environ["MC_DIR"], "versions/26.3/26.3.json")))
+          asset_id = meta["assetIndex"]["id"]
+          assert f"assets/indexes/{asset_id}.json" in index
+          assert "assets/indexes/26.3.json" in index
+          print(f"Packed vanilla jar resources and asset index {asset_id}.")
+          PY
 
       - name: Build Rust WebGPU Body
         run: bash scripts/build_body.sh
