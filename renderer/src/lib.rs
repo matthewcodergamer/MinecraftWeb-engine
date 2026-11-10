@@ -5,9 +5,9 @@
 //! sections, camera pose, entity transforms. Nothing here may simulate motion,
 //! gravity, friction or redstone — those quirks must stay in Java.
 //!
-//! Milestone 2a (this file): per-section GPU arena + CPU frustum culling.
-//! The synthetic island still drives the pipeline; meshing remains synchronous
-//! until M2b moves it to a Worker and packs the vertex format.
+//! Per-section GPU arena + CPU frustum culling, driven by Java-owned sections.
+//! The renderer starts with an empty sky/loading scene and incrementally meshes
+//! Java section updates. Synthetic terrain is not generated during normal boot.
 //! Still no JavaScript rendering logic — the page only loads wasm and calls run.
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -54,7 +54,7 @@ const UNIFORM_SIZE: u64 = 240;
 /// Default view distance in chunks. The Java brain streams sections; this caps
 /// how far the Body will *draw* them, which is the memory/bandwidth lever on
 /// iOS Safari (iPhone 11 has a ~1.5 GB per-tab budget). Overridden from JS via
-/// `set_render_distance`, which the host calls with 4 on phones.
+/// `set_render_distance`, which the host calls with 2 on touch/low-memory devices.
 const DEFAULT_RENDER_DISTANCE: u32 = 6;
 static RENDER_DISTANCE: AtomicU32 = AtomicU32::new(DEFAULT_RENDER_DISTANCE);
 
