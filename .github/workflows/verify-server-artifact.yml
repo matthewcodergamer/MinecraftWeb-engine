@@ -105,12 +105,12 @@ jobs:
           SERVER_JAR: ${{ runner.temp }}/minecraft/versions/26.3/server.jar
         run: |
           mkdir -p build
-          javap -classpath "$SERVER_JAR" -p \\
-            net.minecraft.server.MinecraftServer \\
-            net.minecraft.server.level.ServerLevel \\
-            net.minecraft.server.level.ServerChunkCache \\
-            net.minecraft.world.level.chunk.LevelChunk \\
-            net.minecraft.world.level.chunk.LevelChunkSection \\
+          javap -classpath "$SERVER_JAR" -p \
+            net.minecraft.server.MinecraftServer \
+            net.minecraft.server.level.ServerLevel \
+            net.minecraft.server.level.ServerChunkCache \
+            net.minecraft.world.level.chunk.LevelChunk \
+            net.minecraft.world.level.chunk.LevelChunkSection \
             > build/server-chunk-api.txt
           grep -E 'getLevel|getAllLevels|getChunk|getSections|getBlockState|getLightEngine|getSectionYFromSectionIndex|isRunning|startServer' build/server-chunk-api.txt || true
 
