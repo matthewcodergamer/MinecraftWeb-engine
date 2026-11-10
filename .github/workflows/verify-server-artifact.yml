@@ -100,6 +100,29 @@ jobs:
             --until-js "window.__mc && window.__mc.stage === 'm2-complete'" \
             --timeout 180 --eval "JSON.stringify(window.__mc)"
 
+      - name: Diagnose TeaVM build of the real dedicated server entry point
+        continue-on-error: true
+        env:
+          MC_DIR: ${{ runner.temp }}/minecraft
+          MC_VERSION: "26.3"
+          MC_SERVER_JAR: ${{ runner.temp }}/minecraft/versions/26.3/server.jar
+          MC_SERVER_LIB_LIST: ${{ runner.temp }}/minecraft/versions/26.3/server-libraries.list
+          JDK: ${{ env.JAVA_HOME }}
+          PORT_HEAP: 6g
+          PORT_OPT: SIMPLE
+          PORT_LENIENT: "true"
+          PORT_LOG_LINES: "200"
+        run: bash scripts/build.sh net.minecraft.server.Main js
+
+      - name: Upload dedicated server entry-point diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: minecraft-26-3-server-main-teavm-diagnostics
+          path: build/net.minecraft.server.Main.js.log
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Confirm extracted server artifact
         env:
           SERVER_JAR: ${{ runner.temp }}/minecraft/versions/26.3/server.jar
