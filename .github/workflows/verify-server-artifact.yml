@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - "scripts/fetch_server.py"
+      - "scripts/build.sh"
+      - "scripts/build_server_probe.sh"
       - "scripts/test_fetch_server.py"
       - ".github/workflows/verify-server-artifact.yml"
   pull_request:
@@ -29,8 +31,10 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Check Python syntax
-        run: python3 -m py_compile scripts/fetch_server.py scripts/test_fetch_server.py
+      - name: Check script syntax
+        run: |
+          python3 -m py_compile scripts/fetch_server.py scripts/test_fetch_server.py
+          bash -n scripts/build.sh scripts/build_server_probe.sh
 
       - name: Test bundle extraction offline
         run: python3 -m unittest discover -s scripts -p 'test_fetch_server.py' -v
@@ -52,11 +56,11 @@ jobs:
 
       - name: Fetch TeaVM toolchain
         run: |
-          python3 scripts/fetch_deps.py \\
-            org.teavm:teavm-tooling:0.16.0 \\
-            org.teavm:teavm-classlib:0.16.0 \\
-            org.teavm:teavm-jso-apis:0.16.0 \\
-            org.teavm:teavm-jso-impl:0.16.0 \\
+          python3 scripts/fetch_deps.py \
+            org.teavm:teavm-tooling:0.16.0 \
+            org.teavm:teavm-classlib:0.16.0 \
+            org.teavm:teavm-jso-apis:0.16.0 \
+            org.teavm:teavm-jso-impl:0.16.0 \
             org.teavm:teavm-platform:0.16.0
 
       - name: Compile built-in bootstrap with server-first TeaVM classpath
