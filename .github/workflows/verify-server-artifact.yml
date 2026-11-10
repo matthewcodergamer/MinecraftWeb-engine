@@ -40,7 +40,7 @@ jobs:
 
       - name: Confirm extracted server artifact
         env:
-          SERVER_JAR: \${{ runner.temp }}/minecraft/versions/26.3/server.jar
+          SERVER_JAR: ${{ runner.temp }}/minecraft/versions/26.3/server.jar
         run: |
           test -s "$SERVER_JAR"
           python3 - <<'PY'
