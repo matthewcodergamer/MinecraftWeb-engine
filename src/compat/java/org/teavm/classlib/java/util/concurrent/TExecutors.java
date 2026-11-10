@@ -4,10 +4,11 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+
+import mcport.rt.jdk.LiteScheduledExecutor;
 
 public final class TExecutors {
     private TExecutors() {
@@ -39,19 +40,19 @@ public final class TExecutors {
     }
 
     public static ScheduledExecutorService newScheduledThreadPool(int corePoolSize) {
-        return new ScheduledThreadPoolExecutor(corePoolSize);
+        return new LiteScheduledExecutor(corePoolSize, Thread::new);
     }
 
     public static ScheduledExecutorService newScheduledThreadPool(int corePoolSize, ThreadFactory factory) {
-        return new ScheduledThreadPoolExecutor(corePoolSize, factory);
+        return new LiteScheduledExecutor(corePoolSize, factory);
     }
 
     public static ScheduledExecutorService newSingleThreadScheduledExecutor() {
-        return new ScheduledThreadPoolExecutor(1);
+        return new LiteScheduledExecutor(1, Thread::new);
     }
 
     public static ScheduledExecutorService newSingleThreadScheduledExecutor(ThreadFactory factory) {
-        return new ScheduledThreadPoolExecutor(1, factory);
+        return new LiteScheduledExecutor(1, factory);
     }
 
     public static ThreadFactory defaultThreadFactory() {

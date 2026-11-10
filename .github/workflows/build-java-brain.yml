@@ -1,0 +1,104 @@
+name: Build Java brain
+
+# Compiles mcport.ClientMain (the real Minecraft client, via TeaVM) on a runner with
+# enough RAM for the worldgen dependency graph, then publishes the split bundle to
+# Hugging Face. The local 8 GB Mac cannot finish this build; runners have ~16 GB.
+
+on:
+  workflow_dispatch:
+    inputs:
+      heap:
+        description: Java heap for the TeaVM build
+        required: false
+        default: 12g
+      upload:
+        description: Upload the split parts to Hugging Face
+        type: boolean
+        default: true
+      hf_path:
+        description: Destination folder inside the Hugging Face repo
+        required: false
+        default: web
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-java-brain
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    env:
+      MC_VERSION: "26.3"
+      MC_DIR: ${{ github.workspace }}/.minecraft
+      PORT_HEAP: ${{ inputs.heap }}
+      PORT_LENIENT: "true"
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the Hugging Face client
+        run: python3 -m pip install --upgrade huggingface_hub
+
+      # tools/lib is gitignored ("Downloaded toolchain jars"), so fetch the TeaVM jars.
+      - name: Fetch the TeaVM toolchain
+        run: |
+          python3 scripts/fetch_deps.py \
+            org.teavm:teavm-tooling:0.16.0 \
+            org.teavm:teavm-classlib:0.16.0 \
+            org.teavm:teavm-jso-apis:0.16.0 \
+            org.teavm:teavm-jso-impl:0.16.0 \
+            org.teavm:teavm-platform:0.16.0
+
+      # The client jar and libraries are Mojang artifacts and must never be committed.
+      - name: Fetch Minecraft ${{ env.MC_VERSION }} from Mojang's CDN
+        run: python3 scripts/fetch_minecraft.py --version "$MC_VERSION" --dest "$MC_DIR"
+
+      - name: Build the Java brain
+        env:
+          JDK: ${{ env.JAVA_HOME }}
+        run: bash scripts/build.sh mcport.ClientMain js
+
+      - name: Split the bundle into parts
+        run: python3 scripts/split_clientmain.py build/web/clientmain.js build/parts
+
+      - name: Show the produced parts
+        run: ls -la build/parts
+
+      - name: Upload to Hugging Face
+        if: ${{ inputs.upload && vars.HF_REPO != '' }}
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_REPO: ${{ vars.HF_REPO }}
+          HF_REPO_TYPE: ${{ vars.HF_REPO_TYPE || 'space' }}
+          HF_PATH: ${{ inputs.hf_path }}
+        run: python3 scripts/upload_hf.py build/parts "$HF_REPO" "$HF_PATH"
+
+      - name: Note the missing HF repo variable
+        if: ${{ inputs.upload && vars.HF_REPO == '' }}
+        run: |
+          echo "::warning::HF_REPO is not set, so nothing was uploaded."
+          echo "Add a repository variable HF_REPO (e.g. owner/space-name) and secret HF_TOKEN."
+
+      - name: Keep the parts as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clientmain-parts
+          path: build/parts
+          retention-days: 7

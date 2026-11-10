@@ -18,7 +18,12 @@ import org.teavm.jso.JSBody;
  * browser's ArrayBuffer until read.
  */
 public final class ArchiveFileSystem extends FileSystem {
-    static final ArchiveFileSystem CLIENT_JAR = new ArchiveFileSystem();
+    public static final ArchiveFileSystem CLIENT_JAR = new ArchiveFileSystem();
+
+    /** Absolute path inside the client jar archive, e.g. {@code assets/minecraft/lang/en_us.json}. */
+    public static java.nio.file.Path path(String key) {
+        return CLIENT_JAR.getPath("/" + key);
+    }
     private final JarFileSystemProvider provider = JarFileSystemProvider.INSTANCE;
     final ArchivePath root = new ArchivePath(this, true, new String[0]);
 
