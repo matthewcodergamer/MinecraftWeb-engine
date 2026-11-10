@@ -2930,7 +2930,7 @@
         status('Starting WebGPU...');
         progress();
 
-        await init();
+        await init(typeof window.__mcBodyWasm === 'string' ? window.__mcBodyWasm : undefined);
         state.rust = 0.4;
         progress();
 
