@@ -16,9 +16,9 @@ on:
         type: boolean
         default: true
       hf_path:
-        description: Destination folder inside the Hugging Face repo
+        description: Destination folder inside the Hugging Face repo (empty = repo root, which is where the Space serves from)
         required: false
-        default: web
+        default: ""
 
 permissions:
   contents: read
