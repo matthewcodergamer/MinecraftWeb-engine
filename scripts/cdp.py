@@ -105,6 +105,7 @@ def main():
     ap.add_argument("--timeout", type=float, default=120)
     ap.add_argument("--screenshot")
     ap.add_argument("--eval", action="append", default=[])
+    ap.add_argument("--preload-js", help="JavaScript evaluated in every new document before page scripts")
     ap.add_argument("--viewport", help="emulate a CSS viewport, e.g. 414x896")
     ap.add_argument("--dpr", type=float, default=2.0, help="device scale factor for --viewport")
     ap.add_argument("--gpu", action="store_true", help="use the real GPU instead of SwiftShader")
@@ -148,6 +149,8 @@ def main():
 
         ws.call("Runtime.enable", pump=pump)
         ws.call("Page.enable", pump=pump)
+        if a.preload_js:
+            ws.call("Page.addScriptToEvaluateOnNewDocument", {"source": a.preload_js}, pump=pump)
         if a.viewport:
             width, height = (int(part) for part in a.viewport.lower().split("x", 1))
             ws.call("Emulation.setDeviceMetricsOverride", {
