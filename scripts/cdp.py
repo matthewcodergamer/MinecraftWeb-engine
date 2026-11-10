@@ -106,6 +106,7 @@ def main():
     ap.add_argument("--screenshot")
     ap.add_argument("--eval", action="append", default=[])
     ap.add_argument("--preload-js", help="JavaScript evaluated in every new document before page scripts")
+    ap.add_argument("--assert-js", action="append", default=[], help="JavaScript expression that must be truthy after the wait condition")
     ap.add_argument("--viewport", help="emulate a CSS viewport, e.g. 414x896")
     ap.add_argument("--dpr", type=float, default=2.0, help="device scale factor for --viewport")
     ap.add_argument("--gpu", action="store_true", help="use the real GPU instead of SwiftShader")
@@ -171,6 +172,12 @@ def main():
                 ok = True
                 break
         print(f"{time.time() - t0:7.2f}s condition {'met' if ok else 'NOT met (timeout)'}", flush=True)
+        assert_ok = True
+        for expr in a.assert_js:
+            r = ws.call("Runtime.evaluate", {"expression": f"!!({expr})", "returnByValue": True}, pump=pump)
+            passed = bool(r.get("result", {}).get("result", {}).get("value"))
+            print(f"assert {expr} => {'PASS' if passed else 'FAIL'}")
+            assert_ok = assert_ok and passed
         for expr in a.eval:
             r = ws.call("Runtime.evaluate", {"expression": expr, "returnByValue": True}, pump=pump)
             print(f"eval {expr} => {json.dumps(r.get('result', {}).get('result', {}).get('value'))[:4000]}")
@@ -183,7 +190,7 @@ def main():
         chrome.kill()
         chrome.wait()
         shutil.rmtree(profile, ignore_errors=True)
-    sys.exit(0 if ok else 1)
+    sys.exit(0 if ok and assert_ok else 1)
 
 
 if __name__ == "__main__":
