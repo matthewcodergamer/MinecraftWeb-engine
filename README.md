@@ -72,7 +72,8 @@ The dedicated-server feasibility path is separate from the existing client build
 bundle, extracts its runtime and bundled libraries, and confirms the server
 entry-point classes are present without the client entry point.
 `scripts/build_server_probe.sh` then compiles the existing built-in registry
-bootstrap with the server runtime first on the TeaVM classpath. See
+bootstrap with the server runtime first on the TeaVM classpath, and CI executes
+that bootstrap in headless Chrome. See
 [docs/HEADLESS_SERVER_PIVOT.md](docs/HEADLESS_SERVER_PIVOT.md) for the remaining
 server startup, data-pack, world-generation, and bridge gates.
 
