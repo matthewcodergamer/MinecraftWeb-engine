@@ -650,44 +650,13 @@ async fn init() -> Result<Renderer, JsValue> {
     config.desired_maximum_frame_latency = 2;
     surface.configure(&device, &config);
 
-    // --- Synthetic world -------------------------------------------------
-    // Same store and mesher the Java bridge will drive; only the source of
-    // the block IDs is temporary.
-    bridge::generate_demo();
-    // Stand on the surface instead of the old fixed y = 30 (which floated ~20
-    // blocks over the island). Java overwrites this pose when it is running.
-    let (spawn, spawn_yaw, spawn_pitch) = bridge::demo_spawn_pose();
-    controls::set_spawn(spawn);
-    controls::set_spawn_rotation(spawn_yaw, spawn_pitch);
-    let mesh_start = js_sys::Date::now();
-    let world = bridge::mesh_world();
-    bridge::clear_dirty();
-    let mesh_ms = js_sys::Date::now() - mesh_start;
-
-    if world.sections.is_empty() {
-        return Err(js_err("demo mesher produced no geometry"));
-    }
-
-    let arena = ChunkArena::upload(&device, &queue, &world.sections);
-
-    let reduction = if world.stats.faces > 0 {
-        100.0 * (1.0 - world.stats.quads as f64 / world.stats.faces as f64)
-    } else {
-        0.0
-    };
-    let stats_text = format!(
-        "M2b · textured · {}/{} non-empty sections · {} faces → {} quads ({:.0}% fewer) · {} tris · mesh {:.0} ms",
-        arena.slots.iter().filter(|slot| slot.index_count > 0).count(),
-        world.stats.sections,
-        world.stats.faces,
-        world.stats.quads,
-        reduction,
-        arena.total_indices / 3,
-        mesh_ms,
-    );
-    log(&stats_text.replace('\n', " | "));
-
-    let visible = Vec::with_capacity(arena.len());
+    // Start with an empty scene. The Java Brain is the only authority for
+    // world data; synthetic terrain is never generated during normal startup.
+    // The first Java section marks the bridge dirty and is meshed incrementally
+    // by draw(), while the sky/loading scene remains available.
+    let arena = ChunkArena::upload(&device, &queue, &[]);
+    let stats_text = "Waiting for Java world sections".to_string();
+    let visible = Vec::with_capacity(64);
 
     // --- Block textures (vanilla PNGs, uploaded by the page) -------------
     let textures = textures::build(&device, &queue);
@@ -1098,9 +1067,22 @@ fn draw_frame() {
 
 fn canvas_pixel_size(canvas: &web_sys::HtmlCanvasElement) -> (u32, u32) {
     let dpr = web_sys::window()
-        .map(|window| window.device_pixel_ratio())
-        .unwrap_or(1.0)
-        .clamp(1.0, MAX_DPR);
+        .map(|window| {
+            // The host selects 1.0 for touch/low-memory devices and 2.0 for
+            // desktop. Default conservatively to 1.0 when embedded without the
+            // hybrid host, preventing an accidental high-DPI framebuffer.
+            let window_value: &JsValue = window.as_ref();
+            let requested_cap = js_sys::Reflect::get(
+                window_value,
+                &JsValue::from_str("__mcDprCap"),
+            )
+            .ok()
+            .and_then(|value| value.as_f64())
+            .unwrap_or(1.0)
+            .clamp(1.0, MAX_DPR);
+            window.device_pixel_ratio().clamp(1.0, requested_cap)
+        })
+        .unwrap_or(1.0);
     let width = (canvas.client_width().max(1) as f64 * dpr).round().max(1.0) as u32;
     let height = (canvas.client_height().max(1) as f64 * dpr)
         .round()
