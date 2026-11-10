@@ -42,7 +42,7 @@ class FetchServerTests(unittest.TestCase):
             self.assertEqual(count, 1)
             manifest_path = os.path.join(temporary, "versions", "26.3", "server-libraries.list")
             with open(manifest_path, encoding="utf-8") as manifest:
-                self.assertEqual(manifest.read(), "org/example/demo/1.0/demo-1.0.jar\\n")
+                self.assertEqual(manifest.read(), "org/example/demo/1.0/demo-1.0.jar\n")
             extracted_library = os.path.join(
                 temporary, "libraries", "org", "example", "demo", "1.0", "demo-1.0.jar"
             )
