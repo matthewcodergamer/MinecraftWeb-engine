@@ -277,6 +277,9 @@
       const pad = document.createElement('div');
       pad.id = 'mc-touch';
       pad.innerHTML =
+        '<div id="mc-joystick" role="group" aria-label="Movement joystick">' +
+        '  <div class="js-ring"><span class="js-knob"></span></div>' +
+        '</div>' +
         '<div id="mc-dpad" role="group" aria-label="Movement">' +
         '  <button id="mc-up" class="mc-dir" type="button" aria-label="Walk forward">' +
         '    <img class="touch-art" src="ui/touch/up.png" data-idle="ui/touch/up.png" data-pressed="ui/touch/up_pressed.png" alt="" draggable="false">' +
@@ -372,6 +375,49 @@
         button.addEventListener('pointercancel', end);
         button.addEventListener('lostpointercapture', end);
       });
+
+      // Analog joystick (left thumb). The vector feeds the same `move`
+      // message the D-pad uses, so Java still resolves physics from WASD.
+      const joy = pad.querySelector('#mc-joystick');
+      if (joy) {
+        const knob = joy.querySelector('.js-knob');
+        const RADIUS = 46;
+        let joyPointer = null;
+        const track = (event) => {
+          const rect = joy.getBoundingClientRect();
+          const dx = event.clientX - (rect.left + rect.width / 2);
+          const dy = event.clientY - (rect.top + rect.height / 2);
+          const len = Math.hypot(dx, dy);
+          const scale = len > 0 ? Math.min(1, RADIUS / len) : 0;
+          const kx = dx * scale, ky = dy * scale;
+          knob.style.transform = 'translate(' + kx + 'px,' + ky + 'px)';
+          this.stick.x = kx / RADIUS;
+          // Screen y grows downward; Java forward is +y.
+          this.stick.y = -ky / RADIUS;
+          this.applyStick();
+        };
+        const stop = (event) => {
+          if (joyPointer !== null && event && event.pointerId !== joyPointer) return;
+          joyPointer = null;
+          knob.style.transform = '';
+          this.stick.x = this.stick.y = 0;
+          this.applyStick();
+        };
+        joy.addEventListener('pointerdown', (event) => {
+          if (event.cancelable) event.preventDefault();
+          joyPointer = event.pointerId;
+          try { joy.setPointerCapture(event.pointerId); } catch (e) {}
+          track(event);
+        });
+        joy.addEventListener('pointermove', (event) => {
+          if (event.pointerId !== joyPointer) return;
+          if (event.cancelable) event.preventDefault();
+          track(event);
+        });
+        joy.addEventListener('pointerup', stop);
+        joy.addEventListener('pointercancel', stop);
+        joy.addEventListener('lostpointercapture', stop);
+      }
 
       const hold = (button, code) => {
         button.addEventListener('pointerdown', (event) => {

@@ -177,6 +177,8 @@ pub const B_PACKED_ICE: i32 = 47;
 struct Material {
     layers: [u32; 6],
     cutout: bool,
+    /// Fluid/ice surface: drawn in the blended pass after the opaque pass.
+    translucent: bool,
     /// Plants use two crossed quads instead of a cube.
     cross: bool,
     /// Vanilla `getLightEmission` (0..=15). Torches/glowstone seed the block
@@ -192,6 +194,7 @@ impl Material {
         Self {
             layers: [layer; 6],
             cutout: false,
+            translucent: false,
             cross: false,
             emission: 0,
             opacity: 15,
@@ -202,6 +205,7 @@ impl Material {
         Self {
             layers: [layer; 6],
             cutout: true,
+            translucent: false,
             cross: false,
             emission: 0,
             opacity: 0,
@@ -213,6 +217,7 @@ impl Material {
         Self {
             layers: [layer; 6],
             cutout: true,
+            translucent: true,
             cross: false,
             emission: 0,
             opacity,
@@ -224,6 +229,7 @@ impl Material {
         Self {
             layers: [layer; 6],
             cutout: true,
+            translucent: false,
             cross: true,
             emission: 0,
             opacity: 0,
@@ -236,6 +242,7 @@ impl Material {
         Self {
             layers: [layer; 6],
             cutout: true,
+            translucent: false,
             cross: false,
             emission: 0,
             opacity: 1,
@@ -246,6 +253,7 @@ impl Material {
         Self {
             layers: [layer; 6],
             cutout: false,
+            translucent: false,
             cross: false,
             emission,
             opacity: 15,
@@ -257,6 +265,7 @@ impl Material {
         Self {
             layers: [side, side, bottom, top, side, side],
             cutout: false,
+            translucent: false,
             cross: false,
             emission: 0,
             opacity: 15,
@@ -310,6 +319,7 @@ pub fn set_block_material(block: i32, top: i32, bottom: i32, side: i32, cutout: 
             pick(side, L_STONE),
         ],
         cutout,
+        translucent: false,
         cross: false,
         emission: 0,
         opacity: if cutout { 0 } else { 15 },
@@ -360,7 +370,7 @@ fn definition(raw: &str) -> Option<Material> {
         "glowstone" => Material::emissive(L_GLOWSTONE, 15),
         "end_stone" => Material::solid(L_END_STONE),
         "purpur_block" => Material::solid(L_PURPUR),
-        "ice" => Material::solid(L_ICE),
+        "ice" => Material::fluid(L_ICE, 1),
         "packed_ice" => Material::solid(L_PACKED_ICE),
         "blue_ice" => Material::solid(L_BLUE_ICE),
         "snow" | "snow_block" => Material::solid(L_SNOW),
@@ -428,13 +438,13 @@ fn definition(raw: &str) -> Option<Material> {
         "cut_copper" => Material::solid(L_CUT_COPPER),
 
         // --- plants, glass, fluids -------------------------------------------
-        "short_grass" | "tall_grass" | "fern" | "large_fern" => Material::cutout(L_SHORT_GRASS),
-        "poppy" => Material::cutout(L_POPPY),
-        "dandelion" => Material::cutout(L_DANDELION),
-        "oak_sapling" => Material::cutout(L_SAPLING),
+        "short_grass" | "tall_grass" | "fern" | "large_fern" => Material::plant(L_SHORT_GRASS),
+        "poppy" => Material::plant(L_POPPY),
+        "dandelion" => Material::plant(L_DANDELION),
+        "oak_sapling" => Material::plant(L_SAPLING),
         "glass" | "glass_pane" => Material::cutout(L_GLASS),
-        // Fluids are opaque for now; translucent sorting is M4.
-        "water" | "flowing_water" => Material::solid(L_WATER),
+        // Fluids/ice are drawn in the blended pass after the opaque pass.
+        "water" | "flowing_water" => Material::fluid(L_WATER, 1),
         "lava" | "flowing_lava" => Material::solid(L_LAVA),
 
         // --- generic families ------------------------------------------------
@@ -608,6 +618,26 @@ pub fn is_cross(block: i32) -> bool {
         block,
         B_SHORT_GRASS | B_POPPY | B_DANDELION | B_SAPLING
     )
+}
+
+/// Blocks that must be alpha-tested (leaves, glass, plants). Everything else can
+/// skip the branch, but one shader with a test keeps the pipeline set small.
+/// Render class for the mesher/pipeline split.
+pub fn class(block: i32) -> u32 {
+    if is_translucent(block) {
+        2
+    } else if is_cutout(block) {
+        1
+    } else {
+        0
+    }
+}
+
+pub fn is_translucent(block: i32) -> bool {
+    if let Some(material) = REGISTERED.with(|table| table.borrow().get(&block).copied()) {
+        return material.translucent;
+    }
+    matches!(block, B_WATER | B_ICE)
 }
 
 /// Blocks that must be alpha-tested (leaves, glass, plants). Everything else can

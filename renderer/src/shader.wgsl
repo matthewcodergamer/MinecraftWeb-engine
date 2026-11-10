@@ -32,6 +32,8 @@ struct VertexInput {
     @location(4) light: f32,
     // 0..255, 255 = fully open.
     @location(5) ao: u32,
+    // 0 = opaque, 1 = cutout, 2 = blended (water/ice).
+    @location(6) kind: u32,
 };
 
 struct VertexOutput {
@@ -44,6 +46,7 @@ struct VertexOutput {
     @location(3) world: vec3<f32>,
     @location(4) light: f32,
     @location(5) ao: f32,
+    @location(6) @interpolate(flat) kind: u32,
 };
 
 @vertex
@@ -56,6 +59,7 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     output.world = input.position;
     output.light = input.light;
     output.ao = f32(input.ao) / 255.0;
+    output.kind = input.kind;
     return output;
 }
 
@@ -74,10 +78,16 @@ fn lightmap(sky: f32, block: f32) -> vec3<f32> {
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let texel = textureSample(blocks, block_sampler, input.uv, i32(input.layer));
-    // Vanilla cutout alpha test (> 0.1) rather than a hard 0.5, so mip-mapped
-    // leaves keep their coverage at distance instead of dissolving into holes.
-    if (texel.a < 0.1) {
+    // Cutout pass (leaves, flowers, glass, saplings): discard transparent
+    // texels. Opaque textures have alpha 1 and never hit this branch.
+    if (texel.a < 0.5) {
         discard;
+    }
+    // Blended pass (water/ice): keep the texture's alpha, capped so the
+    // surface stays one vanilla-like layer instead of stacking to opaque.
+    var alpha = 1.0;
+    if (input.kind == 2u) {
+        alpha = clamp(texel.a, 0.0, 0.85);
     }
 
     let packed = u32(round(input.light));
@@ -90,5 +100,5 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     // dimension) without rebuilding the pipeline.
     let fog = smoothstep(camera.params.x, camera.params.y, distance) * camera.fog_color.a;
     color = mix(color, camera.fog_color.rgb, fog);
-    return vec4<f32>(color, 1.0);
+    return vec4<f32>(color, alpha);
 }

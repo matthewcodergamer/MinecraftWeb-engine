@@ -78,7 +78,7 @@
           maxVertexBuffers: L.maxVertexBuffers,
           maxColorAttachments: L.maxColorAttachments,
         },
-      }, 20000, 'WebGPU device request'));
+      }), 20000, 'WebGPU device request');
       G.features = new Set(requiredFeatures);
       G.queue = G.device.queue;
       G.device.lost.then((info) => { G.lost = info; console.error('WebGPU device lost: ' + info.message); });

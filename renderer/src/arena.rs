@@ -15,6 +15,7 @@ pub struct SectionSlot {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub index_count: u32,
+    pub opaque_index_count: u32,
     pub vertex_count: u32,
     pub min: [f32; 3],
     pub max: [f32; 3],
@@ -75,11 +76,13 @@ impl ChunkArena {
                 self.total_vertices -= slot.vertex_count;
                 if mesh.indices.is_empty() {
                     slot.index_count = 0;
+                    slot.opaque_index_count = 0;
                     slot.vertex_count = 0;
                 } else {
                     queue.write_buffer(&slot.vertex_buffer, 0, bytes_of(&mesh.vertices));
                     queue.write_buffer(&slot.index_buffer, 0, bytes_of(&mesh.indices));
                     slot.index_count = mesh.indices.len() as u32;
+                    slot.opaque_index_count = mesh.opaque_count;
                     slot.vertex_count = mesh.vertices.len() as u32;
                     self.total_indices += slot.index_count;
                     self.total_vertices += slot.vertex_count;
@@ -148,6 +151,7 @@ fn create_slot(
         vertex_buffer,
         index_buffer,
         index_count: mesh.indices.len() as u32,
+        opaque_index_count: mesh.opaque_count,
         vertex_count: mesh.vertices.len() as u32,
         min: mesh.min,
         max: mesh.max,

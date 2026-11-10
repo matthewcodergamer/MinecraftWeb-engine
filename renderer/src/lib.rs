@@ -55,7 +55,7 @@ const UNIFORM_SIZE: u64 = 240;
 /// how far the Body will *draw* them, which is the memory/bandwidth lever on
 /// iOS Safari (iPhone 11 has a ~1.5 GB per-tab budget). Overridden from JS via
 /// `set_render_distance`, which the host calls with 4 on phones.
-const DEFAULT_RENDER_DISTANCE: u32 = 8;
+const DEFAULT_RENDER_DISTANCE: u32 = 6;
 static RENDER_DISTANCE: AtomicU32 = AtomicU32::new(DEFAULT_RENDER_DISTANCE);
 
 /// Post-processing is always compiled in; the host can bypass it for A/B
@@ -96,7 +96,9 @@ pub fn post_enabled() -> bool {
 /// fog and the cull radius into nonsense.
 #[wasm_bindgen]
 pub fn set_render_distance(chunks: u32) {
-    RENDER_DISTANCE.store(chunks.clamp(2, 32), Ordering::Relaxed);
+    // Hard ceiling: 6 chunks even if a host asks for more. This is the GPU
+    // working-set cap that keeps Safari from killing the tab.
+    RENDER_DISTANCE.store(chunks.clamp(2, 6), Ordering::Relaxed);
 }
 
 #[wasm_bindgen]
@@ -172,6 +174,9 @@ struct Renderer {
     config: wgpu::SurfaceConfiguration,
 
     pipeline: wgpu::RenderPipeline,
+    /// Same vertex/index buffers as `pipeline`, but alpha-blended with depth
+    /// writes disabled and drawn after every opaque section.
+    translucent_pipeline: wgpu::RenderPipeline,
     sky_pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
@@ -460,9 +465,26 @@ impl Renderer {
             pass.set_bind_group(0, &self.bind_group, &[]);
             for &index in &self.visible {
                 let slot = &self.arena.slots[index];
+                if slot.opaque_index_count == 0 {
+                    continue;
+                }
                 pass.set_vertex_buffer(0, slot.vertex_buffer.slice(..));
                 pass.set_index_buffer(slot.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..slot.index_count, 0, 0..1);
+                pass.draw_indexed(0..slot.opaque_index_count, 0, 0..1);
+            }
+
+            // Water/ice: same buffers, blended, depth-tested but not
+            // depth-writing, drawn after all opaque geometry (as in vanilla).
+            pass.set_pipeline(&self.translucent_pipeline);
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            for &index in &self.visible {
+                let slot = &self.arena.slots[index];
+                if slot.index_count <= slot.opaque_index_count {
+                    continue;
+                }
+                pass.set_vertex_buffer(0, slot.vertex_buffer.slice(..));
+                pass.set_index_buffer(slot.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(slot.opaque_index_count..slot.index_count, 0, 0..1);
             }
         }
 
@@ -778,6 +800,49 @@ async fn init() -> Result<Renderer, JsValue> {
         cache: None,
     });
 
+    // --- Translucent (water/ice) pipeline -------------------------------
+    // Identical vertex/index layout to the chunk pipeline; only the blend
+    // state and depth-write policy differ. Quads in this pass are the tail of
+    // each section's index buffer (see mesh.rs / arena.rs).
+    let translucent_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("mc-body/translucent"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: &[Some(Vertex::layout())],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: config.format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            // Water is visible from below when swimming, so this pass draws
+            // both faces.
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    });
+
     // --- Sky pipeline ----------------------------------------------------
     let sky_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("mc-body/sky.wgsl"),
@@ -922,6 +987,7 @@ async fn init() -> Result<Renderer, JsValue> {
         queue,
         config,
         pipeline,
+        translucent_pipeline,
         sky_pipeline,
         uniform_buffer,
         bind_group,

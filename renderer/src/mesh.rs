@@ -46,10 +46,12 @@ pub struct Vertex {
     pub light: f32,
     /// Ambient occlusion 0..=255 (255 = fully open).
     pub ao: u32,
+    /// 0 = opaque, 1 = alpha-tested cutout, 2 = blended (water/ice).
+    pub class: u32,
 }
 
 impl Vertex {
-    const ATTRS: [wgpu::VertexAttribute; 6] = [
+    const ATTRS: [wgpu::VertexAttribute; 7] = [
         wgpu::VertexAttribute {
             format: wgpu::VertexFormat::Float32x3,
             offset: 0,
@@ -80,6 +82,11 @@ impl Vertex {
             offset: 32,
             shader_location: 5,
         },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Uint32,
+            offset: 36,
+            shader_location: 6,
+        },
     ];
 
     pub fn layout() -> wgpu::VertexBufferLayout<'static> {
@@ -94,6 +101,9 @@ impl Vertex {
 pub struct SectionMesh {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
+    /// Number of leading indices that belong to the opaque/cutout pass. The
+    /// remaining indices are the blended (water/ice) quads.
+    pub opaque_count: u32,
     /// Visible block faces before merging (one quad each).
     pub faces: u64,
     /// Quads actually emitted after greedy merging.
@@ -224,9 +234,24 @@ pub fn mesh_section(
         return None;
     }
 
+    // Split quads into the opaque/cutout pass and the blended pass. Every quad
+    // emits exactly six indices and all six vertices carry the same class.
+    let mut opaque = Vec::with_capacity(indices.len());
+    let mut blended = Vec::new();
+    for chunk in indices.chunks(6) {
+        if chunk.len() == 6 && vertices[chunk[0] as usize].class == 2 {
+            blended.extend_from_slice(chunk);
+        } else {
+            opaque.extend_from_slice(chunk);
+        }
+    }
+    let opaque_count = opaque.len() as u32;
+    opaque.extend_from_slice(&blended);
+
     Some(SectionMesh {
         vertices,
-        indices,
+        indices: opaque,
+        opaque_count,
         faces,
         quads,
     })
@@ -549,6 +574,7 @@ fn emit_quad(
             shade,
             light: f32::from(cell.light[i]),
             ao: u32::from(cell.ao[i]),
+            class: crate::material::class(cell.block),
         });
     }
 
@@ -607,6 +633,7 @@ fn emit_cross(
                 shade,
                 light: f32::from(light),
                 ao: 255,
+                class: 1,
             });
         }
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);

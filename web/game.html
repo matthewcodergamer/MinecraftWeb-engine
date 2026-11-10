@@ -39,6 +39,8 @@
     max-width: 100%; overscroll-behavior: none; -webkit-user-select: none; user-select: none;
     -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
     font-family: var(--mc-font); touch-action: none;
+    -webkit-font-smoothing: none; -moz-osx-font-smoothing: grayscale;
+    font-smooth: never; text-rendering: geometricPrecision;
     /* The Minecraft font is a bitmap atlas converted to a vector WOFF. Keep
        the browser from synthesising weights/italics (which smears the pixel
        edges) and from kerning glyphs apart. */
@@ -112,6 +114,18 @@
   }
   #splash .wordmark .half.left  { background-position: 0 0; }
   #splash .wordmark .half.right { background-position: 0 100%; }
+  /* Vanilla's white loading bar sits under the wordmark while the client
+     prepares the first frame. */
+  #splash .bar {
+    position: absolute; left: 50%; bottom: 12vh; transform: translateX(-50%);
+    width: min(60vw, 400px); height: 10px; box-sizing: border-box;
+    background: #000; border: 1px solid #000; padding: 1px;
+  }
+  #splash .bar::after {
+    content: ''; display: block; height: 100%; width: 0;
+    background: #fff; animation: splash-bar 1.4s ease-out forwards;
+  }
+  @keyframes splash-bar { to { width: 100%; } }
 
   /* ------------------------------------------------------------- main menu */
   #menu {
@@ -228,7 +242,7 @@
   }
   #menu-splash {
     position: absolute; left: 0; top: -8px; transform: translateX(-50%);
-    color: var(--mc-yellow); font: 400 8px/8px var(--mc-font);
+    color: var(--mc-yellow); font: 400 8px/9px var(--mc-font);
     text-shadow: 1px 1px 0 #3f3f00; white-space: nowrap;
     pointer-events: none;
   }
@@ -246,7 +260,7 @@
   .mc-button {
     display: grid; place-items: center; width: 100%;
     height: calc(20px * var(--gui, 1)); box-sizing: border-box; padding: 0;
-    color: #fff; font: 400 calc(8px * var(--gui, 1))/1 var(--mc-font); letter-spacing: 0;
+    color: #fff; font: 400 calc(8px * var(--gui, 1))/calc(9px * var(--gui, 1)) var(--mc-font); letter-spacing: 0;
     text-shadow: calc(1px * var(--gui, 1)) calc(1px * var(--gui, 1)) 0 #3f3f3f;
     text-align: center; border-radius: 0; box-shadow: none;
     cursor: pointer; image-rendering: pixelated; -webkit-appearance: none;
@@ -254,7 +268,7 @@
     pointer-events: auto;
   }
   #menu-gui .mc-button, #pause .mc-button {
-    font-size: 8px; line-height: 8px; text-shadow: 1px 1px 0 #3f3f3f;
+    font-size: 8px; line-height: 9px; text-shadow: 1px 1px 0 #3f3f3f;
   }
   .mc-button:hover, .mc-button:focus-visible {
     color: #ffffa0; outline: none;
@@ -308,7 +322,7 @@
   #menu-footer {
     position: absolute; left: 2px; right: 2px; bottom: 2px;
     z-index: 3; display: flex; justify-content: space-between; gap: 8px;
-    color: #fff; font: 400 8px/8px var(--mc-font);
+    color: #fff; font: 400 8px/9px var(--mc-font);
     text-shadow: 1px 1px 0 #3f3f3f; pointer-events: none;
   }
   #menu-footer span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -705,12 +719,16 @@
   .sw-search input {
     width: 100%; height: calc(20px * var(--gui, 1)); box-sizing: border-box;
     padding: 0 calc(28px * var(--gui, 1)) 0 calc(6px * var(--gui, 1));
-    background: #000; color: #e0e0e0; border: 2px solid #a0a0a0; border-radius: 0;
-    font: 400 calc(8px * var(--gui, 1))/1 var(--mc-font); outline: none;
+    background: #000; color: #e0e0e0; border-radius: 0;
+    border-style: solid; border-width: calc(1px * var(--gui, 1));
+    border-image: url('ui/sprites/widget/text_field.png') 1 1 1 1 fill / calc(1px * var(--gui, 1)) stretch;
+    font: 400 calc(8px * var(--gui, 1))/calc(9px * var(--gui, 1)) var(--mc-font); outline: none;
     -webkit-appearance: none; image-rendering: pixelated;
   }
   .sw-search input::placeholder { color: #777; }
-  .sw-search input:focus { border-color: #fff; }
+  .sw-search input:focus {
+    border-image-source: url('ui/sprites/widget/text_field_highlighted.png');
+  }
   .sw-search .sprite-icon-search {
     position: absolute; right: calc(5px * var(--gui, 1)); top: 50%;
     width: calc(12px * var(--gui, 1)); height: calc(12px * var(--gui, 1));
@@ -773,13 +791,17 @@
   .wc-tab {
     min-width: 92px; height: calc(20px * var(--gui, 1)); box-sizing: border-box;
     padding: 0 calc(8px * var(--gui, 1)); cursor: pointer;
-    color: #fff; font: 400 calc(8px * var(--gui, 1))/1 var(--mc-font);
+    color: #fff; font: 400 calc(8px * var(--gui, 1))/calc(9px * var(--gui, 1)) var(--mc-font);
     text-shadow: calc(1px * var(--gui, 1)) calc(1px * var(--gui, 1)) 0 #3f3f3f;
     -webkit-appearance: none; image-rendering: pixelated;
-    background: #6c6c6c; border: 2px solid #000; border-radius: 0;
-    box-shadow: inset 2px 2px 0 #a8a8a8, inset -2px -2px 0 #4a4a4a;
+    /* 1:1 widget/tab sprites (border 2, flat bottom). */
+    border-style: solid; border-width: 2px 2px 0 2px; border-radius: 0;
+    border-image: url('ui/sprites/widget/tab.png') 2 2 0 2 fill / 2px 2px 0 2px stretch;
+    background: none; box-shadow: none;
   }
-  .wc-tab.active { background: #3f3f3f; box-shadow: inset 2px 2px 0 #222, inset -2px -2px 0 #777; }
+  .wc-tab.active {
+    border-image-source: url('ui/sprites/widget/tab_selected.png');
+  }
   .wc-panes { flex: 1 1 auto; min-height: 0; overflow-y: auto; width: min(94vw, 460px); margin: 0 auto; }
   .wc-pane { display: none; flex-direction: column; gap: 10px; padding: 4px 2px 12px; }
   .wc-pane.active { display: flex; }
@@ -791,11 +813,15 @@
   .wc-row .grow { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
   .wc-row input[type="text"], .wc-row select {
     height: calc(20px * var(--gui, 1)); box-sizing: border-box; padding: 0 calc(5px * var(--gui, 1));
-    background: #000; color: #e0e0e0; border: 2px solid #a0a0a0; border-radius: 0;
-    font: 400 calc(8px * var(--gui, 1))/1 var(--mc-font); outline: none;
+    background: #000; color: #e0e0e0; border-radius: 0;
+    border-style: solid; border-width: calc(1px * var(--gui, 1));
+    border-image: url('ui/sprites/widget/text_field.png') 1 1 1 1 fill / calc(1px * var(--gui, 1)) stretch;
+    font: 400 calc(8px * var(--gui, 1))/calc(9px * var(--gui, 1)) var(--mc-font); outline: none;
     -webkit-appearance: none; width: 100%;
   }
-  .wc-row input[type="text"]:focus, .wc-row select:focus { border-color: #fff; }
+  .wc-row input[type="text"]:focus, .wc-row select:focus {
+    border-image-source: url('ui/sprites/widget/text_field_highlighted.png');
+  }
   .wc-toggle {
     width: calc(20px * var(--gui, 1)); height: calc(20px * var(--gui, 1));
     border: 0; padding: 0; cursor: pointer; background: none;
@@ -877,6 +903,28 @@
     transition: transform .08s ease;
   }
   .mc-dir.on { transform: scale(.94); }
+  #mc-dpad { display: none; }
+  /* Analog joystick replaces the four D-pad buttons on phones. */
+  #mc-joystick {
+    position: absolute; left: calc(16px + env(safe-area-inset-left));
+    bottom: calc(68px + env(safe-area-inset-bottom));
+    width: 150px; height: 150px; pointer-events: auto; touch-action: none;
+  }
+  #mc-joystick .js-ring {
+    position: absolute; inset: 0; border-radius: 50%;
+    background: rgba(0,0,0,.28); border: 2px solid rgba(255,255,255,.42);
+    box-shadow: inset 0 0 18px rgba(0,0,0,.35);
+  }
+  #mc-joystick .js-knob {
+    position: absolute; left: 50%; top: 50%; width: 60px; height: 60px;
+    margin: -30px 0 0 -30px; border-radius: 50%;
+    background: rgba(255,255,255,.55); border: 2px solid rgba(255,255,255,.85);
+    box-shadow: 0 3px 8px rgba(0,0,0,.45); will-change: transform;
+  }
+  @media (max-width: 420px) {
+    #mc-joystick { width: 126px; height: 126px; }
+    #mc-joystick .js-knob { width: 52px; height: 52px; margin: -26px 0 0 -26px; }
+  }
   #mc-up    { left: 50px; top: 0; }
   #mc-down  { left: 50px; top: 100px; }
   #mc-left  { left: 0; top: 50px; }
@@ -906,6 +954,7 @@
     <div class="wordmark" role="img" aria-label="Mojang Studios">
       <div class="half left"></div><div class="half right"></div>
     </div>
+    <div class="bar" aria-hidden="true"></div>
   </div>
 
   <!-- 2. Main menu: rotating 26.3 panorama, logo, splash, five buttons. -->
@@ -2885,10 +2934,12 @@
         state.rust = 0.4;
         progress();
 
-        // 4 chunks on phones keeps the WebGPU working set inside Safari's
-        // per-tab memory budget; desktop keeps 8.
-        const lowMemory = MCInput.isTouch || (navigator.deviceMemory && navigator.deviceMemory <= 4);
-        body.set_render_distance(lowMemory ? 4 : 8);
+        // Hard cap by device class: 4 chunks on phones / <=4 GB, 6 elsewhere.
+        // Both the Java brain's streaming radius and this draw radius stay
+        // inside Safari's per-tab working set (the old 8 caused "Aw Snap").
+        const mem = Number(navigator.deviceMemory) || 0;
+        const lowMemory = MCInput.isTouch || (mem > 0 && mem <= 4);
+        body.set_render_distance(lowMemory ? 4 : 6);
         // The scene target now matches the swap-chain format, so the grade is
         // valid on BGRA as well; `?post=0` keeps the direct path for A/B tests.
         const preferred = navigator.gpu.getPreferredCanvasFormat
@@ -2925,7 +2976,7 @@
 
 <div id="hud-ad" data-ad="hud" aria-label="Advertisement"><a class="hud-house" href="/" target="_blank" rel="noopener"><small>Advertisement</small>Minecraft Web</a></div>
 <style>
-#hud-ad{position:fixed;right:8px;top:44px;z-index:2147483646;width:200px;min-height:44px;padding:4px;background:rgba(0,0,0,.62);border:1px solid #333;color:#ddd;font:11px/1.2 system-ui,sans-serif;text-align:center;image-rendering:pixelated}
+#hud-ad{position:fixed;right:0;bottom:0;z-index:9999;width:200px;min-height:44px;padding:4px;background:rgba(0,0,0,.62);border:1px solid #333;color:#ddd;font:11px/1.2 system-ui,sans-serif;text-align:center;image-rendering:pixelated}
 #hud-ad .hud-house{display:block;color:#7fcf3f;font-weight:700;font-size:12px;text-decoration:none;letter-spacing:.02em}
 #hud-ad .hud-house small{display:block;color:#9a9a9a;font-size:9px;letter-spacing:.14em;font-weight:400;margin-bottom:3px}
 #hud-ad .adsbygoogle{width:100%!important}
@@ -2933,5 +2984,17 @@
 @media(prefers-reduced-motion:no-preference){#hud-ad{transition:opacity .2s}}
 </style>
 <script src="/site-ads.js" defer></script>
+<script>
+(function(){
+  // If the ad network did not fill the slot, do not leave an empty box over
+  // the game.
+  setTimeout(function(){
+    var h=document.getElementById('hud-ad');
+    if(!h) return;
+    var filled=h.querySelector('iframe')||h.querySelector('[data-ad-status="filled"]');
+    if(!filled) h.style.display='none';
+  }, 3000);
+})();
+</script>
 </body>
 </html>

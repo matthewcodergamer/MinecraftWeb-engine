@@ -223,6 +223,8 @@ pub struct SectionMeshData {
     pub key: (i32, i32, i32),
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
+    /// Leading indices for the opaque/cutout pass; the rest are blended.
+    pub opaque_count: u32,
     pub min: [f32; 3],
     pub max: [f32; 3],
 }
@@ -282,6 +284,7 @@ pub fn mesh_world() -> WorldMesh {
                     key,
                     vertices: mesh.vertices,
                     indices: mesh.indices,
+                    opaque_count: mesh.opaque_count,
                     min,
                     max: [min[0] + 16.0, min[1] + 16.0, min[2] + 16.0],
                 });
@@ -349,6 +352,7 @@ pub fn remesh(key: (i32, i32, i32)) -> Option<SectionMeshData> {
                 key,
                 vertices: mesh.vertices,
                 indices: mesh.indices,
+                opaque_count: mesh.opaque_count,
                 min,
                 max: [min[0] + 16.0, min[1] + 16.0, min[2] + 16.0],
             },
@@ -356,6 +360,7 @@ pub fn remesh(key: (i32, i32, i32)) -> Option<SectionMeshData> {
                 key,
                 vertices: Vec::new(),
                 indices: Vec::new(),
+                opaque_count: 0,
                 min,
                 max: [min[0] + 16.0, min[1] + 16.0, min[2] + 16.0],
             },
