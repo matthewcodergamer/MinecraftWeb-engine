@@ -114,7 +114,7 @@ jobs:
           python3 -m http.server 8765 --bind 127.0.0.1 --directory build/web > /tmp/minecraft-http.log 2>&1 &
           python3 scripts/cdp.py "http://127.0.0.1:8765/game.html?smoke-world=1" \
             --preload-js "try{sessionStorage.setItem('mw_play_pass',String(Date.now()))}catch(e){}" \
-            --until-js "window.__mcBodyError || (window.mcBridge && (window.mcBridge.state.error || window.mcBridge.state.sections > 0))" \\
-            --assert-js "window.__mcBodyReady && window.mcBridge && window.mcBridge.state.sections > 0" \\
-            --timeout 600 \\
+            --until-js "window.__mcBodyError || (window.mcBridge && (window.mcBridge.state.error || window.mcBridge.state.sections > 0))" \
+            --assert-js "window.__mcBodyReady && window.mcBridge && window.mcBridge.state.sections > 0" \
+            --timeout 600 \
             --eval "JSON.stringify({bodyReady:window.__mcBodyReady,javaReady:window.__mcJavaReady,sections:window.mcBridge&&window.mcBridge.state.sections,javaError:window.mcBridge&&window.mcBridge.state.error,stage:window.__mc&&window.__mc.stage})"
