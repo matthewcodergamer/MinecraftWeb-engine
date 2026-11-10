@@ -2510,6 +2510,34 @@
 
     /* QA hook: ?screen=select|create|upgrade opens a world screen directly so
        the layout can be screenshotted without clicking through the menu. */
+    // CI-only end-to-end smoke path: create a real Java singleplayer world
+    // after the Rust Body and menu are ready. The isolated browser profile keeps
+    // this save out of a player's normal world list.
+    if (params.get('smoke-world') === '1') {
+      const launchSmokeWorld = () => {
+        if (!state.bodyReady || !menu.classList.contains('open')) {
+          setTimeout(launchSmokeWorld, 250);
+          return;
+        }
+        beginWorld({
+          id: 'ci-smoke-world',
+          name: 'CI Smoke World',
+          folder: 'ci-smoke-world',
+          seed: '26032603',
+          mode: 'creative',
+          difficulty: 'peaceful',
+          type: 'default',
+          commands: true,
+          structures: true,
+          bonus: false,
+          keepInv: false,
+          daylight: true,
+          coords: true,
+        });
+      };
+      setTimeout(launchSmokeWorld, 500);
+    }
+
     (function openDevScreen() {
       const which = params.get('screen');
       if (!which) return;
