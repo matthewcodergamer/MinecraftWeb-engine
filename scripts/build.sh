@@ -61,8 +61,13 @@ SRCS=$(find src/entry/java src/compat/java -name '*.java' 2>/dev/null || true)
 # Compile-only signatures of TeaVM classlib extensions that live under java.* names (never given to TeaVM).
 rm -rf build/stubs && mkdir -p build/stubs
 "$JDK/bin/javac" --patch-module java.base=src/compat/java-stubs -d build/stubs $(find src/compat/java-stubs -name '*.java')
+MC_COMPILE_CP="$MC_JAR:$MC_LIBS"
+if [ -n "$MC_SERVER_JAR" ]; then
+  SERVER_LIB_CP=$(IFS=:; echo "${SERVER_LIBS[*]}")
+  MC_COMPILE_CP="$MC_SERVER_JAR:$SERVER_LIB_CP:$MC_COMPILE_CP"
+fi
 "$JDK/bin/javac" --patch-module java.base=build/stubs -d build/classes \
-  -cp "$MC_JAR:$MC_LIBS:$ROOT/tools/lib/teavm-jso-0.16.0.jar:$ROOT/tools/lib/teavm-interop-0.16.0.jar:$ROOT/tools/lib/teavm-classlib-0.16.0.jar:$ROOT/tools/lib/teavm-jso-apis-0.16.0.jar" $SRCS
+  -cp "$MC_COMPILE_CP:$ROOT/tools/lib/teavm-jso-0.16.0.jar:$ROOT/tools/lib/teavm-interop-0.16.0.jar:$ROOT/tools/lib/teavm-classlib-0.16.0.jar:$ROOT/tools/lib/teavm-jso-apis-0.16.0.jar" $SRCS
 
 # Types that live in JDK packages TeaVM does not rename (javax.*) are compiled into those packages.
 OVERLAY=$(find src/compat/java-base-overlay -name '*.java' 2>/dev/null || true)
