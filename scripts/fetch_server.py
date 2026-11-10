@@ -77,7 +77,7 @@ def download(url, destination, expected_sha1, expected_size):
 
 
 def safe_output(root, relative):
-    normalized = relative.replace("\\\\", "/")
+    normalized = relative.replace("\\", "/")
     parts = normalized.split("/")
     if not normalized or normalized.startswith("/") or any(part in ("", ".", "..") for part in parts):
         raise RuntimeError(f"unsafe path in Mojang bundle metadata: {relative!r}")
