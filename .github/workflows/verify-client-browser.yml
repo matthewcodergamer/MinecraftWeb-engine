@@ -69,7 +69,9 @@ jobs:
           MC_DIR: ${{ runner.temp }}/minecraft
           MC_VERSION: "26.3"
           JDK: ${{ env.JAVA_HOME }}
-          PORT_HEAP: 6g
+          PORT_HEAP: 5g
+          PORT_STACK: 256m
+          PORT_JAVA_OPTS: "-Dport.fast=true -XX:+UseSerialGC"
           PORT_OPT: SIMPLE
           PORT_LENIENT: "true"
         run: bash scripts/build_client_probe.sh
