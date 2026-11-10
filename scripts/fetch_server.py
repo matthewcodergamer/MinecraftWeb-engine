@@ -93,7 +93,7 @@ def parse_list(data, fields, label):
     for line_number, raw in enumerate(data.decode("utf-8").splitlines(), 1):
         if not raw.strip():
             continue
-        columns = raw.split("\\t")
+        columns = raw.split("\t")
         if len(columns) != fields:
             raise RuntimeError(f"invalid {label} row {line_number}: expected {fields} tab-separated fields")
         rows.append(columns)
