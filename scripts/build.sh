@@ -76,6 +76,7 @@ set -e
 # Keep the full compiler audit visible in Actions logs. The normal build output is
 # intentionally compact, but tailing it previously hid the exact patch-match diagnostics.
 echo "=== PORT COMPATIBILITY AUDIT ==="
+grep '^SEVERE_EXACT' "build/$ENTRY.$TARGET.log" || true
 grep -E 'PATCH_RULE_DIAG|PATCH_METHOD_DIAG|PATCH (BODY|REDIRECT|STUB|ZERO_NATIVE) (java\.io\.Reader|java\.util\.zip\.Inflater|io\.netty\.buffer\.VarHandleByteBufferAccess|io\.netty\.util\.internal\.PlatformDependent0)|classes compiled:|^(LINK|ERROR) ' "build/$ENTRY.$TARGET.log" | tail -n 260 || true
 echo "=== END PORT COMPATIBILITY AUDIT ==="
 if [ "$BUILD_STATUS" -ne 0 ]; then
