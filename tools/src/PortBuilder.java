@@ -16,45 +16,55 @@ import org.teavm.vm.TeaVMOptimizationLevel;
  * so missing classes/methods form the porting worklist.
  */
 public class PortBuilder {
-    /** Prints the shortest call chain from the entry point into any method of a class matching prefix. */
+    /** Prints each reachable method matching a prefix and its shortest caller chain to the entry point. */
     private static void explain(TeaVMTool tool, String prefix) {
         org.teavm.dependency.DependencyInfo info = tool.getDependencyInfo();
         org.teavm.callgraph.CallGraph graph = info.getCallGraph();
-        java.util.Map<org.teavm.model.MethodReference, org.teavm.model.MethodReference> next = new java.util.HashMap<>();
-        java.util.ArrayDeque<org.teavm.model.MethodReference> queue = new java.util.ArrayDeque<>();
+        java.util.TreeMap<String, org.teavm.model.MethodReference> targets = new java.util.TreeMap<>();
         for (org.teavm.model.MethodReference m : info.getReachableMethods()) {
             if (m.getClassName().startsWith(prefix)) {
-                next.put(m, null);
-                queue.add(m);
+                targets.put(m.toString(), m);
             }
         }
-        System.out.println("WHY " + prefix + " (" + queue.size() + " reachable methods)");
+        System.out.println("WHY " + prefix + " (" + targets.size() + " reachable methods)");
         String entry = tool.getMainClass();
-        while (!queue.isEmpty()) {
-            org.teavm.model.MethodReference m = queue.poll();
-            if (m.getClassName().equals(entry)) {
-                org.teavm.model.MethodReference cur = m;
-                while (cur != null) {
-                    System.out.println("   " + cur);
-                    cur = next.get(cur);
+        for (org.teavm.model.MethodReference target : targets.values()) {
+            java.util.Map<org.teavm.model.MethodReference, org.teavm.model.MethodReference> next = new java.util.HashMap<>();
+            java.util.ArrayDeque<org.teavm.model.MethodReference> queue = new java.util.ArrayDeque<>();
+            next.put(target, null);
+            queue.add(target);
+            org.teavm.model.MethodReference found = null;
+            while (!queue.isEmpty()) {
+                org.teavm.model.MethodReference m = queue.poll();
+                if (m.getClassName().equals(entry)) {
+                    found = m;
+                    break;
                 }
-                return;
-            }
-            org.teavm.callgraph.CallGraphNode node = graph.getNode(m);
-            if (node == null) {
-                continue;
-            }
-            for (org.teavm.callgraph.CallSite site : node.getCallerCallSites()) {
-                for (org.teavm.callgraph.CallGraphNode caller : site.getCallers()) {
-                    org.teavm.model.MethodReference c = caller.getMethod();
-                    if (!next.containsKey(c)) {
-                        next.put(c, m);
-                        queue.add(c);
+                org.teavm.callgraph.CallGraphNode node = graph.getNode(m);
+                if (node == null) {
+                    continue;
+                }
+                for (org.teavm.callgraph.CallSite site : node.getCallerCallSites()) {
+                    for (org.teavm.callgraph.CallGraphNode caller : site.getCallers()) {
+                        org.teavm.model.MethodReference callerMethod = caller.getMethod();
+                        if (!next.containsKey(callerMethod)) {
+                            next.put(callerMethod, m);
+                            queue.add(callerMethod);
+                        }
                     }
                 }
             }
+            if (found == null) {
+                System.out.println("   " + target + " <- (no caller chain to entry; class init/virtual dispatch may be involved)");
+            } else {
+                System.out.println("   CHAIN " + target);
+                org.teavm.model.MethodReference cur = found;
+                while (cur != null) {
+                    System.out.println("      " + cur);
+                    cur = next.get(cur);
+                }
+            }
         }
-        System.out.println("   (no chain from entry found - reached via class init or virtual dispatch)");
     }
 
     public static void main(String[] args) throws Exception {
