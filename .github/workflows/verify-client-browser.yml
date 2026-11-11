@@ -69,12 +69,143 @@ jobs:
           MC_DIR: ${{ runner.temp }}/minecraft
           MC_VERSION: "26.3"
           JDK: ${{ env.JAVA_HOME }}
-          PORT_HEAP: 5g
+          PORT_HEAP: 12g
           PORT_STACK: 256m
-          PORT_JAVA_OPTS: "-Dport.fast=true -XX:+UseSerialGC"
-          PORT_OPT: SIMPLE
+          PORT_JAVA_OPTS: "-XX:+UseSerialGC"
+          PORT_OPT: ADVANCED
           PORT_LENIENT: "true"
-        run: bash scripts/build_client_probe.sh
+        run: bash scripts/build.sh mcport.ClientMain wasm
+
+      - name: Install Binaryen 133 and try Wasm GC optimization
+        run: |
+          set -euo pipefail
+          archive=binaryen-version_133-x86_64-linux.tar.gz
+          base=https://github.com/WebAssembly/binaryen/releases/download/version_133
+          curl --fail --location --retry 5 "$base/$archive" -o "/tmp/$archive"
+          echo "2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489  /tmp/$archive" | sha256sum --check
+          tar -xzf "/tmp/$archive" -C /tmp
+          BINARYEN_BIN="/tmp/binaryen-version_133/bin/wasm-opt"
+          test -x "$BINARYEN_BIN"
+          "$BINARYEN_BIN" --version
+          if "$BINARYEN_BIN" build/web/clientmain.wasm -Oz --converge --outlining --code-folding --directize --one-caller-inline-max-function-size=100 -o build/web/clientmain.optimized.wasm; then
+            python3 - <<'PY'
+          from pathlib import Path
+
+          def largest_function(path):
+              data = path.read_bytes()
+              def uleb(buf, pos):
+                  value = shift = 0
+                  while True:
+                      byte = buf[pos]
+                      pos += 1
+                      value |= (byte & 0x7f) << shift
+                      if not byte & 0x80:
+                          return value, pos
+                      shift += 7
+              pos = 8
+              largest = (0, -1)
+              while pos < len(data):
+                  section_id = data[pos]
+                  pos += 1
+                  section_size, pos = uleb(data, pos)
+                  section_end = pos + section_size
+                  if section_id == 10:
+                      count, cursor = uleb(data, pos)
+                      for index in range(count):
+                          body_size, cursor = uleb(data, cursor)
+                          if body_size > largest[0]:
+                              largest = (body_size, index)
+                          cursor += body_size
+                      if cursor != section_end:
+                          raise SystemExit(f"Malformed code section in {path}")
+                  pos = section_end
+              return len(data), largest
+
+          original = Path("build/web/clientmain.wasm")
+          candidate = Path("build/web/clientmain.optimized.wasm")
+          try:
+              size, (largest, index) = largest_function(candidate)
+              print(f"Binaryen 133 output: {size:,} bytes; largest function: {largest:,} bytes (index {index})")
+              if largest < 7_654_321:
+                  candidate.replace(original)
+                  print("ACCEPTED: optimized module is below Chrome's observed function limit.")
+              else:
+                  print("REJECTED: optimized module still exceeds Chrome's observed function limit; original preserved.")
+          except Exception as error:
+              print(f"REJECTED: could not validate optimized module: {error}; original preserved.")
+          PY
+          else
+            echo "Binaryen 133 could not optimize this TeaVM module; original WASM preserved."
+          fi
+
+      - name: Measure WebAssembly function sizes after TeaVM ADVANCED optimization
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("build/web/clientmain.wasm")
+          data = path.read_bytes()
+
+          def uleb(buf, pos):
+              value = shift = 0
+              while True:
+                  byte = buf[pos]
+                  pos += 1
+                  value |= (byte & 0x7f) << shift
+                  if not byte & 0x80:
+                      return value, pos
+                  shift += 7
+
+          pos = 8
+          largest = (0, -1)
+          while pos < len(data):
+              section_id = data[pos]
+              pos += 1
+              section_size, pos = uleb(data, pos)
+              section_end = pos + section_size
+              if section_id == 10:
+                  count, cursor = uleb(data, pos)
+                  for index in range(count):
+                      body_size, cursor = uleb(data, cursor)
+                      if body_size > largest[0]:
+                          largest = (body_size, index)
+                      cursor += body_size
+                  if cursor != section_end:
+                      raise SystemExit(f"Malformed code section: parsed to {cursor}, expected {section_end}")
+              pos = section_end
+
+          print(f"TeaVM ADVANCED WASM size: {len(data):,} bytes")
+          print(f"Largest function body: {largest[0]:,} bytes (defined function index {largest[1]})")
+          limit = 7_654_321
+          if largest[0] >= limit:
+              print(f"STILL ABOVE observed Chrome function limit ({limit:,} bytes); retain artifact for next strategy.")
+          else:
+              print("Largest function is below the observed Chrome function limit.")
+          PY
+
+      - name: Stage TeaVM 0.16.0 Wasm GC browser runtime
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          jars = sorted(Path("tools/lib").glob("*.jar"))
+          resources = (
+              "org/teavm/backend/wasm/wasm-gc-runtime.min.js",
+              "org/teavm/backend/wasm/wasm-gc-runtime.js",
+          )
+          for resource in resources:
+              for jar in jars:
+                  try:
+                      with ZipFile(jar) as archive:
+                          data = archive.read(resource)
+                  except (KeyError, OSError):
+                      continue
+                  target = Path("build/web/clientmain.wasm-runtime.js")
+                  target.write_bytes(data)
+                  print(f"Copied {resource} from {jar}: {len(data):,} bytes -> {target}")
+                  raise SystemExit(0)
+          raise SystemExit("TeaVM 0.16.0 Wasm GC runtime resource was not found in tools/lib/*.jar")
+          PY
 
       - name: Stage client page and vanilla resources
         env:
@@ -114,7 +245,7 @@ jobs:
           CHROME: /usr/bin/google-chrome
         run: |
           python3 -m http.server 8765 --bind 127.0.0.1 --directory build/web > /tmp/minecraft-http.log 2>&1 &
-          python3 scripts/cdp.py "http://127.0.0.1:8765/game.html?smoke-world=1" \
+          python3 scripts/cdp.py "http://127.0.0.1:8765/game.html?smoke-world=1&wasm=1" \
             --preload-js "try{sessionStorage.setItem('mw_play_pass',String(Date.now()))}catch(e){}" \
             --until-js "(() => { const f=document.getElementById('mc-brain'); const m=f&&f.contentWindow&&f.contentWindow.__mc; const rust=window.mcBridge&&window.mcBridge.state.module; return window.__mcBodyError || (window.mcBridge && window.mcBridge.state.error) || (rust && rust.java_connected && rust.java_connected()) || (m && m.error); })()" \
             --assert-js "window.__mcBodyReady && window.mcBridge && window.mcBridge.state.module && window.mcBridge.state.module.java_connected() && window.mcBridge.state.module.java_section_count() > 0" \
