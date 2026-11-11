@@ -2992,7 +2992,7 @@
           } catch (e) { brain = false; }
           if (brain) {
             $('mc-brain').addEventListener('load', flushBrainQueue);
-            $('mc-brain').src = 'play.html?embedded=1&scale=0.5&stats=0';
+            $('mc-brain').src = 'play.html?embedded=1&scale=0.5&stats=0' + (params.get('wasm') === '1' ? '&wasm=1' : '');
           } else {
             console.warn('clientmain.js not deployed — renderer-only mode');
             state.javaReady = true;
