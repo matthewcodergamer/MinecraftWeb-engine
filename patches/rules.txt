@@ -201,3 +201,14 @@ BODY_STATIC io.netty.util.internal.PlatformDependent0 getShort([BI)S -> mcport.r
 BODY_STATIC io.netty.util.internal.PlatformDependent0 putShort([BIS)V -> mcport.rt.patch.NettyUnsafePatches putShort
 BODY_STATIC io.netty.util.internal.PlatformDependent0 getShort(J)S -> mcport.rt.patch.NettyUnsafePatches getShort
 BODY_STATIC io.netty.util.internal.PlatformDependent0 putShort(JS)V -> mcport.rt.patch.NettyUnsafePatches putShort
+
+# --- Netty raw native-memory operations -> the browser's bounds-checked ArrayBuffer heap --------
+BODY_STATIC io.netty.util.internal.PlatformDependent0 copyMemory(JJJ)V -> mcport.rt.patch.NettyBrowserPatches copyMemory
+BODY_STATIC io.netty.util.internal.PlatformDependent0 copyMemoryWithSafePointPolling(JJJ)V -> mcport.rt.patch.NettyBrowserPatches copyMemoryWithSafePointPolling
+BODY_STATIC io.netty.util.internal.PlatformDependent0 allocateDirectNoCleaner(I)Ljava/nio/ByteBuffer; -> mcport.rt.patch.NettyBrowserPatches allocateDirectNoCleaner
+BODY_STATIC io.netty.util.internal.PlatformDependent0 reallocateDirectNoCleaner(Ljava/nio/ByteBuffer;I)Ljava/nio/ByteBuffer; -> mcport.rt.patch.NettyBrowserPatches reallocateDirectNoCleaner
+BODY_STATIC io.netty.util.internal.PlatformDependent0 alignSlice(Ljava/nio/ByteBuffer;I)Ljava/nio/ByteBuffer; -> mcport.rt.patch.NettyBrowserPatches alignSlice
+BODY_STATIC io.netty.util.internal.PlatformDependent0 offsetSlice(Ljava/nio/ByteBuffer;II)Ljava/nio/ByteBuffer; -> mcport.rt.patch.NettyBrowserPatches offsetSlice
+BODY_STATIC io.netty.util.internal.PlatformDependent0 absolutePut(Ljava/nio/ByteBuffer;ILjava/nio/ByteBuffer;II)Ljava/nio/ByteBuffer; -> mcport.rt.patch.NettyBrowserPatches absolutePut
+BODY_STATIC io.netty.util.internal.PlatformDependent0 absolutePut(Ljava/nio/ByteBuffer;I[BII)Ljava/nio/ByteBuffer; -> mcport.rt.patch.NettyBrowserPatches absolutePut
+BODY_STATIC io.netty.util.internal.PlatformDependent0 allocateUninitializedArray(I)[B -> mcport.rt.patch.NettyBrowserPatches allocateUninitializedArray

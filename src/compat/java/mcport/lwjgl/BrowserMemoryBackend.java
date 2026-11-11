@@ -364,4 +364,27 @@ public final class BrowserMemoryBackend implements MemoryBackend {
             put16(p + 2 * n, 0);
         }
     }
+
+    /**
+     * Copy bytes between addresses in the browser's emulated native heap.
+     * Unlike System.arraycopy, this preserves Netty's native-address semantics.
+     */
+    public static void copyMemory(long srcAddress, long dstAddress, long bytes) {
+        if (srcAddress < 0 || dstAddress < 0 || bytes < 0
+                || srcAddress > Integer.MAX_VALUE || dstAddress > Integer.MAX_VALUE
+                || bytes > Integer.MAX_VALUE) {
+            throw new IndexOutOfBoundsException("native heap copy range exceeds browser address space");
+        }
+        int src = (int) srcAddress;
+        int dst = (int) dstAddress;
+        int count = (int) bytes;
+        if (!validRange(src, count) || !validRange(dst, count)) {
+            throw new IndexOutOfBoundsException("native heap copy is outside allocated memory");
+        }
+        move(src, dst, count);
+    }
+
+    @JSBody(params = {"address", "length"}, script =
+            "return address >= 0 && length >= 0 && address + length <= __mcHeap.u8.length;")
+    private static native boolean validRange(int address, int length);
 }
