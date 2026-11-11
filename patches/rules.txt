@@ -149,6 +149,11 @@ STUB_CLASS com.mojang.jtracy.Loader
 # Chat-signing keys from servers (X.509): not available; Mojang's code reports CryptException as for a bad key.
 STUB net.minecraft.util.Crypt byteToPublicKey([B)Ljava/security/PublicKey;
 
+# TEMPORARY WASM-GC DIAGNOSTIC: bypass CuboidItemModel method bodies to isolate the
+# Chrome ref-nullability validation failure. This is not a production rendering fix;
+# remove after confirming whether the rest of the client reaches the Rust section bridge.
+STUB_CLASS net.minecraft.client.renderer.item.CuboidItemModel
+
 # --- Graphics: renderpearl backends for the browser (WebGPU preferred) -----------------------------
 # ClientBootstrap references VulkanFeatureSets only to run its empty bootstrap(); touching the class
 # initializes large Vk* feature structs that cannot reflect on TeaVM. The browser never uses Vulkan.
