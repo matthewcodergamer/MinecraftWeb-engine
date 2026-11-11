@@ -194,14 +194,29 @@ def main():
             except Exception as exc:
                 print(f"timeout screenshot unavailable: {type(exc).__name__}: {exc}", flush=True)
         assert_ok = True
-        for expr in a.assert_js:
-            r = ws.call("Runtime.evaluate", {"expression": f"!!({expr})", "returnByValue": True}, pump=pump)
-            passed = bool(r.get("result", {}).get("result", {}).get("value"))
-            print(f"assert {expr} => {'PASS' if passed else 'FAIL'}")
-            assert_ok = assert_ok and passed
-        for expr in a.eval:
-            r = ws.call("Runtime.evaluate", {"expression": expr, "returnByValue": True}, pump=pump)
-            print(f"eval {expr} => {json.dumps(r.get('result', {}).get('result', {}).get('value'))[:4000]}")
+        if ok:
+            for expr in a.assert_js:
+                try:
+                    r = ws.call("Runtime.evaluate", {"expression": f"!!({expr})", "returnByValue": True}, pump=pump)
+                    passed = bool(r.get("result", {}).get("result", {}).get("value"))
+                    print(f"assert {expr} => {'PASS' if passed else 'FAIL'}")
+                    assert_ok = assert_ok and passed
+                except (TimeoutError, EOFError, OSError) as exc:
+                    print(f"assert evaluation unavailable: {type(exc).__name__}: {exc}", flush=True)
+                    assert_ok = False
+                    break
+            if assert_ok:
+                for expr in a.eval:
+                    try:
+                        r = ws.call("Runtime.evaluate", {"expression": expr, "returnByValue": True}, pump=pump)
+                        print(f"eval {expr} => {json.dumps(r.get('result', {}).get('result', {}).get('value'))[:4000]}")
+                    except (TimeoutError, EOFError, OSError) as exc:
+                        print(f"eval unavailable: {type(exc).__name__}: {exc}", flush=True)
+                        assert_ok = False
+                        break
+        else:
+            print("skipping post-timeout assertions/evaluations: page did not become responsive", flush=True)
+            assert_ok = False
         if a.screenshot:
             r = ws.call("Page.captureScreenshot", {"format": "png"}, pump=pump)
             with open(a.screenshot, "wb") as f:
