@@ -77,5 +77,7 @@ if [ "$BUILD_STATUS" -ne 0 ]; then
   grep -nEi "error|exception|severe|unimplemented|failed|not found|linkage" "build/$ENTRY.$TARGET.log" | tail -n 120 || true
   echo "Last 160 unfiltered build log lines:"
   tail -n 160 "build/$ENTRY.$TARGET.log"
+  echo "Reachability traces (up to 60 call-chain lines per target):"
+  awk '/^WHY / { show=1; count=0 } show { print; count++; if (count >= 60) show=0 }' "build/$ENTRY.$TARGET.log" || true
 fi
 exit "$BUILD_STATUS"
