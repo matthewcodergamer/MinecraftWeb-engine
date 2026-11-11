@@ -77,6 +77,68 @@ jobs:
           PORT_LENIENT: "true"
         run: bash scripts/build.sh mcport.ClientMain wasm
 
+      - name: Install Binaryen WebAssembly optimizer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binaryen
+          wasm-opt --version
+
+      - name: Optimize and measure WebAssembly function sizes
+        run: |
+          set -euo pipefail
+          wasm-opt build/web/clientmain.wasm -Oz --converge --outlining --code-folding --directize --one-caller-inline-max-function-size=100 -o build/web/clientmain_opt.wasm
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("build/web/clientmain_opt.wasm")
+          data = path.read_bytes()
+
+          def uleb(buf, pos):
+              value = shift = 0
+              while True:
+                  byte = buf[pos]
+                  pos += 1
+                  value |= (byte & 0x7f) << shift
+                  if not byte & 0x80:
+                      return value, pos
+                  shift += 7
+
+          pos = 8
+          largest = (0, -1)
+          while pos < len(data):
+              section_id = data[pos]
+              pos += 1
+              section_size, pos = uleb(data, pos)
+              section_end = pos + section_size
+              if section_id == 10:
+                  count, cursor = uleb(data, pos)
+                  for index in range(count):
+                      body_size, cursor = uleb(data, cursor)
+                      if body_size > largest[0]:
+                          largest = (body_size, index)
+                      cursor += body_size
+                  if cursor != section_end:
+                      raise SystemExit(f"Malformed code section: parsed to {cursor}, expected {section_end}")
+              pos = section_end
+
+          original = Path("build/web/clientmain.wasm")
+          print(f"Binaryen input: {original.stat().st_size:,} bytes")
+          print(f"Binaryen output: {path.stat().st_size:,} bytes")
+          print(f"Largest function body: {largest[0]:,} bytes (defined function index {largest[1]})")
+          limit = 7_654_321
+          if largest[0] >= limit:
+              raise SystemExit(f"Largest function remains at/above Chrome's observed limit ({limit:,} bytes)")
+          path.replace(original)
+          print("Optimized module replaced original; largest function is below observed Chrome limit.")
+          PY
+
+      - name: Report Binaryen function metrics
+        if: always()
+        run: |
+          if [ -s build/web/clientmain.wasm ]; then
+            wasm-opt build/web/clientmain.wasm --metrics --func-metrics -o /dev/null || true
+          fi
+
       - name: Stage TeaVM 0.16.0 Wasm GC browser runtime
         run: |
           python3 - <<'PY'
