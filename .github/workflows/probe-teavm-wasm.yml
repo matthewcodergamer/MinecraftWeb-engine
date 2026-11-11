@@ -77,6 +77,68 @@ jobs:
           PORT_LENIENT: "true"
         run: bash scripts/build.sh mcport.ClientMain wasm
 
+      - name: Install Binaryen 133 and try Wasm GC optimization
+        run: |
+          set -euo pipefail
+          archive=binaryen-version_133-x86_64-linux.tar.gz
+          base=https://github.com/WebAssembly/binaryen/releases/download/version_133
+          curl --fail --location --retry 5 "$base/$archive" -o "/tmp/$archive"
+          echo "2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489  /tmp/$archive" | sha256sum --check
+          tar -xzf "/tmp/$archive" -C /tmp
+          BINARYEN_BIN="$(find /tmp -maxdepth 2 -type f -path '*/bin/wasm-opt' | head -n 1)"
+          test -x "$BINARYEN_BIN"
+          "$BINARYEN_BIN" --version
+          if "$BINARYEN_BIN" build/web/clientmain.wasm -Oz --converge --outlining --code-folding --directize --one-caller-inline-max-function-size=100 -o build/web/clientmain.optimized.wasm; then
+            python3 - <<'PY'
+          from pathlib import Path
+
+          def largest_function(path):
+              data = path.read_bytes()
+              def uleb(buf, pos):
+                  value = shift = 0
+                  while True:
+                      byte = buf[pos]
+                      pos += 1
+                      value |= (byte & 0x7f) << shift
+                      if not byte & 0x80:
+                          return value, pos
+                      shift += 7
+              pos = 8
+              largest = (0, -1)
+              while pos < len(data):
+                  section_id = data[pos]
+                  pos += 1
+                  section_size, pos = uleb(data, pos)
+                  section_end = pos + section_size
+                  if section_id == 10:
+                      count, cursor = uleb(data, pos)
+                      for index in range(count):
+                          body_size, cursor = uleb(data, cursor)
+                          if body_size > largest[0]:
+                              largest = (body_size, index)
+                          cursor += body_size
+                      if cursor != section_end:
+                          raise SystemExit(f"Malformed code section in {path}")
+                  pos = section_end
+              return len(data), largest
+
+          original = Path("build/web/clientmain.wasm")
+          candidate = Path("build/web/clientmain.optimized.wasm")
+          try:
+              size, (largest, index) = largest_function(candidate)
+              print(f"Binaryen 133 output: {size:,} bytes; largest function: {largest:,} bytes (index {index})")
+              if largest < 7_654_321:
+                  candidate.replace(original)
+                  print("ACCEPTED: optimized module is below Chrome's observed function limit.")
+              else:
+                  print("REJECTED: optimized module still exceeds Chrome's observed function limit; original preserved.")
+          except Exception as error:
+              print(f"REJECTED: could not validate optimized module: {error}; original preserved.")
+          PY
+          else
+            echo "Binaryen 133 could not optimize this TeaVM module; original WASM preserved."
+          fi
+
       - name: Measure WebAssembly function sizes after TeaVM ADVANCED optimization
         run: |
           python3 - <<'PY'
