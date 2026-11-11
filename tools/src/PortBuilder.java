@@ -103,6 +103,24 @@ public class PortBuilder {
         int linkage = 0;
         java.util.Set<Problem> severeSet = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         severeSet.addAll(tool.getProblemProvider().getSevereProblems());
+        // Emit the complete severe-error worklist separately from lazy LINK diagnostics.
+        // The build script's compact tail can otherwise hide these when LINK output is large.
+        System.out.println("=== SEVERE_EXACT_BEGIN count=" + severe + " ===");
+        for (Problem p : tool.getProblemProvider().getSevereProblems()) {
+            StringBuilder sb = new StringBuilder("SEVERE_EXACT ");
+            sb.append(p.getText());
+            Object[] params = p.getParams();
+            if (params != null) {
+                for (Object o : params) {
+                    sb.append(" | ").append(o);
+                }
+            }
+            if (p.getLocation() != null && p.getLocation().getMethod() != null) {
+                sb.append("  @ ").append(p.getLocation().getMethod());
+            }
+            System.out.println(sb);
+        }
+        System.out.println("=== SEVERE_EXACT_END ===");
         for (Problem p : tool.getProblemProvider().getProblems()) {
             boolean err = p.getSeverity() == ProblemSeverity.ERROR;
             boolean lazy = err && !severeSet.contains(p);
