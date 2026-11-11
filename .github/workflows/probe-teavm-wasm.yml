@@ -8,6 +8,7 @@ on:
       - ".github/workflows/probe-teavm-wasm.yml"
       - "scripts/build.sh"
       - "tools/src/PortBuilder.java"
+      - "src/compat/java/**"
   workflow_dispatch:
 
 permissions:
