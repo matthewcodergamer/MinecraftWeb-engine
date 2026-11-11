@@ -55,6 +55,36 @@ jobs:
           MC_VERSION: "26.3"
         run: python3 scripts/fetch_minecraft.py --version "$MC_VERSION" --dest "$MC_DIR"
 
+      - name: Dump exact Netty NetUtil bytecode for WASM GC failure
+        env:
+          MC_DIR: ${{ runner.temp }}/minecraft
+          MC_VERSION: "26.3"
+        run: |
+          set -euo pipefail
+          mkdir -p build/diagnostics
+          python3 - <<'PY'
+          import glob, json, os, subprocess
+          root = os.environ["MC_DIR"]
+          meta = json.load(open(os.path.join(root, "versions", os.environ["MC_VERSION"], os.environ["MC_VERSION"] + ".json")))
+          jars = []
+          for lib in meta.get("libraries", []):
+              artifact = lib.get("downloads", {}).get("artifact")
+              if artifact and artifact["path"].endswith("netty-common-" + lib["name"].split(":")[-1] + ".jar"):
+                  path = os.path.join(root, "libraries", artifact["path"])
+                  if os.path.isfile(path):
+                      jars.append(path)
+          if not jars:
+              jars = glob.glob(os.path.join(root, "libraries", "**", "netty-common-*.jar"), recursive=True)
+          if not jars:
+              raise SystemExit("Could not locate official netty-common jar")
+          jar = jars[0]
+          print("Netty jar:", jar)
+          with open("build/diagnostics/NetUtil.txt", "w") as out:
+              out.write("===== io.netty.util.NetUtil from " + jar + " =====\\n")
+              subprocess.run(["javap", "-classpath", jar, "-p", "-s", "-c", "io.netty.util.NetUtil"], stdout=out, stderr=subprocess.STDOUT, check=True)
+          print("Wrote build/diagnostics/NetUtil.txt")
+          PY
+
       - name: Dump exact Minecraft APIs and bytecode for WASM failures
         env:
           MC_DIR: ${{ runner.temp }}/minecraft
