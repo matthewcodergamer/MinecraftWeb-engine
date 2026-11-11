@@ -9,6 +9,7 @@ on:
       - "scripts/build.sh"
       - "tools/src/PortBuilder.java"
       - "tools/src/PortTransformer.java"
+      - "tools/src/org/teavm/backend/wasm/vtable/WasmGCVirtualTableBuilder.java"
       - "src/compat/java/**"
       - "patches/rules.txt"
   workflow_dispatch:
