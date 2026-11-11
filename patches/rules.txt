@@ -194,3 +194,10 @@ REDIRECT java.io.Reader readAllAsString()Ljava/lang/String; -> mcport.rt.patch.R
 
 REDIRECT java.util.zip.Inflater setInput(Ljava/nio/ByteBuffer;)V -> mcport.rt.patch.InflaterPatches setInput
 REDIRECT java.util.zip.Inflater inflate(Ljava/nio/ByteBuffer;)I -> mcport.rt.patch.InflaterPatches inflate
+
+BODY_STATIC io.netty.util.internal.PlatformDependent0 equals([BI[BII)Z -> mcport.rt.patch.NettyUnsafePatches equals
+BODY_STATIC io.netty.util.internal.PlatformDependent0 hashCodeAscii([BII)I -> mcport.rt.patch.NettyUnsafePatches hashCodeAscii
+BODY_STATIC io.netty.util.internal.PlatformDependent0 getShort([BI)S -> mcport.rt.patch.NettyUnsafePatches getShort
+BODY_STATIC io.netty.util.internal.PlatformDependent0 putShort([BIS)V -> mcport.rt.patch.NettyUnsafePatches putShort
+BODY_STATIC io.netty.util.internal.PlatformDependent0 getShort(J)S -> mcport.rt.patch.NettyUnsafePatches getShort
+BODY_STATIC io.netty.util.internal.PlatformDependent0 putShort(JS)V -> mcport.rt.patch.NettyUnsafePatches putShort
