@@ -1,5 +1,6 @@
 package org.teavm.classlib.java.nio;
 
+import org.teavm.interop.Import;
 import org.teavm.jso.JSBody;
 import org.teavm.jso.JSObject;
 import org.teavm.jso.typedarrays.ArrayBufferView;
@@ -17,9 +18,11 @@ public final class TNativeHeapBuffers {
     }
 
     @JSBody(params = {"addr", "len"}, script = "return new Int8Array(__mcHeap.buffer, addr, len);")
+    @Import(module = "mcHeap", name = "heapView")
     private static native Int8Array heapView(int addr, int len);
 
     @JSBody(params = "v", script = "return v.buffer === __mcHeap.buffer;")
+    @Import(module = "mcHeap", name = "isHeapView")
     private static native boolean isHeapView(JSObject v);
 
     /** A little-endian direct ByteBuffer aliasing [addr, addr+capacity) of the native heap. */
