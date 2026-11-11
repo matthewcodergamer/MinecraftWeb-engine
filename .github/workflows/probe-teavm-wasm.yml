@@ -6,6 +6,8 @@ on:
       - feat/client-headless-webgpu-boot
     paths:
       - ".github/workflows/probe-teavm-wasm.yml"
+      - "scripts/build.sh"
+      - "tools/src/PortBuilder.java"
   workflow_dispatch:
 
 permissions:
