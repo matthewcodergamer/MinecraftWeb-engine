@@ -55,6 +55,16 @@ REDIRECT java.lang.Class getResource(Ljava/lang/String;)Ljava/net/URL; -> mcport
 REDIRECT java.lang.ClassLoader getResource(Ljava/lang/String;)Ljava/net/URL; -> mcport.rt.ClasspathResources loaderGetResource
 REDIRECT java.lang.ClassLoader getResources(Ljava/lang/String;)Ljava/util/Enumeration; -> mcport.rt.ClasspathResources loaderGetResources
 
+# --- TeaVM JSO arrays: use the optional-by-ref converters, which copy on Wasm GC ----------
+# The zero-copy fromJavaArray methods are not supported by Wasm GC. Their copyFromJavaArray
+# counterparts use @JSByRef(optional = true), retaining JS zero-copy where available and
+# allowing Wasm GC to transfer the arrays through its supported copy bridge.
+REDIRECT_STATIC org.teavm.jso.typedarrays.Int8Array fromJavaArray([B)Lorg/teavm/jso/typedarrays/Int8Array; -> org.teavm.jso.typedarrays.Int8Array copyFromJavaArray
+REDIRECT_STATIC org.teavm.jso.typedarrays.Int32Array fromJavaArray([I)Lorg/teavm/jso/typedarrays/Int32Array; -> org.teavm.jso.typedarrays.Int32Array copyFromJavaArray
+REDIRECT_STATIC org.teavm.jso.typedarrays.Uint16Array fromJavaArray([C)Lorg/teavm/jso/typedarrays/Uint16Array; -> org.teavm.jso.typedarrays.Uint16Array copyFromJavaArray
+REDIRECT_STATIC org.teavm.jso.typedarrays.Float32Array fromJavaArray([F)Lorg/teavm/jso/typedarrays/Float32Array; -> org.teavm.jso.typedarrays.Float32Array copyFromJavaArray
+REDIRECT_STATIC org.teavm.jso.typedarrays.BigInt64Array fromJavaArray([J)Lorg/teavm/jso/typedarrays/BigInt64Array; -> org.teavm.jso.typedarrays.BigInt64Array copyFromJavaArray
+
 # --- LWJGL platform layer -> browser (mcport.lwjgl): emulated native heap + JS natives table ----------
 BODY_STATIC org.lwjgl.system.MemoryUtil createBackend()Lorg/lwjgl/system/MemoryBackend; -> mcport.lwjgl.BrowserMemoryBackend create
 BODY_STATIC org.lwjgl.system.MemoryUtil getPageSize()I -> mcport.lwjgl.LwjglPatches pageSize
