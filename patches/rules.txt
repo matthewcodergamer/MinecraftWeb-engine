@@ -188,3 +188,6 @@ BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getLongBE([BI)J -> mcport.
 BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setLongBE([BIJ)V -> mcport.rt.patch.NettyVarHandlePatches setLongBE
 BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getLongLE([BI)J -> mcport.rt.patch.NettyVarHandlePatches getLongLE
 BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setLongLE([BIJ)V -> mcport.rt.patch.NettyVarHandlePatches setLongLE
+
+# --- Java 25 Reader convenience method absent from TeaVM 0.16 ----------------------------
+REDIRECT java.io.Reader readAllAsString()Ljava/lang/String; -> mcport.rt.patch.ReaderPatches readAllAsString
