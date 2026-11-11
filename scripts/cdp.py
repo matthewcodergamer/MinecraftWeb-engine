@@ -129,6 +129,7 @@ def main():
         ]
     chrome = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     ok = False
+    browser_errors = []
     try:
         page = None
         for _ in range(600):
@@ -143,20 +144,35 @@ def main():
         ws = WS(page["webSocketDebuggerUrl"])
         t0 = time.time()
 
+        def save_browser_error(message):
+            message = str(message).strip()
+            if message and message not in browser_errors:
+                browser_errors.append(message[:12000])
+
         def pump(msg):
-            if a.quiet:
-                return
             m = msg.get("method")
             if m == "Runtime.consoleAPICalled":
-                text = " ".join(str(x.get("value", x.get("description", ""))) for x in msg["params"]["args"])
-                print(f"{time.time() - t0:7.2f}s console.{msg['params']['type']}: {text[:2000]}", flush=True)
+                params = msg["params"]
+                message = " ".join(str(x.get("value", x.get("description", ""))) for x in params["args"])
+                if params.get("type") == "error" or any(token in message.lower() for token in ("webassembly.compile", "compileerror", "br_on_cast", "global.set")):
+                    save_browser_error("console." + params.get("type", "log") + ": " + message)
+                if not a.quiet:
+                    print("{:7.2f}s console.{}: {}".format(time.time() - t0, params["type"], message[:2000]), flush=True)
             elif m == "Runtime.exceptionThrown":
                 d = msg["params"]["exceptionDetails"]
-                print(f"{time.time() - t0:7.2f}s EXCEPTION: {d.get('exception', {}).get('description', d.get('text'))[:3000]}",
-                      flush=True)
+                detail = d.get("exception", {}).get("description", d.get("text", "Unknown page exception"))
+                save_browser_error("Uncaught browser exception: " + detail)
+                if not a.quiet:
+                    print("{:7.2f}s EXCEPTION: {}".format(time.time() - t0, detail[:3000]), flush=True)
+            elif m == "Log.entryAdded":
+                entry = msg.get("params", {}).get("entry", {})
+                message = entry.get("text", "")
+                if entry.get("level") == "error" or any(token in message.lower() for token in ("webassembly.compile", "compileerror", "br_on_cast", "global.set")):
+                    save_browser_error("Chrome log: " + message)
 
         ws.call("Runtime.enable", pump=pump)
         ws.call("Page.enable", pump=pump)
+        ws.call("Log.enable", pump=pump)
         # This timer is deliberately installed before page scripts. Its console events
         # are delivered by CDP without Runtime.evaluate polling: if the renderer's main
         # thread is monopolized, heartbeat ticks stop; when it yields, queued ticks resume.
@@ -244,6 +260,14 @@ def main():
         elif a.screenshot and not ok:
             print("skipping requested screenshot: page did not become responsive", flush=True)
     finally:
+        os.makedirs("build", exist_ok=True)
+        error_path = os.path.join("build", "browser_error.txt")
+        with open(error_path, "w", encoding="utf-8") as error_file:
+            if browser_errors:
+                error_file.write("\n\n".join(browser_errors) + "\n")
+            else:
+                error_file.write("No Chrome compile/runtime error was captured by CDP. Check the smoke-test step output for timeout or assertion details.\n")
+        print("Browser diagnostics -> {}".format(error_path), flush=True)
         chrome.kill()
         chrome.wait()
         shutil.rmtree(profile, ignore_errors=True)
