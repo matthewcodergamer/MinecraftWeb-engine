@@ -191,3 +191,6 @@ BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setLongLE([BIJ)V -> mcport
 
 # --- Java 25 Reader convenience method absent from TeaVM 0.16 ----------------------------
 REDIRECT java.io.Reader readAllAsString()Ljava/lang/String; -> mcport.rt.patch.ReaderPatches readAllAsString
+
+REDIRECT java.util.zip.Inflater setInput(Ljava/nio/ByteBuffer;)V -> mcport.rt.patch.InflaterPatches setInput
+REDIRECT java.util.zip.Inflater inflate(Ljava/nio/ByteBuffer;)I -> mcport.rt.patch.InflaterPatches inflate
