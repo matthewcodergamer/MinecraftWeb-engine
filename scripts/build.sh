@@ -55,6 +55,9 @@ rm -rf build/stubs && mkdir -p build/stubs
 # Types that live in JDK packages TeaVM does not rename (javax.*) are compiled into those packages.
 OVERLAY=$(find src/compat/java-base-overlay -name '*.java' 2>/dev/null || true)
 [ -n "$OVERLAY" ] && "$JDK/bin/javac" --release 25 --patch-module java.base=src/compat/java-base-overlay -d build/classes $OVERLAY
+# JFR is a separate JDK module; the browser port disables Flight Recorder but retains its event type hierarchy.
+JFR_OVERLAY=$(find src/compat/jdk-jfr-overlay -name '*.java' 2>/dev/null || true)
+[ -n "$JFR_OVERLAY" ] && "$JDK/bin/javac" --release 25 --patch-module jdk.jfr=src/compat/jdk-jfr-overlay -d build/classes $JFR_OVERLAY
 cp -R src/compat/resources/. build/classes/ 2>/dev/null || true
 
 # Compat classes come first so they shadow the original library classes.
