@@ -212,3 +212,11 @@ BODY_STATIC io.netty.util.internal.PlatformDependent0 offsetSlice(Ljava/nio/Byte
 BODY_STATIC io.netty.util.internal.PlatformDependent0 absolutePut(Ljava/nio/ByteBuffer;ILjava/nio/ByteBuffer;II)Ljava/nio/ByteBuffer; -> mcport.rt.patch.NettyBrowserPatches absolutePut
 BODY_STATIC io.netty.util.internal.PlatformDependent0 absolutePut(Ljava/nio/ByteBuffer;I[BII)Ljava/nio/ByteBuffer; -> mcport.rt.patch.NettyBrowserPatches absolutePut
 BODY_STATIC io.netty.util.internal.PlatformDependent0 allocateUninitializedArray(I)[B -> mcport.rt.patch.NettyBrowserPatches allocateUninitializedArray
+
+# The corresponding methods above are real browser implementations, so advertise them as available.
+BODY_STATIC io.netty.util.internal.PlatformDependent0 hasDirectBufferNoCleanerConstructor()Z -> mcport.rt.patch.NettyBrowserPatches available
+BODY_STATIC io.netty.util.internal.PlatformDependent0 hasAlignSliceMethod()Z -> mcport.rt.patch.NettyBrowserPatches available
+BODY_STATIC io.netty.util.internal.PlatformDependent0 hasOffsetSliceMethod()Z -> mcport.rt.patch.NettyBrowserPatches available
+BODY_STATIC io.netty.util.internal.PlatformDependent0 hasAbsolutePutBufferMethod()Z -> mcport.rt.patch.NettyBrowserPatches available
+BODY_STATIC io.netty.util.internal.PlatformDependent0 hasAbsolutePutArrayMethod()Z -> mcport.rt.patch.NettyBrowserPatches available
+BODY_STATIC io.netty.util.internal.PlatformDependent0 hasAllocateArrayMethod()Z -> mcport.rt.patch.NettyBrowserPatches available
