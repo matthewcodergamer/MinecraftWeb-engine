@@ -31,13 +31,11 @@ public final class ClasspathResources {
         if (view == null) {
             return null;
         }
-        byte[] out = new byte[view.getLength()];
-        copy(out, view);
-        return out;
+        // TeaVM's zero-copy @JSByRef bridge is not supported by WebAssembly GC.
+        // copyToJavaArray uses the optional-by-ref bridge and performs the supported copy.
+        return view.copyToJavaArray();
     }
 
-    @JSBody(params = {"dst", "src"}, script = "dst.set(src);")
-    private static native void copy(@org.teavm.jso.JSByRef byte[] dst, Int8Array src);
 
     private static String normalize(String path) {
         while (path.startsWith("/")) {
