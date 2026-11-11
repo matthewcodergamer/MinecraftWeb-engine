@@ -85,8 +85,7 @@ jobs:
           curl --fail --location --retry 5 "$base/$archive" -o "/tmp/$archive"
           echo "2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489  /tmp/$archive" | sha256sum --check
           tar -xzf "/tmp/$archive" -C /tmp
-          BINARYEN_ROOT="$(tar -tzf "/tmp/$archive" | head -n 1 | cut -d/ -f 1)"
-          BINARYEN_BIN="/tmp/$BINARYEN_ROOT/bin/wasm-opt"
+          BINARYEN_BIN="/tmp/binaryen-version_133/bin/wasm-opt"
           test -x "$BINARYEN_BIN"
           "$BINARYEN_BIN" --version
           if "$BINARYEN_BIN" build/web/clientmain.wasm -Oz --converge --outlining --code-folding --directize --one-caller-inline-max-function-size=100 -o build/web/clientmain.optimized.wasm; then
