@@ -14,6 +14,10 @@ on:
       - "src/compat/java-base-overlay/**"
       - "src/compat/jdk-jfr-overlay/**"
       - "patches/rules.txt"
+      - "web/**"
+      - "scripts/cdp.py"
+      - "scripts/pack_resources.py"
+      - "scripts/build_body.sh"
   workflow_dispatch:
 
 permissions:
@@ -37,6 +41,13 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-bindgen
+        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
 
       - name: Fetch official Minecraft 26.3 client
         env:
@@ -65,6 +76,43 @@ jobs:
           PORT_LENIENT: "true"
         run: bash scripts/build.sh mcport.ClientMain wasm
 
+      - name: Stage TeaVM 0.16.0 Wasm GC browser runtime
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          jars = sorted(Path("tools/lib").glob("*.jar"))
+          resources = (
+              "org/teavm/backend/wasm/wasm-gc-runtime.min.js",
+              "org/teavm/backend/wasm/wasm-gc-runtime.js",
+          )
+          for resource in resources:
+              for jar in jars:
+                  try:
+                      with ZipFile(jar) as archive:
+                          data = archive.read(resource)
+                  except (KeyError, OSError):
+                      continue
+                  target = Path("build/web/clientmain.wasm-runtime.js")
+                  target.write_bytes(data)
+                  print(f"Copied {resource} from {jar}: {len(data):,} bytes -> {target}")
+                  raise SystemExit(0)
+          raise SystemExit("TeaVM 0.16.0 Wasm GC runtime resource was not found in tools/lib/*.jar")
+          PY
+
+      - name: Stage browser page and vanilla resources
+        env:
+          MC_DIR: ${{ runner.temp }}/minecraft
+          MC_VERSION: "26.3"
+        run: |
+          cp -R web/. build/web/
+          python3 scripts/pack_resources.py --mc-dir "$MC_DIR" --version "$MC_VERSION" --jar-only --out build/web/client-resources.bin
+          test -s build/web/client-resources.bin
+          test -s build/web/client-textures.bin
+
+      - name: Build Rust WebGPU Body
+        run: bash scripts/build_body.sh
+
       - name: Upload TeaVM compiler diagnostics (including failed builds)
         if: always()
         uses: actions/upload-artifact@v4
@@ -84,6 +132,19 @@ jobs:
               p = Path("build/web") / name
               print(f"{name}: {p.stat().st_size:,} bytes")
           PY
+
+      - name: Run real Minecraft WASM singleplayer-to-Rust smoke test
+        env:
+          CHROME: /usr/bin/google-chrome
+        run: |
+          google-chrome --version
+          python3 -m http.server 8765 --bind 127.0.0.1 --directory build/web > /tmp/minecraft-http.log 2>&1 &
+          python3 scripts/cdp.py "http://127.0.0.1:8765/game.html?smoke-world=1&wasm=1" \
+            --preload-js "try{sessionStorage.setItem('mw_play_pass',String(Date.now()))}catch(e){}" \
+            --until-js "(() => { const f=document.getElementById('mc-brain'); const m=f&&f.contentWindow&&f.contentWindow.__mc; const rust=window.mcBridge&&window.mcBridge.state.module; return window.__mcBodyError || (window.mcBridge && window.mcBridge.state.error) || (rust && rust.java_connected && rust.java_connected()) || (m && m.error); })()" \
+            --assert-js "window.__mcBodyReady && window.mcBridge && window.mcBridge.state.module && window.mcBridge.state.module.java_connected() && window.mcBridge.state.module.java_section_count() > 0" \
+            --timeout 600 \
+            --eval "JSON.stringify({bodyReady:window.__mcBodyReady,javaReady:window.__mcJavaReady,sections:window.mcBridge&&window.mcBridge.state.sections,rustConnected:window.mcBridge&&window.mcBridge.state.module&&window.mcBridge.state.module.java_connected(),rustSections:window.mcBridge&&window.mcBridge.state.module&&window.mcBridge.state.module.java_section_count(),javaError:window.mcBridge&&window.mcBridge.state.error,brainError:(document.getElementById('mc-brain').contentWindow.__mc||{}).error,brainStage:(document.getElementById('mc-brain').contentWindow.__mc||{}).stage,stage:window.__mc&&window.__mc.stage})"
 
       - name: Upload experimental WebAssembly artifacts
         uses: actions/upload-artifact@v4
