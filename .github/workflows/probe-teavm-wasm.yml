@@ -72,7 +72,7 @@ jobs:
           JDK: ${{ env.JAVA_HOME }}
           PORT_HEAP: 12g
           PORT_STACK: 256m
-          PORT_JAVA_OPTS: "-Dport.fast=true -Dport.why=io.netty.util.internal.PlatformDependent0,io.netty.buffer.VarHandleByteBufferAccess,io.netty.channel.nio.NioIoHandler,com.mojang.realmsclient.client.FileDownload,com.mojang.realmsclient.client.FileUpload,net.minecraft.network.CompressionDecoder,net.minecraft.util.Crypt,net.minecraft.server.network.ServerLoginPacketListenerImpl,java.nio.channels,java.util.concurrent.Semaphore,java.lang.invoke.VarHandle,java.net.http.HttpClient,javax.crypto.Cipher,java.security.Signature,net.minecraft.util.ThreadingDetector,net.minecraft.client.color.block.BlockTintCache -XX:+UseSerialGC"
+          PORT_JAVA_OPTS: "-Dport.why=io.netty.util.internal.PlatformDependent0,io.netty.buffer.VarHandleByteBufferAccess,io.netty.channel.nio.NioIoHandler,com.mojang.realmsclient.client.FileDownload,com.mojang.realmsclient.client.FileUpload,net.minecraft.network.CompressionDecoder,net.minecraft.util.Crypt,net.minecraft.server.network.ServerLoginPacketListenerImpl,java.nio.channels,java.util.concurrent.Semaphore,java.lang.invoke.VarHandle,java.net.http.HttpClient,javax.crypto.Cipher,java.security.Signature,net.minecraft.util.ThreadingDetector,net.minecraft.client.color.block.BlockTintCache -XX:+UseSerialGC"
           PORT_OPT: ADVANCED
           PORT_LENIENT: "true"
         run: bash scripts/build.sh mcport.ClientMain wasm
