@@ -87,7 +87,7 @@ jobs:
           BINARYEN_BIN="/tmp/binaryen-version_133/bin/wasm-opt"
           test -x "$BINARYEN_BIN"
           "$BINARYEN_BIN" --version
-          if "$BINARYEN_BIN" build/web/clientmain.wasm -Oz --converge --outlining --code-folding --directize --one-caller-inline-max-function-size=100 -o build/web/clientmain.optimized.wasm; then
+          if "${BINARYEN_BIN}" --enable-gc build/web/clientmain.wasm -Oz --converge --outlining --code-folding --directize --one-caller-inline-max-function-size=100 -o build/web/clientmain.optimized.wasm; then
             python3 - <<'PY'
           from pathlib import Path
 
