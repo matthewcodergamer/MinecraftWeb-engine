@@ -242,3 +242,10 @@ BODY_STATIC io.netty.util.internal.PlatformDependent0 hasOffsetSliceMethod()Z ->
 BODY_STATIC io.netty.util.internal.PlatformDependent0 hasAbsolutePutBufferMethod()Z -> mcport.rt.patch.NettyBrowserPatches available
 BODY_STATIC io.netty.util.internal.PlatformDependent0 hasAbsolutePutArrayMethod()Z -> mcport.rt.patch.NettyBrowserPatches available
 BODY_STATIC io.netty.util.internal.PlatformDependent0 hasAllocateArrayMethod()Z -> mcport.rt.patch.NettyBrowserPatches available
+
+# --- Netty network initialization: browser has no host NetworkInterface enumeration --------
+# Preserve usable loopback address constants without probing host adapters or enumerations.
+BODY_STATIC io.netty.util.NetUtilInitializations networkInterfaces()Ljava/util/Collection; -> io.netty.util.NetUtilInitializationsBrowser networkInterfaces
+BODY_STATIC io.netty.util.NetUtilInitializations createLocalhost4()Ljava/net/Inet4Address; -> io.netty.util.NetUtilInitializationsBrowser createLocalhost4
+BODY_STATIC io.netty.util.NetUtilInitializations createLocalhost6()Ljava/net/Inet6Address; -> io.netty.util.NetUtilInitializationsBrowser createLocalhost6
+BODY_STATIC io.netty.util.NetUtilInitializations determineLoopback(Ljava/util/Collection;Ljava/net/Inet4Address;Ljava/net/Inet6Address;)Lio/netty/util/NetUtilInitializations$NetworkIfaceAndInetAddress; -> io.netty.util.NetUtilInitializationsBrowser determineLoopback
