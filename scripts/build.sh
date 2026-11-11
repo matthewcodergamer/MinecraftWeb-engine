@@ -69,7 +69,7 @@ NAME="$(echo "${ENTRY##*.}" | tr 'A-Z' 'a-z').${TARGET/wasm/wasm}"
 [ "$TARGET" = js ] && NAME="${NAME%.js}.js"
 set +e
 time "$JDK/bin/java" -Xss${PORT_STACK:-1g} -Xmx${PORT_HEAP:-3g} -Dport.rules="$ROOT/patches/rules.txt" -Dport.lenientLinkage=${PORT_LENIENT:-true} ${PORT_JAVA_OPTS:-} -cp "build/tools:$TEAVM_CP" PortBuilder "$TARGET" "$ENTRY" "$OUT" "$NAME" \
-  "$ROOT/build/classes" "$MC_JAR" "${LIBARR[@]}" "${TEAVM_RT[@]}" 2>&1 | tee "build/$ENTRY.$TARGET.log" | grep -vE "^\\s*at " | tail -${PORT_LOG_LINES:-60}
+  "$ROOT/build/classes" "$MC_JAR" "${LIBARR[@]}" "${TEAVM_RT[@]}" 2>&1 | tee "build/$ENTRY.$TARGET.log" | tail -${PORT_LOG_LINES:-60}
 BUILD_STATUS=${PIPESTATUS[0]}
 set -e
 

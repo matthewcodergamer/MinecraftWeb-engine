@@ -62,6 +62,15 @@ jobs:
           PORT_LENIENT: "true"
         run: bash scripts/build.sh mcport.ClientMain wasm
 
+      - name: Upload TeaVM compiler diagnostics (including failed builds)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: teavm-wasm-build-log
+          path: build/mcport.ClientMain.wasm.log
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Verify TeaVM WebAssembly outputs
         run: |
           test -s build/web/clientmain.wasm
