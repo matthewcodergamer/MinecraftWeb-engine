@@ -157,6 +157,19 @@ def main():
 
         ws.call("Runtime.enable", pump=pump)
         ws.call("Page.enable", pump=pump)
+        # This timer is deliberately installed before page scripts. Its console events
+        # are delivered by CDP without Runtime.evaluate polling: if the renderer's main
+        # thread is monopolized, heartbeat ticks stop; when it yields, queued ticks resume.
+        heartbeat_js = """(() => {
+            const started = Date.now();
+            let tick = 0;
+            console.log("[CDP_HEARTBEAT] installed");
+            setInterval(() => console.log(
+                "[CDP_HEARTBEAT] tick=" + (++tick) +
+                " elapsed_ms=" + (Date.now() - started)
+            ), 2000);
+        })();"""
+        ws.call("Page.addScriptToEvaluateOnNewDocument", {"source": heartbeat_js}, pump=pump)
         if a.preload_js:
             ws.call("Page.addScriptToEvaluateOnNewDocument", {"source": a.preload_js}, pump=pump)
         if a.viewport:
@@ -217,11 +230,19 @@ def main():
         else:
             print("skipping post-timeout assertions/evaluations: page did not become responsive", flush=True)
             assert_ok = False
-        if a.screenshot:
-            r = ws.call("Page.captureScreenshot", {"format": "png"}, pump=pump)
-            with open(a.screenshot, "wb") as f:
-                f.write(base64.b64decode(r["result"]["data"]))
-            print(f"screenshot -> {a.screenshot}")
+        if a.screenshot and ok and assert_ok:
+            try:
+                r = ws.call("Page.captureScreenshot", {"format": "png"}, pump=pump, timeout_sec=10)
+                data = r.get("result", {}).get("data")
+                if not data:
+                    raise RuntimeError("CDP returned no screenshot data")
+                with open(a.screenshot, "wb") as f:
+                    f.write(base64.b64decode(data))
+                print(f"screenshot -> {a.screenshot}")
+            except Exception as exc:
+                print(f"screenshot unavailable: {type(exc).__name__}: {exc}", flush=True)
+        elif a.screenshot and not ok:
+            print("skipping requested screenshot: page did not become responsive", flush=True)
     finally:
         chrome.kill()
         chrome.wait()
