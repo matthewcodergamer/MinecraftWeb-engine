@@ -246,6 +246,31 @@ async function downloadPart(url, expected, onBytes) {
 
 async function loadBrain() {
   reportBootStage('client-bundle-load-enter');
+  if (params.get('wasm') === '1') {
+    await loadClassicScript('clientmain.wasm-runtime.js');
+    if (!window.TeaVM || !TeaVM.wasmGC || typeof TeaVM.wasmGC.load !== 'function') {
+      throw new Error('TeaVM Wasm GC runtime did not expose TeaVM.wasmGC.load');
+    }
+    const teavm = await TeaVM.wasmGC.load('clientmain.wasm', {
+      installImports(imports) {
+        imports.mcHeap = {
+          heapView(addr, len) {
+            const heap = globalThis.__mcHeap;
+            if (!heap || !heap.buffer) throw new Error('mcHeap buffer is not initialized');
+            return new Int8Array(heap.buffer, addr, len);
+          },
+          isHeapView(view) {
+            const heap = globalThis.__mcHeap;
+            return !!(heap && heap.buffer && view && view.buffer === heap.buffer);
+          },
+        };
+      },
+    });
+    window.__mcTeaVM = teavm;
+    window.__mcRunMain = () => teavm.exports.main([]);
+    reportBootStage('wasm-gc-module-instantiated');
+    return;
+  }
   const explicit = params.get('js');
   if (explicit) {
     await loadClassicScript(explicit + '.js');
@@ -393,7 +418,8 @@ function showStats() {
     }, 100);
     window.__mcBootStage = 'teavm-main-dispatch-enter';
     reportBootStage(window.__mcBootStage);
-    main([]);
+    if (typeof window.__mcRunMain === 'function') window.__mcRunMain();
+    else main([]);
     window.__mcBootStage = 'teavm-main-dispatch-return';
     reportBootStage(window.__mcBootStage);
     // The Java client reports fatal startup errors by setting
