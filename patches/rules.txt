@@ -163,3 +163,28 @@ ZERO_NATIVES org.lwjgl.util.vma.Vma
 ZERO_NATIVES org.lwjgl.util.vma.LibVma
 ZERO_NATIVES com.mojang.jtracy.TracyBindings
 ZERO_NATIVES org.lwjgl.system.jni.JNINativeInterface
+
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getShortBE(Ljava/nio/ByteBuffer;I)S -> mcport.rt.patch.NettyVarHandlePatches getShortBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setShortBE(Ljava/nio/ByteBuffer;II)V -> mcport.rt.patch.NettyVarHandlePatches setShortBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getShortLE(Ljava/nio/ByteBuffer;I)S -> mcport.rt.patch.NettyVarHandlePatches getShortLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setShortLE(Ljava/nio/ByteBuffer;II)V -> mcport.rt.patch.NettyVarHandlePatches setShortLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getShortBE([BI)S -> mcport.rt.patch.NettyVarHandlePatches getShortBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setShortBE([BII)V -> mcport.rt.patch.NettyVarHandlePatches setShortBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getShortLE([BI)S -> mcport.rt.patch.NettyVarHandlePatches getShortLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setShortLE([BII)V -> mcport.rt.patch.NettyVarHandlePatches setShortLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getIntBE(Ljava/nio/ByteBuffer;I)I -> mcport.rt.patch.NettyVarHandlePatches getIntBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setIntBE(Ljava/nio/ByteBuffer;II)V -> mcport.rt.patch.NettyVarHandlePatches setIntBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getIntLE(Ljava/nio/ByteBuffer;I)I -> mcport.rt.patch.NettyVarHandlePatches getIntLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setIntLE(Ljava/nio/ByteBuffer;II)V -> mcport.rt.patch.NettyVarHandlePatches setIntLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getIntBE([BI)I -> mcport.rt.patch.NettyVarHandlePatches getIntBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setIntBE([BII)V -> mcport.rt.patch.NettyVarHandlePatches setIntBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getIntLE([BI)I -> mcport.rt.patch.NettyVarHandlePatches getIntLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setIntLE([BII)V -> mcport.rt.patch.NettyVarHandlePatches setIntLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getLongBE(Ljava/nio/ByteBuffer;I)J -> mcport.rt.patch.NettyVarHandlePatches getLongBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setLongBE(Ljava/nio/ByteBuffer;IJ)V -> mcport.rt.patch.NettyVarHandlePatches setLongBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getLongLE(Ljava/nio/ByteBuffer;I)J -> mcport.rt.patch.NettyVarHandlePatches getLongLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setLongLE(Ljava/nio/ByteBuffer;IJ)V -> mcport.rt.patch.NettyVarHandlePatches setLongLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getLongBE([BI)J -> mcport.rt.patch.NettyVarHandlePatches getLongBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setLongBE([BIJ)V -> mcport.rt.patch.NettyVarHandlePatches setLongBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getLongLE([BI)J -> mcport.rt.patch.NettyVarHandlePatches getLongLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setLongLE([BIJ)V -> mcport.rt.patch.NettyVarHandlePatches setLongLE

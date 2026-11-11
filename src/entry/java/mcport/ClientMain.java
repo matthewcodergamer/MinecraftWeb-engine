@@ -6,6 +6,8 @@ import mcport.rt.BrowserRuntime;
 public final class ClientMain {
     public static void main(String[] args) {
         try {
+            // Set before Netty PlatformDependent is initialized.
+            System.setProperty("io.netty.noUnsafe", "true");
             BrowserRuntime.report("stage", "client-main-enter");
             setOsProperties();
             BrowserRuntime.report("stage", "client-os-properties-ready");

@@ -9,6 +9,7 @@ on:
       - "scripts/build.sh"
       - "tools/src/PortBuilder.java"
       - "src/compat/java/**"
+      - "patches/rules.txt"
   workflow_dispatch:
 
 permissions:
