@@ -8,6 +8,7 @@ on:
       - ".github/workflows/probe-teavm-wasm.yml"
       - "scripts/build.sh"
       - "tools/src/PortBuilder.java"
+      - "tools/src/PortTransformer.java"
       - "src/compat/java/**"
       - "patches/rules.txt"
   workflow_dispatch:

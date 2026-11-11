@@ -72,6 +72,12 @@ time "$JDK/bin/java" -Xss${PORT_STACK:-1g} -Xmx${PORT_HEAP:-3g} -Dport.rules="$R
   "$ROOT/build/classes" "$MC_JAR" "${LIBARR[@]}" "${TEAVM_RT[@]}" 2>&1 | tee "build/$ENTRY.$TARGET.log" | grep -vE "^\\s*at " | tail -${PORT_LOG_LINES:-60}
 BUILD_STATUS=${PIPESTATUS[0]}
 set -e
+
+# Keep the full compiler audit visible in Actions logs. The normal build output is
+# intentionally compact, but tailing it previously hid the exact patch-match diagnostics.
+echo "=== PORT COMPATIBILITY AUDIT ==="
+grep -E 'PATCH_RULE_DIAG|PATCH_METHOD_DIAG|PATCH (BODY|REDIRECT|STUB|ZERO_NATIVE) (java\.io\.Reader|java\.util\.zip\.Inflater|io\.netty\.buffer\.VarHandleByteBufferAccess|io\.netty\.util\.internal\.PlatformDependent0)|classes compiled:|^(LINK|ERROR) ' "build/$ENTRY.$TARGET.log" | tail -n 260 || true
+echo "=== END PORT COMPATIBILITY AUDIT ==="
 if [ "$BUILD_STATUS" -ne 0 ]; then
   echo "TeaVM build failed with exit code $BUILD_STATUS; matching diagnostics from build/$ENTRY.$TARGET.log:"
   grep -nEi "error|exception|severe|unimplemented|failed|not found|linkage" "build/$ENTRY.$TARGET.log" | tail -n 120 || true
