@@ -85,25 +85,25 @@ public final class BrowserMemoryBackend implements MemoryBackend {
     private static native void toArray(int src, org.teavm.jso.JSObject arr, int off, int n);
 
     @JSBody(params = "a", script = "return a;")
-    private static native org.teavm.jso.JSObject b(@JSByRef byte[] a);
+    private static native org.teavm.jso.JSObject b(@JSByRef(optional = true) byte[] a);
 
     @JSBody(params = "a", script = "return a;")
-    private static native org.teavm.jso.JSObject c(@JSByRef char[] a);
+    private static native org.teavm.jso.JSObject c(@JSByRef(optional = true) char[] a);
 
     @JSBody(params = "a", script = "return a;")
-    private static native org.teavm.jso.JSObject s(@JSByRef short[] a);
+    private static native org.teavm.jso.JSObject s(@JSByRef(optional = true) short[] a);
 
     @JSBody(params = "a", script = "return a;")
-    private static native org.teavm.jso.JSObject i(@JSByRef int[] a);
+    private static native org.teavm.jso.JSObject i(@JSByRef(optional = true) int[] a);
 
     @JSBody(params = "a", script = "return a;")
-    private static native org.teavm.jso.JSObject l(@JSByRef long[] a);
+    private static native org.teavm.jso.JSObject l(@JSByRef(optional = true) long[] a);
 
     @JSBody(params = "a", script = "return a;")
-    private static native org.teavm.jso.JSObject f(@JSByRef float[] a);
+    private static native org.teavm.jso.JSObject f(@JSByRef(optional = true) float[] a);
 
     @JSBody(params = "a", script = "return a;")
-    private static native org.teavm.jso.JSObject d(@JSByRef double[] a);
+    private static native org.teavm.jso.JSObject d(@JSByRef(optional = true) double[] a);
 
     @JSBody(params = {"a", "n"}, script = "return __mcHeap.utf8.decode(__mcHeap.u8.subarray(a, a + n));")
     private static native String decodeUtf8(int a, int n);
