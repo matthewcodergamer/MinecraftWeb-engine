@@ -371,7 +371,17 @@ function showStats() {
         clearInterval(waitCanvas);
       }
     }, 100);
+    window.__mcBootStage = 'teavm-main-dispatch-enter';
+    console.log('[TEAVM_BOOT] teavm-main-dispatch-enter');
+    if (window.parent !== window) {
+      window.parent.postMessage({ source: 'mc-brain', type: 'java-stage', stage: window.__mcBootStage }, '*');
+    }
     main([]);
+    window.__mcBootStage = 'teavm-main-dispatch-return';
+    console.log('[TEAVM_BOOT] teavm-main-dispatch-return');
+    if (window.parent !== window) {
+      window.parent.postMessage({ source: 'mc-brain', type: 'java-stage', stage: window.__mcBootStage }, '*');
+    }
     // The Java client reports fatal startup errors by setting
     // window.__mc.stage = 'failed'. Mirror that on the boot screen (and in the
     // owning page) instead of leaving the player on "Starting Java client…".

@@ -10,7 +10,10 @@ public final class BrowserRuntime {
     /** Publishes a key/value pair to window.__mc and the on-page log (read by automated tests). */
     @JSBody(params = {"k", "v"}, script = ""
             + "window.__mc = window.__mc || {}; window.__mc[k] = v;"
-            + "if (k === 'stage') console.log('[JAVA_STAGE] ' + v + ' @' + Math.round(performance.now()) + 'ms');"
+            + "if (k === 'stage') {"
+            + "  console.log('[JAVA_STAGE] ' + v + ' @' + Math.round(performance.now()) + 'ms');"
+            + "  if (window.parent !== window) window.parent.postMessage({source:'mc-brain',type:'java-stage',stage:v}, '*');"
+            + "}"
             + "if (window.__mcLog) window.__mcLog('REPORT', k + ' = ' + v);")
     public static native void report(String key, String value);
 
