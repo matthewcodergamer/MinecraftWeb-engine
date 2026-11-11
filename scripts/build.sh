@@ -1,5 +1,6 @@
 #!/bin/bash
 # Build a browser artifact from the real Minecraft client bytecode.
+# TeaVM Wasm GC vtable diagnostics are compiled from tools/src before invoking TeaVM.
 # usage: scripts/build.sh <EntryClass> [js|wasm]
 #   e.g. scripts/build.sh mcport.M1Main js
 set -euo pipefail
