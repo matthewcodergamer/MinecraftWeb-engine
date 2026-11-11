@@ -314,3 +314,12 @@ jobs:
             --assert-js "window.__mcBodyReady && window.mcBridge && window.mcBridge.state.module && window.mcBridge.state.module.java_connected() && window.mcBridge.state.module.java_section_count() > 0" \
             --timeout 600 \
             --eval "JSON.stringify({bodyReady:window.__mcBodyReady,javaReady:window.__mcJavaReady,sections:window.mcBridge&&window.mcBridge.state.sections,rustConnected:window.mcBridge&&window.mcBridge.state.module&&window.mcBridge.state.module.java_connected(),rustSections:window.mcBridge&&window.mcBridge.state.module&&window.mcBridge.state.module.java_section_count(),javaError:window.mcBridge&&window.mcBridge.state.error,brainError:(document.getElementById('mc-brain').contentWindow.__mc||{}).error,brainStage:(document.getElementById('mc-brain').contentWindow.__mc||{}).stage,stage:window.__mc&&window.__mc.stage})"
+
+      - name: Preserve Chrome browser error diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-error-diagnostics
+          path: build/browser_error.txt
+          if-no-files-found: warn
+          retention-days: 14
