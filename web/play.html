@@ -170,12 +170,25 @@ async function fetchWithProgress(url, label, from, to) {
   });
 }
 
+function reportBootStage(stage, detail) {
+  const payload = { source: 'mc-brain', type: 'java-stage', stage, detail: detail || '' };
+  console.log('[TEAVM_BOOT] ' + stage + (detail ? ' ' + detail : ''));
+  if (window.parent !== window) window.parent.postMessage(payload, '*');
+}
+
 function loadClassicScript(src) {
   return new Promise((res, rej) => {
+    reportBootStage('client-script-load-start', src.startsWith('blob:') ? 'blob-url' : src);
     const s = document.createElement('script');
     s.src = src;
-    s.onload = res;
-    s.onerror = () => rej(new Error('failed to load ' + s.src));
+    s.onload = () => {
+      reportBootStage('client-script-load-complete');
+      res();
+    };
+    s.onerror = () => {
+      reportBootStage('client-script-load-error', s.src);
+      rej(new Error('failed to load ' + s.src));
+    };
     document.body.appendChild(s);
   });
 }
@@ -232,6 +245,7 @@ async function downloadPart(url, expected, onBytes) {
 }
 
 async function loadBrain() {
+  reportBootStage('client-bundle-load-enter');
   const explicit = params.get('js');
   if (explicit) {
     await loadClassicScript(explicit + '.js');
@@ -255,6 +269,8 @@ async function loadBrain() {
   const downloadTotal = manifest.downloadTotal
     || parts.reduce((n, p) => n + (p.size || 0), 0);
   const rawTotal = manifest.total || downloadTotal;
+  reportBootStage('client-bundle-manifest-ready',
+    'compressed_bytes=' + downloadTotal + ' raw_bytes=' + rawTotal + ' parts=' + parts.length);
   const received = new Array(parts.length).fill(0);
   const buffers = new Array(parts.length);
   const mb = (n) => (n / 1048576).toFixed(1);
@@ -299,12 +315,14 @@ async function loadBrain() {
   await Promise.all(Array.from({ length: Math.min(3, parts.length) }, worker));
   // buffers[i] is an array of stream chunks; flatten them into one Blob.
   const packed = new Blob([].concat.apply([], buffers));
+  reportBootStage('client-bundle-download-complete', 'compressed_bytes=' + packed.size);
   let scriptData = packed;
   if (manifest.encoding === 'gzip') {
     if (typeof DecompressionStream !== 'function') {
       throw new Error('This browser cannot decompress the client bundle (no DecompressionStream gzip).');
     }
     msg('Extracting Java Brain…');
+    reportBootStage('client-bundle-decompress-start');
     bar(0.985);
     const stream = packed.stream().pipeThrough(new DecompressionStream('gzip'));
     const reader = stream.getReader();
@@ -321,6 +339,7 @@ async function loadBrain() {
       }
     }
     scriptData = new Blob(chunks, { type: 'text/javascript' });
+    reportBootStage('client-bundle-decompress-complete', 'javascript_bytes=' + scriptData.size);
   }
   bar(1);
   msg('Starting Java client…');
@@ -362,6 +381,7 @@ function showStats() {
     msg('Loading Minecraft…');
     bar(0.9);
     await loadBrain();
+    reportBootStage('client-bundle-script-executed');
     bar(1);
     showStats();
     // The Minecraft window (the canvas) appears when the client creates it; hide the boot screen then.
@@ -372,16 +392,10 @@ function showStats() {
       }
     }, 100);
     window.__mcBootStage = 'teavm-main-dispatch-enter';
-    console.log('[TEAVM_BOOT] teavm-main-dispatch-enter');
-    if (window.parent !== window) {
-      window.parent.postMessage({ source: 'mc-brain', type: 'java-stage', stage: window.__mcBootStage }, '*');
-    }
+    reportBootStage(window.__mcBootStage);
     main([]);
     window.__mcBootStage = 'teavm-main-dispatch-return';
-    console.log('[TEAVM_BOOT] teavm-main-dispatch-return');
-    if (window.parent !== window) {
-      window.parent.postMessage({ source: 'mc-brain', type: 'java-stage', stage: window.__mcBootStage }, '*');
-    }
+    reportBootStage(window.__mcBootStage);
     // The Java client reports fatal startup errors by setting
     // window.__mc.stage = 'failed'. Mirror that on the boot screen (and in the
     // owning page) instead of leaving the player on "Starting Java client…".

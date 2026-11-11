@@ -1625,6 +1625,7 @@
         progress();
       } else if (data.type === 'java-stage') {
         const stage = String(data.stage || '');
+        console.log('[BRAIN_BOOT_STAGE] ' + stage + (data.detail ? ' ' + data.detail : ''));
         const milestones = {
           'teavm-main-dispatch-enter': 0.04,
           'teavm-main-dispatch-return': 0.08,
