@@ -55,7 +55,7 @@ jobs:
           MC_VERSION: "26.3"
         run: python3 scripts/fetch_minecraft.py --version "$MC_VERSION" --dest "$MC_DIR"
 
-      - name: Dump exact Minecraft item-model APIs and bytecode
+      - name: Dump exact Minecraft APIs and bytecode for WASM failures
         env:
           MC_DIR: ${{ runner.temp }}/minecraft
           MC_VERSION: "26.3"
@@ -64,6 +64,7 @@ jobs:
           jar="$MC_DIR/versions/$MC_VERSION/$MC_VERSION.jar"
           mkdir -p build/diagnostics
           for class in \
+            net.minecraft.util.filefix.FileFixerUpper \
             net.minecraft.client.renderer.item.CuboidItemModel \
             net.minecraft.client.renderer.item.CuboidItemModelWrapper; do
             name="${class##*.}"
@@ -75,6 +76,7 @@ jobs:
               echo "NOT PRESENT IN OFFICIAL CLIENT JAR: $class" | tee -a "build/diagnostics/$name.txt"
             fi
           done
+          cat build/diagnostics/FileFixerUpper.txt
           cat build/diagnostics/CuboidItemModel.txt
           cat build/diagnostics/CuboidItemModelWrapper.txt
 
@@ -82,7 +84,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: minecraft-26.3-item-model-javap
+          name: minecraft-26.3-class-javap
           path: build/diagnostics/
           if-no-files-found: warn
 
