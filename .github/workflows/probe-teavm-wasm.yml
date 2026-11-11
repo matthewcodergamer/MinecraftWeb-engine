@@ -11,6 +11,7 @@ on:
       - "tools/src/PortTransformer.java"
       - "tools/src/org/teavm/backend/wasm/vtable/WasmGCVirtualTableBuilder.java"
       - "src/compat/java/**"
+      - "src/compat/java-base-overlay/**"
       - "patches/rules.txt"
   workflow_dispatch:
 
