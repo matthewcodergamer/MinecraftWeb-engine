@@ -118,6 +118,6 @@ public class CuboidItemModelWrapper implements ItemModel {
     }
 
     private static boolean hasSpecialAnimatedTexture(ItemStack stack) {
-        return stack.is(ItemTags.COMPASSES) || stack.is((Object) Items.CLOCK);
+        return stack.is(ItemTags.COMPASSES) || stack.is(Items.CLOCK);
     }
 }
