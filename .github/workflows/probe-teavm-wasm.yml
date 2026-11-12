@@ -17,6 +17,7 @@ on:
       - "web/**"
       - "scripts/cdp.py"
       - "scripts/pack_resources.py"
+      - "scripts/patch_teavm_wasm_runtime.py"
       - "scripts/build_body.sh"
   workflow_dispatch:
 
@@ -207,6 +208,9 @@ jobs:
                   raise SystemExit(0)
           raise SystemExit("TeaVM 0.16.0 Wasm GC runtime resource was not found in tools/lib/*.jar")
           PY
+
+      - name: Apply Wasm-GC WeakReference compatibility fallback
+        run: python3 scripts/patch_teavm_wasm_runtime.py build/web/clientmain.wasm-runtime.js
 
       - name: Stage browser page and vanilla resources
         env:
