@@ -73,5 +73,14 @@ and unit tests for decoding before enabling PBR maps globally.
 The existing renderer/src/shader.wgsl remains unchanged. The new lighting
 module uses bind group 1 so it can be introduced as a separate pipeline or
 composed into a later shader after the Rust bind-group layout is defined.
+The current renderer does not yet bind this module: renderer/src/lib.rs
+currently creates the vanilla group-0 layout, and its depth attachment is
+created for render-attachment use rather than sampled depth. Before enabling
+SSR, Rust must add a sampled depth texture (TEXTURE_BINDING usage), a scene
+color/depth prepass or equivalent, a comparison sampler and shadow map, the
+group-1 bind-group layout, and a pipeline that actually includes this WGSL.
+Do not add these resources to the active vanilla pipeline as part of this
+isolated shader-only change.
+
 Shadows and SSR require depth/color prepasses and camera matrices; they cannot
 produce correct results from the current block fragment inputs alone.
