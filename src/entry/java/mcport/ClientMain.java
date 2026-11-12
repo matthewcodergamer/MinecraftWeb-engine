@@ -17,6 +17,7 @@ public final class ClientMain {
             mcport.bridge.ChunkBridge.install();
             BrowserRuntime.report("stage", "chunk-bridge-installed");
             BrowserRuntime.report("stage", "mojang-main-enter");
+            BrowserRuntime.report("trace", "before-mojang-main-main");
             net.minecraft.client.main.Main.main(new String[] {
                     "--version", "26.3",
                     "--gameDir", "/minecraft",
@@ -27,6 +28,8 @@ public final class ClientMain {
                     "--userType", "legacy",
                     "--versionType", "release"
             });
+            BrowserRuntime.report("trace", "after-mojang-main-main");
+            BrowserRuntime.report("stage", "mojang-main-returned");
         } catch (Throwable t) {
             BrowserRuntime.report("stage", "client-main-caught-throwable");
             BrowserRuntime.report("stage", "failed");
