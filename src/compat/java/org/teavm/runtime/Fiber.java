@@ -360,23 +360,44 @@ public final class Fiber {
         }
         Fiber former = current;
         current = this;
-        while (true) {
-            if (traceId <= 20) {
-                BrowserRuntime.report("trace", "fiber-runner-before");
+        try {
+            while (true) {
+                if (traceId <= 20) {
+                    BrowserRuntime.report("trace", "fiber-runner-before");
+                }
+                try {
+                    runner.run();
+                } catch (RuntimeException e) {
+                    BrowserRuntime.report("error", "fiber-runner-runtime-exception");
+                    BrowserRuntime.report("error", e.getClass().getName());
+                    if (e.getMessage() != null) {
+                        BrowserRuntime.report("error", e.getMessage());
+                    }
+                    throw e;
+                } catch (Error e) {
+                    BrowserRuntime.report("error", "fiber-runner-error");
+                    BrowserRuntime.report("error", e.getClass().getName());
+                    if (e.getMessage() != null) {
+                        BrowserRuntime.report("error", e.getMessage());
+                    }
+                    throw e;
+                }
+                if (traceId <= 20) {
+                    BrowserRuntime.report("trace", "fiber-runner-after");
+                }
+                if (!isPendingResume) {
+                    break;
+                }
+                isPendingResume = false;
+                state = STATE_RESUMING;
             }
-            runner.run();
-            if (traceId <= 20) {
-                BrowserRuntime.report("trace", "fiber-runner-after");
-            }
-            if (!isPendingResume) {
-                break;
-            }
-            isPendingResume = false;
-            state = STATE_RESUMING;
+        } finally {
+            // A failed fiber must not leave itself installed as the current thread.
+            current = former;
         }
-        current = former;
         if (traceId <= 20 || traceId % 100 == 0) {
-            BrowserRuntime.report("trace", "fiber-start-return");
+            BrowserRuntime.report("trace", isSuspending()
+                    ? "fiber-start-return-suspended" : "fiber-start-return-complete");
         }
         if (!isSuspending() && !daemon && --userThreadCount == 0) {
             // Browser event scheduling is owned by the host; no native EventQueue shutdown here.
