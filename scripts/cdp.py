@@ -130,6 +130,7 @@ def main():
     chrome = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     ok = False
     browser_errors = []
+    browser_console = []
     try:
         page = None
         for _ in range(600):
@@ -156,25 +157,31 @@ def main():
                 message = " ".join(str(x.get("value", x.get("description", ""))) for x in params["args"])
                 if params.get("type") == "error" or any(token in message.lower() for token in ("webassembly.compile", "compileerror", "br_on_cast", "global.set")):
                     save_browser_error("console." + params.get("type", "log") + ": " + message)
+                console_line = "{:7.2f}s console.{}: {}".format(time.time() - t0, params["type"], message)
+                browser_console.append(console_line)
                 if not a.quiet:
-                    print("{:7.2f}s console.{}: {}".format(time.time() - t0, params["type"], message[:2000]), flush=True)
+                    print(console_line[:12000], flush=True)
             elif m == "Runtime.exceptionThrown":
                 d = msg["params"]["exceptionDetails"]
                 detail = d.get("exception", {}).get("description", d.get("text", "Unknown page exception"))
                 save_browser_error("Uncaught browser exception: " + detail)
+                exception_line = "{:7.2f}s EXCEPTION: {}".format(time.time() - t0, detail)
+                browser_console.append(exception_line)
                 if not a.quiet:
-                    print("{:7.2f}s EXCEPTION: {}".format(time.time() - t0, detail[:3000]), flush=True)
+                    print(exception_line[:12000], flush=True)
             elif m == "Network.responseReceived":
                 response = msg.get("params", {}).get("response", {})
                 status = int(response.get("status", 0) or 0)
                 if status >= 400:
                     detail = "HTTP {} {} ({})".format(status, response.get("url", ""), response.get("statusText", ""))
                     failed_requests.append(detail)
+                    browser_console.append("{:7.2f}s NETWORK: {}".format(time.time() - t0, detail))
                     save_browser_error(detail)
             elif m == "Network.loadingFailed":
                 params = msg.get("params", {})
                 detail = "Network load failed: {} ({})".format(params.get("errorText", ""), params.get("requestId", ""))
                 failed_requests.append(detail)
+                browser_console.append("{:7.2f}s NETWORK: {}".format(time.time() - t0, detail))
                 save_browser_error(detail)
             elif m == "Log.entryAdded":
                 entry = msg.get("params", {}).get("entry", {})
@@ -284,6 +291,10 @@ def main():
             print("skipping requested screenshot: page did not become responsive", flush=True)
     finally:
         os.makedirs("build", exist_ok=True)
+        console_path = os.path.join("build", "browser_console.log")
+        with open(console_path, "w", encoding="utf-8") as console_file:
+            console_file.write("\n".join(browser_console) + ("\n" if browser_console else ""))
+        print("Full browser console -> {}".format(console_path), flush=True)
         error_path = os.path.join("build", "browser_error.txt")
         with open(error_path, "w", encoding="utf-8") as error_file:
             if browser_errors:
