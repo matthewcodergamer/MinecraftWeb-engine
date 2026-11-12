@@ -186,6 +186,8 @@ def main():
             elif m == "Log.entryAdded":
                 entry = msg.get("params", {}).get("entry", {})
                 message = entry.get("text", "")
+                browser_console.append("{:7.2f}s chrome.{}: {}".format(
+                    time.time() - t0, entry.get("level", "log"), message))
                 if entry.get("level") == "error" or any(token in message.lower() for token in ("webassembly.compile", "compileerror", "br_on_cast", "global.set")):
                     save_browser_error("Chrome log: " + message)
 
