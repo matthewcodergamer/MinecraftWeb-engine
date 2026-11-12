@@ -43,7 +43,7 @@ jobs:
           curl -fsSL --retry 3 -H "User-Agent: MinecraftWeb-engine shader research" \
             "$URL" -o /tmp/complementary/pack.zip
           HASH="$(python3 -c 'import json;print(json.load(open("/tmp/complementary/selected.json")).get("sha512") or "")')"
-          if [ -n "$HASH" ]; then echo "$HASH  /tmp/complementary/pack.zip" | sha512sum -; fi
+          if [ -n "$HASH" ]; then echo "$HASH  /tmp/complementary/pack.zip" | sha512sum --check -; fi
 
       - name: Safely extract GLSL into ephemeral runner workspace
         shell: bash
