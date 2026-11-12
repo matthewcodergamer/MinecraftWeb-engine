@@ -356,17 +356,17 @@ public final class Fiber {
     private void start() {
         int traceId = ++startCount;
         if (traceId <= 20 || traceId % 100 == 0) {
-            BrowserRuntime.report("trace", "fiber-start-enter-" + traceId);
+            BrowserRuntime.report("trace", "fiber-start-enter");
         }
         Fiber former = current;
         current = this;
         while (true) {
             if (traceId <= 20) {
-                BrowserRuntime.report("trace", "fiber-runner-before-" + traceId);
+                BrowserRuntime.report("trace", "fiber-runner-before");
             }
             runner.run();
             if (traceId <= 20) {
-                BrowserRuntime.report("trace", "fiber-runner-after-" + traceId);
+                BrowserRuntime.report("trace", "fiber-runner-after");
             }
             if (!isPendingResume) {
                 break;
@@ -376,7 +376,7 @@ public final class Fiber {
         }
         current = former;
         if (traceId <= 20 || traceId % 100 == 0) {
-            BrowserRuntime.report("trace", "fiber-start-return-" + traceId + "-state-" + state);
+            BrowserRuntime.report("trace", "fiber-start-return");
         }
         if (!isSuspending() && !daemon && --userThreadCount == 0) {
             // Browser event scheduling is owned by the host; no native EventQueue shutdown here.
@@ -386,12 +386,12 @@ public final class Fiber {
     void resume() {
         int traceId = ++resumeCount;
         if (traceId <= 50 || traceId % 100 == 0) {
-            BrowserRuntime.report("trace", "fiber-resume-enter-" + traceId);
+            BrowserRuntime.report("trace", "fiber-resume-enter");
         }
         state = STATE_RESUMING;
         start();
         if (traceId <= 50 || traceId % 100 == 0) {
-            BrowserRuntime.report("trace", "fiber-resume-return-" + traceId);
+            BrowserRuntime.report("trace", "fiber-resume-return");
         }
     }
 
