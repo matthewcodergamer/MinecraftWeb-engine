@@ -416,6 +416,23 @@ function showStats() {
         clearInterval(waitCanvas);
       }
     }, 100);
+    // Cooperative-fiber heartbeat: this runs on the browser event loop even while
+    // the TeaVM main fiber is suspended. It records only stable, non-cyclic state.
+    if (!window.__mcFiberHeartbeat) {
+      let heartbeatTick = 0;
+      window.__mcFiberHeartbeat = setInterval(() => {
+        const mc = window.__mc || {};
+        const teavm = window.__mcTeaVM;
+        let exports = [];
+        try { exports = teavm && teavm.exports ? Object.keys(teavm.exports).slice(0, 20) : []; } catch (_) {}
+        console.log('[FIBER_HEARTBEAT] tick=' + (++heartbeatTick)
+          + ' stage=' + (mc.stage || 'unset')
+          + ' boot=' + (window.__mcBootStage || 'unset')
+          + ' teavm=' + (!!teavm)
+          + ' runMain=' + (typeof window.__mcRunMain)
+          + ' exports=' + exports.join(','));
+      }, 5000);
+    }
     window.__mcBootStage = 'teavm-main-dispatch-enter';
     reportBootStage(window.__mcBootStage);
     if (typeof window.__mcRunMain === 'function') window.__mcRunMain();
