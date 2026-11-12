@@ -23,13 +23,13 @@ public class TReentrantReadWriteLock implements ReadWriteLock {
     }
 
     @Override
-    public Lock readLock() {
-        return (Lock) (Object) readLock;
+    public ReadLock readLock() {
+        return readLock;
     }
 
     @Override
-    public Lock writeLock() {
-        return (Lock) (Object) writeLock;
+    public WriteLock writeLock() {
+        return writeLock;
     }
 
     public boolean isWriteLocked() {
@@ -54,7 +54,7 @@ public class TReentrantReadWriteLock implements ReadWriteLock {
         }
     }
 
-    public class ReadLock implements TLock {
+    public class ReadLock implements TLock, Lock {
         @Override
         public void lock() {
             try {
@@ -125,7 +125,7 @@ public class TReentrantReadWriteLock implements ReadWriteLock {
         }
     }
 
-    public class WriteLock implements TLock {
+    public class WriteLock implements TLock, Lock {
         @Override
         public void lock() {
             try {

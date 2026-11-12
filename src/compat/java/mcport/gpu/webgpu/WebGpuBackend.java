@@ -30,7 +30,19 @@ public class WebGpuBackend implements GpuBackend {
 
     @Override
     public long createWindow(String title, int width, int height, long flags) {
-        return SDLVideo.SDL_CreateWindow(title, width, height, flags);
+        System.out.println("[MinecraftWeb WebGPU] Creating SDL window: " + title + " " + width + "x" + height);
+        try {
+            long window = SDLVideo.SDL_CreateWindow(title, width, height, flags);
+            System.out.println("[MinecraftWeb WebGPU] SDL_CreateWindow returned handle=" + window);
+            if (window == 0L) {
+                throw new IllegalStateException("SDL_CreateWindow returned a null/zero window handle");
+            }
+            return window;
+        } catch (Throwable failure) {
+            System.err.println("[MinecraftWeb WebGPU] Window creation failed: " + failure);
+            failure.printStackTrace(System.err);
+            throw new IllegalStateException("WebGPU backend could not create the browser SDL window", failure);
+        }
     }
 
     @Override

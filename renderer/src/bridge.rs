@@ -83,6 +83,18 @@ pub fn receive_java_chunk(chunk_x: i32, chunk_z: i32, block_ids: &[i32]) -> bool
 }
 
 /// Section-level form used by the full Java capture hook (16³ IDs plus cy).
+/// Whether at least one valid section has connected the real Java client to this Body.
+#[wasm_bindgen]
+pub fn java_connected() -> bool {
+    JAVA_CONNECTED.with(|flag| flag.get())
+}
+
+/// Number of real Java sections currently stored by the Rust Body.
+#[wasm_bindgen]
+pub fn java_section_count() -> u32 {
+    SECTIONS.with(|cell| cell.borrow().len() as u32)
+}
+
 #[wasm_bindgen]
 pub fn receive_java_section(cx: i32, cy: i32, cz: i32, block_ids: &[i32]) -> bool {
     if block_ids.len() != VOLUME {

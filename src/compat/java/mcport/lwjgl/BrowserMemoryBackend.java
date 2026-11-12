@@ -85,25 +85,25 @@ public final class BrowserMemoryBackend implements MemoryBackend {
     private static native void toArray(int src, org.teavm.jso.JSObject arr, int off, int n);
 
     @JSBody(params = "a", script = "return a;")
-    private static native org.teavm.jso.JSObject b(@JSByRef byte[] a);
+    private static native org.teavm.jso.JSObject b(@JSByRef(optional = true) byte[] a);
 
     @JSBody(params = "a", script = "return a;")
-    private static native org.teavm.jso.JSObject c(@JSByRef char[] a);
+    private static native org.teavm.jso.JSObject c(@JSByRef(optional = true) char[] a);
 
     @JSBody(params = "a", script = "return a;")
-    private static native org.teavm.jso.JSObject s(@JSByRef short[] a);
+    private static native org.teavm.jso.JSObject s(@JSByRef(optional = true) short[] a);
 
     @JSBody(params = "a", script = "return a;")
-    private static native org.teavm.jso.JSObject i(@JSByRef int[] a);
+    private static native org.teavm.jso.JSObject i(@JSByRef(optional = true) int[] a);
 
     @JSBody(params = "a", script = "return a;")
-    private static native org.teavm.jso.JSObject l(@JSByRef long[] a);
+    private static native org.teavm.jso.JSObject l(@JSByRef(optional = true) long[] a);
 
     @JSBody(params = "a", script = "return a;")
-    private static native org.teavm.jso.JSObject f(@JSByRef float[] a);
+    private static native org.teavm.jso.JSObject f(@JSByRef(optional = true) float[] a);
 
     @JSBody(params = "a", script = "return a;")
-    private static native org.teavm.jso.JSObject d(@JSByRef double[] a);
+    private static native org.teavm.jso.JSObject d(@JSByRef(optional = true) double[] a);
 
     @JSBody(params = {"a", "n"}, script = "return __mcHeap.utf8.decode(__mcHeap.u8.subarray(a, a + n));")
     private static native String decodeUtf8(int a, int n);
@@ -364,4 +364,27 @@ public final class BrowserMemoryBackend implements MemoryBackend {
             put16(p + 2 * n, 0);
         }
     }
+
+    /**
+     * Copy bytes between addresses in the browser's emulated native heap.
+     * Unlike System.arraycopy, this preserves Netty's native-address semantics.
+     */
+    public static void copyMemory(long srcAddress, long dstAddress, long bytes) {
+        if (srcAddress < 0 || dstAddress < 0 || bytes < 0
+                || srcAddress > Integer.MAX_VALUE || dstAddress > Integer.MAX_VALUE
+                || bytes > Integer.MAX_VALUE) {
+            throw new IndexOutOfBoundsException("native heap copy range exceeds browser address space");
+        }
+        int src = (int) srcAddress;
+        int dst = (int) dstAddress;
+        int count = (int) bytes;
+        if (!validRange(src, count) || !validRange(dst, count)) {
+            throw new IndexOutOfBoundsException("native heap copy is outside allocated memory");
+        }
+        move(src, dst, count);
+    }
+
+    @JSBody(params = {"address", "length"}, script =
+            "return address >= 0 && length >= 0 && address + length <= __mcHeap.u8.length;")
+    private static native boolean validRange(int address, int length);
 }

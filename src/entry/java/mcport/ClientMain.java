@@ -6,11 +6,17 @@ import mcport.rt.BrowserRuntime;
 public final class ClientMain {
     public static void main(String[] args) {
         try {
+            // Set before Netty PlatformDependent is initialized.
+            System.setProperty("io.netty.noUnsafe", "true");
+            BrowserRuntime.report("stage", "client-main-enter");
             setOsProperties();
+            BrowserRuntime.report("stage", "client-os-properties-ready");
             // The Rust Body mirrors the Java world. This hook is inert until the
             // client has a level and player; it never changes Java game state.
+            BrowserRuntime.report("stage", "chunk-bridge-install-enter");
             mcport.bridge.ChunkBridge.install();
-            BrowserRuntime.report("stage", "client-main");
+            BrowserRuntime.report("stage", "chunk-bridge-installed");
+            BrowserRuntime.report("stage", "mojang-main-enter");
             net.minecraft.client.main.Main.main(new String[] {
                     "--version", "26.3",
                     "--gameDir", "/minecraft",
@@ -25,6 +31,7 @@ public final class ClientMain {
             // Record it explicitly so smoke tests can distinguish a normal return from a stuck call.
             BrowserRuntime.report("stage", "mojang-main-returned");
         } catch (Throwable t) {
+            BrowserRuntime.report("stage", "client-main-caught-throwable");
             BrowserRuntime.report("stage", "failed");
             BrowserRuntime.report("error", BrowserRuntime.describe(t));
         }

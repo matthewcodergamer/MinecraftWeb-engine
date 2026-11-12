@@ -55,6 +55,16 @@ REDIRECT java.lang.Class getResource(Ljava/lang/String;)Ljava/net/URL; -> mcport
 REDIRECT java.lang.ClassLoader getResource(Ljava/lang/String;)Ljava/net/URL; -> mcport.rt.ClasspathResources loaderGetResource
 REDIRECT java.lang.ClassLoader getResources(Ljava/lang/String;)Ljava/util/Enumeration; -> mcport.rt.ClasspathResources loaderGetResources
 
+# --- TeaVM JSO arrays: use the optional-by-ref converters, which copy on Wasm GC ----------
+# The zero-copy fromJavaArray methods are not supported by Wasm GC. Their copyFromJavaArray
+# counterparts use @JSByRef(optional = true), retaining JS zero-copy where available and
+# allowing Wasm GC to transfer the arrays through its supported copy bridge.
+REDIRECT_STATIC org.teavm.jso.typedarrays.Int8Array fromJavaArray([B)Lorg/teavm/jso/typedarrays/Int8Array; -> org.teavm.jso.typedarrays.Int8Array copyFromJavaArray
+REDIRECT_STATIC org.teavm.jso.typedarrays.Int32Array fromJavaArray([I)Lorg/teavm/jso/typedarrays/Int32Array; -> org.teavm.jso.typedarrays.Int32Array copyFromJavaArray
+REDIRECT_STATIC org.teavm.jso.typedarrays.Uint16Array fromJavaArray([C)Lorg/teavm/jso/typedarrays/Uint16Array; -> org.teavm.jso.typedarrays.Uint16Array copyFromJavaArray
+REDIRECT_STATIC org.teavm.jso.typedarrays.Float32Array fromJavaArray([F)Lorg/teavm/jso/typedarrays/Float32Array; -> org.teavm.jso.typedarrays.Float32Array copyFromJavaArray
+REDIRECT_STATIC org.teavm.jso.typedarrays.BigInt64Array fromJavaArray([J)Lorg/teavm/jso/typedarrays/BigInt64Array; -> org.teavm.jso.typedarrays.BigInt64Array copyFromJavaArray
+
 # --- LWJGL platform layer -> browser (mcport.lwjgl): emulated native heap + JS natives table ----------
 BODY_STATIC org.lwjgl.system.MemoryUtil createBackend()Lorg/lwjgl/system/MemoryBackend; -> mcport.lwjgl.BrowserMemoryBackend create
 BODY_STATIC org.lwjgl.system.MemoryUtil getPageSize()I -> mcport.lwjgl.LwjglPatches pageSize
@@ -139,6 +149,18 @@ STUB_CLASS com.mojang.jtracy.Loader
 # Chat-signing keys from servers (X.509): not available; Mojang's code reports CryptException as for a bad key.
 STUB net.minecraft.util.Crypt byteToPublicKey([B)Ljava/security/PublicKey;
 
+# TEMPORARY WASM-GC DIAGNOSTIC: bypass CuboidItemModel method bodies to isolate the
+# Chrome ref-nullability validation failure. This is not a production rendering fix;
+# remove after confirming whether the rest of the client reaches the Rust section bridge.
+STUB_CLASS net.minecraft.client.renderer.item.CuboidItemModel
+
+# --- FileFixerUpper: browser has neither atomic moves nor hard links -------------------------------
+# These are compile-time BODY replacements: they remove the original Path probing code (the
+# source of the Wasm-GC reference-cast failure) while preserving a fail-closed capability result.
+BODY_STATIC net.minecraft.util.filefix.FileFixerUpper detectFileSystemCapabilities(Ljava/nio/file/Path;)Lnet/minecraft/util/filefix/FileSystemCapabilities; -> mcport.rt.patch.FileFixPatches detectFileSystemCapabilities
+BODY_STATIC net.minecraft.util.filefix.FileFixerUpper supportsAtomicMove(Ljava/nio/file/Path;)Z -> mcport.rt.patch.FileFixPatches supportsAtomicMove
+BODY_STATIC net.minecraft.util.filefix.FileFixerUpper supportsHardLinks(Ljava/nio/file/Path;)Z -> mcport.rt.patch.FileFixPatches supportsHardLinks
+
 # --- Graphics: renderpearl backends for the browser (WebGPU preferred) -----------------------------
 # ClientBootstrap references VulkanFeatureSets only to run its empty bootstrap(); touching the class
 # initializes large Vk* feature structs that cannot reflect on TeaVM. The browser never uses Vulkan.
@@ -163,3 +185,67 @@ ZERO_NATIVES org.lwjgl.util.vma.Vma
 ZERO_NATIVES org.lwjgl.util.vma.LibVma
 ZERO_NATIVES com.mojang.jtracy.TracyBindings
 ZERO_NATIVES org.lwjgl.system.jni.JNINativeInterface
+
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getShortBE(Ljava/nio/ByteBuffer;I)S -> mcport.rt.patch.NettyVarHandlePatches getShortBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setShortBE(Ljava/nio/ByteBuffer;II)V -> mcport.rt.patch.NettyVarHandlePatches setShortBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getShortLE(Ljava/nio/ByteBuffer;I)S -> mcport.rt.patch.NettyVarHandlePatches getShortLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setShortLE(Ljava/nio/ByteBuffer;II)V -> mcport.rt.patch.NettyVarHandlePatches setShortLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getShortBE([BI)S -> mcport.rt.patch.NettyVarHandlePatches getShortBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setShortBE([BII)V -> mcport.rt.patch.NettyVarHandlePatches setShortBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getShortLE([BI)S -> mcport.rt.patch.NettyVarHandlePatches getShortLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setShortLE([BII)V -> mcport.rt.patch.NettyVarHandlePatches setShortLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getIntBE(Ljava/nio/ByteBuffer;I)I -> mcport.rt.patch.NettyVarHandlePatches getIntBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setIntBE(Ljava/nio/ByteBuffer;II)V -> mcport.rt.patch.NettyVarHandlePatches setIntBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getIntLE(Ljava/nio/ByteBuffer;I)I -> mcport.rt.patch.NettyVarHandlePatches getIntLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setIntLE(Ljava/nio/ByteBuffer;II)V -> mcport.rt.patch.NettyVarHandlePatches setIntLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getIntBE([BI)I -> mcport.rt.patch.NettyVarHandlePatches getIntBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setIntBE([BII)V -> mcport.rt.patch.NettyVarHandlePatches setIntBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getIntLE([BI)I -> mcport.rt.patch.NettyVarHandlePatches getIntLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setIntLE([BII)V -> mcport.rt.patch.NettyVarHandlePatches setIntLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getLongBE(Ljava/nio/ByteBuffer;I)J -> mcport.rt.patch.NettyVarHandlePatches getLongBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setLongBE(Ljava/nio/ByteBuffer;IJ)V -> mcport.rt.patch.NettyVarHandlePatches setLongBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getLongLE(Ljava/nio/ByteBuffer;I)J -> mcport.rt.patch.NettyVarHandlePatches getLongLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setLongLE(Ljava/nio/ByteBuffer;IJ)V -> mcport.rt.patch.NettyVarHandlePatches setLongLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getLongBE([BI)J -> mcport.rt.patch.NettyVarHandlePatches getLongBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setLongBE([BIJ)V -> mcport.rt.patch.NettyVarHandlePatches setLongBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getLongLE([BI)J -> mcport.rt.patch.NettyVarHandlePatches getLongLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setLongLE([BIJ)V -> mcport.rt.patch.NettyVarHandlePatches setLongLE
+
+# --- Java 25 Reader convenience method absent from TeaVM 0.16 ----------------------------
+REDIRECT java.io.Reader readAllAsString()Ljava/lang/String; -> mcport.rt.patch.ReaderPatches readAllAsString
+
+REDIRECT java.util.zip.Inflater setInput(Ljava/nio/ByteBuffer;)V -> mcport.rt.patch.InflaterPatches setInput
+REDIRECT java.util.zip.Inflater inflate(Ljava/nio/ByteBuffer;)I -> mcport.rt.patch.InflaterPatches inflate
+
+BODY_STATIC io.netty.util.internal.PlatformDependent0 equals([BI[BII)Z -> mcport.rt.patch.NettyUnsafePatches equals
+BODY_STATIC io.netty.util.internal.PlatformDependent0 hashCodeAscii([BII)I -> mcport.rt.patch.NettyUnsafePatches hashCodeAscii
+BODY_STATIC io.netty.util.internal.PlatformDependent0 getShort([BI)S -> mcport.rt.patch.NettyUnsafePatches getShort
+BODY_STATIC io.netty.util.internal.PlatformDependent0 putShort([BIS)V -> mcport.rt.patch.NettyUnsafePatches putShort
+BODY_STATIC io.netty.util.internal.PlatformDependent0 getShort(J)S -> mcport.rt.patch.NettyUnsafePatches getShort
+BODY_STATIC io.netty.util.internal.PlatformDependent0 putShort(JS)V -> mcport.rt.patch.NettyUnsafePatches putShort
+
+# --- Netty raw native-memory operations -> the browser's bounds-checked ArrayBuffer heap --------
+BODY_STATIC io.netty.util.internal.PlatformDependent0 copyMemory(JJJ)V -> mcport.rt.patch.NettyBrowserPatches copyMemory
+BODY_STATIC io.netty.util.internal.PlatformDependent0 copyMemoryWithSafePointPolling(JJJ)V -> mcport.rt.patch.NettyBrowserPatches copyMemoryWithSafePointPolling
+BODY_STATIC io.netty.util.internal.PlatformDependent0 allocateDirectNoCleaner(I)Ljava/nio/ByteBuffer; -> mcport.rt.patch.NettyBrowserPatches allocateDirectNoCleaner
+BODY_STATIC io.netty.util.internal.PlatformDependent0 reallocateDirectNoCleaner(Ljava/nio/ByteBuffer;I)Ljava/nio/ByteBuffer; -> mcport.rt.patch.NettyBrowserPatches reallocateDirectNoCleaner
+BODY_STATIC io.netty.util.internal.PlatformDependent0 alignSlice(Ljava/nio/ByteBuffer;I)Ljava/nio/ByteBuffer; -> mcport.rt.patch.NettyBrowserPatches alignSlice
+BODY_STATIC io.netty.util.internal.PlatformDependent0 offsetSlice(Ljava/nio/ByteBuffer;II)Ljava/nio/ByteBuffer; -> mcport.rt.patch.NettyBrowserPatches offsetSlice
+BODY_STATIC io.netty.util.internal.PlatformDependent0 absolutePut(Ljava/nio/ByteBuffer;ILjava/nio/ByteBuffer;II)Ljava/nio/ByteBuffer; -> mcport.rt.patch.NettyBrowserPatches absolutePut
+BODY_STATIC io.netty.util.internal.PlatformDependent0 absolutePut(Ljava/nio/ByteBuffer;I[BII)Ljava/nio/ByteBuffer; -> mcport.rt.patch.NettyBrowserPatches absolutePut
+BODY_STATIC io.netty.util.internal.PlatformDependent0 allocateUninitializedArray(I)[B -> mcport.rt.patch.NettyBrowserPatches allocateUninitializedArray
+
+# The corresponding methods above are real browser implementations, so advertise them as available.
+BODY_STATIC io.netty.util.internal.PlatformDependent0 hasDirectBufferNoCleanerConstructor()Z -> mcport.rt.patch.NettyBrowserPatches available
+BODY_STATIC io.netty.util.internal.PlatformDependent0 hasAlignSliceMethod()Z -> mcport.rt.patch.NettyBrowserPatches available
+BODY_STATIC io.netty.util.internal.PlatformDependent0 hasOffsetSliceMethod()Z -> mcport.rt.patch.NettyBrowserPatches available
+BODY_STATIC io.netty.util.internal.PlatformDependent0 hasAbsolutePutBufferMethod()Z -> mcport.rt.patch.NettyBrowserPatches available
+BODY_STATIC io.netty.util.internal.PlatformDependent0 hasAbsolutePutArrayMethod()Z -> mcport.rt.patch.NettyBrowserPatches available
+BODY_STATIC io.netty.util.internal.PlatformDependent0 hasAllocateArrayMethod()Z -> mcport.rt.patch.NettyBrowserPatches available
+
+# --- Netty network initialization: browser has no host NetworkInterface enumeration --------
+# Preserve usable loopback address constants without probing host adapters or enumerations.
+BODY_STATIC io.netty.util.NetUtilInitializations networkInterfaces()Ljava/util/Collection; -> io.netty.util.NetUtilInitializationsBrowser networkInterfaces
+BODY_STATIC io.netty.util.NetUtilInitializations createLocalhost4()Ljava/net/Inet4Address; -> io.netty.util.NetUtilInitializationsBrowser createLocalhost4
+BODY_STATIC io.netty.util.NetUtilInitializations createLocalhost6()Ljava/net/Inet6Address; -> io.netty.util.NetUtilInitializationsBrowser createLocalhost6
+BODY_STATIC io.netty.util.NetUtilInitializations determineLoopback(Ljava/util/Collection;Ljava/net/Inet4Address;Ljava/net/Inet6Address;)Lio/netty/util/NetUtilInitializations$NetworkIfaceAndInetAddress; -> io.netty.util.NetUtilInitializationsBrowser determineLoopback

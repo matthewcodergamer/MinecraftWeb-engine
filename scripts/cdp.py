@@ -84,12 +84,12 @@ class WS:
         finally:
             self.sock.settimeout(None)
 
-    def call(self, method, params=None, pump=None):
+    def call(self, method, params=None, pump=None, timeout_sec=10):
         self.next_id += 1
         mid = self.next_id
         self.send({"id": mid, "method": method, "params": params or {}})
         while True:
-            msg = self.recv(120)
+            msg = self.recv(timeout_sec)
             if msg is None:
                 raise TimeoutError(method)
             if msg.get("id") == mid:
@@ -102,9 +102,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("url")
     ap.add_argument("--until-js", default="window.__mc && /complete|failed/.test(window.__mc.stage)")
-    ap.add_argument("--timeout", type=float, default=120)
+    ap.add_argument("--timeout", type=float, default=600)
     ap.add_argument("--screenshot")
     ap.add_argument("--eval", action="append", default=[])
+    ap.add_argument("--preload-js", help="JavaScript evaluated in every new document before page scripts")
+    ap.add_argument("--assert-js", action="append", default=[], help="JavaScript expression that must be truthy after the wait condition")
     ap.add_argument("--viewport", help="emulate a CSS viewport, e.g. 414x896")
     ap.add_argument("--dpr", type=float, default=2.0, help="device scale factor for --viewport")
     ap.add_argument("--gpu", action="store_true", help="use the real GPU instead of SwiftShader")
@@ -117,9 +119,17 @@ def main():
             "--no-proxy-server",
             "--no-first-run", "--window-size=1280,720", "--enable-unsafe-webgpu", "about:blank"]
     if not a.gpu:
-        args.insert(2, "--use-angle=swiftshader")
+        # GitHub-hosted Linux runners have no physical GPU; explicitly select
+        # SwiftShader's Vulkan backend for WebGPU as well as ANGLE for WebGL.
+        args[1:1] = [
+            "--enable-features=Vulkan",
+            "--use-vulkan=swiftshader",
+            "--disable-vulkan-surface",
+            "--use-angle=swiftshader",
+        ]
     chrome = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     ok = False
+    browser_errors = []
     try:
         page = None
         for _ in range(600):
@@ -134,20 +144,64 @@ def main():
         ws = WS(page["webSocketDebuggerUrl"])
         t0 = time.time()
 
+        def save_browser_error(message):
+            message = str(message).strip()
+            if message and message not in browser_errors:
+                browser_errors.append(message[:12000])
+
         def pump(msg):
-            if a.quiet:
-                return
             m = msg.get("method")
             if m == "Runtime.consoleAPICalled":
-                text = " ".join(str(x.get("value", x.get("description", ""))) for x in msg["params"]["args"])
-                print(f"{time.time() - t0:7.2f}s console.{msg['params']['type']}: {text[:2000]}", flush=True)
+                params = msg["params"]
+                message = " ".join(str(x.get("value", x.get("description", ""))) for x in params["args"])
+                if params.get("type") == "error" or any(token in message.lower() for token in ("webassembly.compile", "compileerror", "br_on_cast", "global.set")):
+                    save_browser_error("console." + params.get("type", "log") + ": " + message)
+                if not a.quiet:
+                    print("{:7.2f}s console.{}: {}".format(time.time() - t0, params["type"], message[:2000]), flush=True)
             elif m == "Runtime.exceptionThrown":
                 d = msg["params"]["exceptionDetails"]
-                print(f"{time.time() - t0:7.2f}s EXCEPTION: {d.get('exception', {}).get('description', d.get('text'))[:3000]}",
-                      flush=True)
+                detail = d.get("exception", {}).get("description", d.get("text", "Unknown page exception"))
+                save_browser_error("Uncaught browser exception: " + detail)
+                if not a.quiet:
+                    print("{:7.2f}s EXCEPTION: {}".format(time.time() - t0, detail[:3000]), flush=True)
+            elif m == "Network.responseReceived":
+                response = msg.get("params", {}).get("response", {})
+                status = int(response.get("status", 0) or 0)
+                if status >= 400:
+                    detail = "HTTP {} {} ({})".format(status, response.get("url", ""), response.get("statusText", ""))
+                    failed_requests.append(detail)
+                    save_browser_error(detail)
+            elif m == "Network.loadingFailed":
+                params = msg.get("params", {})
+                detail = "Network load failed: {} ({})".format(params.get("errorText", ""), params.get("requestId", ""))
+                failed_requests.append(detail)
+                save_browser_error(detail)
+            elif m == "Log.entryAdded":
+                entry = msg.get("params", {}).get("entry", {})
+                message = entry.get("text", "")
+                if entry.get("level") == "error" or any(token in message.lower() for token in ("webassembly.compile", "compileerror", "br_on_cast", "global.set")):
+                    save_browser_error("Chrome log: " + message)
 
+        failed_requests = []
         ws.call("Runtime.enable", pump=pump)
         ws.call("Page.enable", pump=pump)
+        ws.call("Log.enable", pump=pump)
+        ws.call("Network.enable", pump=pump)
+        # This timer is deliberately installed before page scripts. Its console events
+        # are delivered by CDP without Runtime.evaluate polling: if the renderer's main
+        # thread is monopolized, heartbeat ticks stop; when it yields, queued ticks resume.
+        heartbeat_js = """(() => {
+            const started = Date.now();
+            let tick = 0;
+            console.log("[CDP_HEARTBEAT] installed");
+            setInterval(() => console.log(
+                "[CDP_HEARTBEAT] tick=" + (++tick) +
+                " elapsed_ms=" + (Date.now() - started)
+            ), 2000);
+        })();"""
+        ws.call("Page.addScriptToEvaluateOnNewDocument", {"source": heartbeat_js}, pump=pump)
+        if a.preload_js:
+            ws.call("Page.addScriptToEvaluateOnNewDocument", {"source": a.preload_js}, pump=pump)
         if a.viewport:
             width, height = (int(part) for part in a.viewport.lower().split("x", 1))
             ws.call("Emulation.setDeviceMetricsOverride", {
@@ -163,24 +217,84 @@ def main():
             if msg:
                 pump(msg)
                 continue
-            r = ws.call("Runtime.evaluate", {"expression": f"!!({a.until_js})", "returnByValue": True}, pump=pump)
+            try:
+                r = ws.call("Runtime.evaluate", {"expression": f"!!({a.until_js})", "returnByValue": True},
+                            pump=pump, timeout_sec=10)
+            except TimeoutError:
+                print(f"{time.time() - t0:7.2f}s CDP evaluate stalled; main thread may be blocked", flush=True)
+                continue
             if r.get("result", {}).get("result", {}).get("value"):
                 ok = True
                 break
         print(f"{time.time() - t0:7.2f}s condition {'met' if ok else 'NOT met (timeout)'}", flush=True)
-        for expr in a.eval:
-            r = ws.call("Runtime.evaluate", {"expression": expr, "returnByValue": True}, pump=pump)
-            print(f"eval {expr} => {json.dumps(r.get('result', {}).get('result', {}).get('value'))[:4000]}")
-        if a.screenshot:
-            r = ws.call("Page.captureScreenshot", {"format": "png"}, pump=pump)
-            with open(a.screenshot, "wb") as f:
-                f.write(base64.b64decode(r["result"]["data"]))
-            print(f"screenshot -> {a.screenshot}")
+        if not ok:
+            try:
+                state_expr = "JSON.stringify({url:location.href,readyState:document.readyState,title:document.title,body:(document.body&&document.body.innerText||'').slice(0,4000),mc:window.__mc||null,bodyReady:window.__mcBodyReady,bodyError:window.__mcBodyError,bridge:window.mcBridge&&window.mcBridge.state?{error:window.mcBridge.state.error,sections:window.mcBridge.state.sections}:null,iframe:(()=>{const f=document.getElementById('mc-brain');return f?{src:f.src,readyState:f.contentDocument&&f.contentDocument.readyState,mc:f.contentWindow&&f.contentWindow.__mc}:null})()})"
+                state_result = ws.call("Runtime.evaluate", {"expression": state_expr, "returnByValue": True}, pump=pump, timeout_sec=10)
+                state_value = state_result.get("result", {}).get("result", {}).get("value")
+                if state_value:
+                    save_browser_error("CDP timeout page state: " + str(state_value))
+                    print("timeout page state: " + str(state_value)[:8000], flush=True)
+            except Exception as exc:
+                save_browser_error("Could not read timeout page state: " + type(exc).__name__ + ": " + str(exc))
+            diagnostic_path = a.screenshot or "cdp-timeout.png"
+            try:
+                shot = ws.call("Page.captureScreenshot", {"format": "png"}, pump=pump, timeout_sec=10)
+                with open(diagnostic_path, "wb") as f:
+                    f.write(base64.b64decode(shot["result"]["data"]))
+                print(f"timeout screenshot -> {diagnostic_path}", flush=True)
+            except Exception as exc:
+                print(f"timeout screenshot unavailable: {type(exc).__name__}: {exc}", flush=True)
+        assert_ok = True
+        if ok:
+            for expr in a.assert_js:
+                try:
+                    r = ws.call("Runtime.evaluate", {"expression": f"!!({expr})", "returnByValue": True}, pump=pump)
+                    passed = bool(r.get("result", {}).get("result", {}).get("value"))
+                    print(f"assert {expr} => {'PASS' if passed else 'FAIL'}")
+                    assert_ok = assert_ok and passed
+                except (TimeoutError, EOFError, OSError) as exc:
+                    print(f"assert evaluation unavailable: {type(exc).__name__}: {exc}", flush=True)
+                    assert_ok = False
+                    break
+            if assert_ok:
+                for expr in a.eval:
+                    try:
+                        r = ws.call("Runtime.evaluate", {"expression": expr, "returnByValue": True}, pump=pump)
+                        print(f"eval {expr} => {json.dumps(r.get('result', {}).get('result', {}).get('value'))[:4000]}")
+                    except (TimeoutError, EOFError, OSError) as exc:
+                        print(f"eval unavailable: {type(exc).__name__}: {exc}", flush=True)
+                        assert_ok = False
+                        break
+        else:
+            print("skipping post-timeout assertions/evaluations: page did not become responsive", flush=True)
+            assert_ok = False
+        if a.screenshot and ok and assert_ok:
+            try:
+                r = ws.call("Page.captureScreenshot", {"format": "png"}, pump=pump, timeout_sec=10)
+                data = r.get("result", {}).get("data")
+                if not data:
+                    raise RuntimeError("CDP returned no screenshot data")
+                with open(a.screenshot, "wb") as f:
+                    f.write(base64.b64decode(data))
+                print(f"screenshot -> {a.screenshot}")
+            except Exception as exc:
+                print(f"screenshot unavailable: {type(exc).__name__}: {exc}", flush=True)
+        elif a.screenshot and not ok:
+            print("skipping requested screenshot: page did not become responsive", flush=True)
     finally:
+        os.makedirs("build", exist_ok=True)
+        error_path = os.path.join("build", "browser_error.txt")
+        with open(error_path, "w", encoding="utf-8") as error_file:
+            if browser_errors:
+                error_file.write("\n\n".join(browser_errors) + "\n")
+            else:
+                error_file.write("No Chrome compile/runtime error was captured by CDP. Check the smoke-test step output for timeout or assertion details.\n")
+        print("Browser diagnostics -> {}".format(error_path), flush=True)
         chrome.kill()
         chrome.wait()
         shutil.rmtree(profile, ignore_errors=True)
-    sys.exit(0 if ok else 1)
+    sys.exit(0 if ok and assert_ok else 1)
 
 
 if __name__ == "__main__":

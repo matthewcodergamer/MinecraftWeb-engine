@@ -1,5 +1,6 @@
 #!/bin/bash
 # Build a browser artifact from the real Minecraft client bytecode.
+# TeaVM Wasm GC vtable diagnostics are compiled from tools/src before invoking TeaVM.
 # usage: scripts/build.sh <EntryClass> [js|wasm]
 #   e.g. scripts/build.sh mcport.M1Main js
 set -euo pipefail
@@ -54,6 +55,10 @@ rm -rf build/stubs && mkdir -p build/stubs
 # Types that live in JDK packages TeaVM does not rename (javax.*) are compiled into those packages.
 OVERLAY=$(find src/compat/java-base-overlay -name '*.java' 2>/dev/null || true)
 [ -n "$OVERLAY" ] && "$JDK/bin/javac" --release 25 --patch-module java.base=src/compat/java-base-overlay -d build/classes $OVERLAY
+# jdk.internal.event belongs to java.base and is compiled by the java.base overlay above.
+# jdk.jfr.Event belongs to the separate jdk.jfr module.
+JFR_OVERLAY=$(find src/compat/jdk-jfr-overlay -name '*.java' 2>/dev/null || true)
+[ -n "$JFR_OVERLAY" ] && "$JDK/bin/javac" --release 25 --patch-module jdk.jfr=src/compat/jdk-jfr-overlay -d build/classes $JFR_OVERLAY
 cp -R src/compat/resources/. build/classes/ 2>/dev/null || true
 
 # Compat classes come first so they shadow the original library classes.
@@ -67,6 +72,24 @@ done
 TEAVM_RT+=("$ROOT/tools/lib/jzlib-1.1.3.jar")
 NAME="$(echo "${ENTRY##*.}" | tr 'A-Z' 'a-z').${TARGET/wasm/wasm}"
 [ "$TARGET" = js ] && NAME="${NAME%.js}.js"
-time "$JDK/bin/java" -Xss1g -Xmx${PORT_HEAP:-3g} -Dport.rules="$ROOT/patches/rules.txt" -Dport.lenientLinkage=${PORT_LENIENT:-true} ${PORT_JAVA_OPTS:-} -cp "build/tools:$TEAVM_CP" PortBuilder "$TARGET" "$ENTRY" "$OUT" "$NAME" \
-  "$ROOT/build/classes" "$MC_JAR" "${LIBARR[@]}" "${TEAVM_RT[@]}" 2>&1 | tee "build/$ENTRY.$TARGET.log" | grep -vE "^\s*at " | tail -${PORT_LOG_LINES:-60}
-exit "${PIPESTATUS[0]}"
+set +e
+time "$JDK/bin/java" -Xss${PORT_STACK:-1g} -Xmx${PORT_HEAP:-3g} -Dport.rules="$ROOT/patches/rules.txt" -Dport.lenientLinkage=${PORT_LENIENT:-true} ${PORT_JAVA_OPTS:-} -cp "build/tools:$TEAVM_CP" PortBuilder "$TARGET" "$ENTRY" "$OUT" "$NAME" \
+  "$ROOT/build/classes" "$MC_JAR" "${LIBARR[@]}" "${TEAVM_RT[@]}" 2>&1 | tee "build/$ENTRY.$TARGET.log" | tail -${PORT_LOG_LINES:-60}
+BUILD_STATUS=${PIPESTATUS[0]}
+set -e
+
+# Keep the full compiler audit visible in Actions logs. The normal build output is
+# intentionally compact, but tailing it previously hid the exact patch-match diagnostics.
+echo "=== PORT COMPATIBILITY AUDIT ==="
+grep '^SEVERE_EXACT' "build/$ENTRY.$TARGET.log" || true
+grep -E 'PATCH_RULE_DIAG|PATCH_METHOD_DIAG|PATCH (BODY|REDIRECT|STUB|ZERO_NATIVE) (java\.io\.Reader|java\.util\.zip\.Inflater|io\.netty\.buffer\.VarHandleByteBufferAccess|io\.netty\.util\.internal\.PlatformDependent0)|classes compiled:|^(LINK|ERROR) ' "build/$ENTRY.$TARGET.log" | tail -n 260 || true
+echo "=== END PORT COMPATIBILITY AUDIT ==="
+if [ "$BUILD_STATUS" -ne 0 ]; then
+  echo "TeaVM build failed with exit code $BUILD_STATUS; matching diagnostics from build/$ENTRY.$TARGET.log:"
+  grep -nEi "error|exception|severe|unimplemented|failed|not found|linkage" "build/$ENTRY.$TARGET.log" | tail -n 120 || true
+  echo "Last 160 unfiltered build log lines:"
+  tail -n 160 "build/$ENTRY.$TARGET.log"
+  echo "Reachability traces (up to 60 call-chain lines per target):"
+  awk '/^WHY / { show=1; count=0 } show { print; count++; if (count >= 60) show=0 }' "build/$ENTRY.$TARGET.log" || true
+fi
+exit "$BUILD_STATUS"

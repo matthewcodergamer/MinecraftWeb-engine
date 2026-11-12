@@ -1,0 +1,18 @@
+{
+  "name": "Minecraft Web",
+  "short_name": "Minecraft",
+  "description": "Minecraft Java Edition in your browser",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#ef323d",
+  "icons": [
+    {
+      "src": "ui/grass_block_icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

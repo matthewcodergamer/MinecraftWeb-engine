@@ -16,8 +16,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#ef323d">
-<link rel="icon" type="image/png" sizes="32x32" href="ui/icon_32.png">
-<link rel="icon" type="image/png" sizes="16x16" href="ui/icon_16x16.png">
+<link rel="icon" type="image/svg+xml" href="ui/grass_block_icon.svg">
+<link rel="manifest" href="site.webmanifest">
 <link rel="stylesheet" href="ui/sprites/sprites.css">
 <title>Minecraft</title>
 <style>
@@ -122,10 +122,10 @@
     background: #000; border: 1px solid #000; padding: 1px;
   }
   #splash .bar::after {
-    content: ''; display: block; height: 100%; width: 0;
-    background: #fff; animation: splash-bar 1.4s ease-out forwards;
+    content: ''; display: block; height: 100%;
+    width: var(--splash-progress, 0%);
+    background: #fff; transition: width .2s ease;
   }
-  @keyframes splash-bar { to { width: 100%; } }
 
   /* ------------------------------------------------------------- main menu */
   #menu {
@@ -1234,8 +1234,10 @@
     const state = {
       rust: 0,
       java: 0,
+      javaBoot: 0,
+      javaStage: '',
       bodyReady: false,
-      javaReady: params.get('java') === '0',
+      javaReady: false,
       worldAck: false,
       brainMissing: false,
       minUntil: performance.now() + 700,
@@ -1325,9 +1327,14 @@
       for (const img of panoramaImages.splice(0)) { img.onload = img.onerror = null; img.src = ''; }
     }
 
-    // Red splash -> menu. Nothing else is on screen at first paint.
-    setTimeout(() => splash.classList.add('done'), 1500);
-    setTimeout(() => { if (splash.parentNode) splash.remove(); }, 2350);
+    // Keep the first splash visible until the real Rust/WebGPU renderer is ready.
+    let splashDismissed = false;
+    function finishSplash() {
+      if (splashDismissed) return;
+      splashDismissed = true;
+      splash.classList.add('done');
+      setTimeout(() => { if (splash.parentNode) splash.remove(); }, 850);
+    }
     setTimeout(warmPanorama, 1100);
 
     function toast(text) {
@@ -1342,15 +1349,24 @@
     function status(text) { if (text) label.textContent = text; }
 
     function progress() {
-      const value = state.javaReady
-        ? Math.min(1, 0.45 + state.rust * 0.55)
-        : Math.min(0.94, 0.04 + state.rust * 0.45 + state.java * 0.45);
+      splash.style.setProperty('--splash-progress', (state.rust * 100).toFixed(1) + '%');
+      const value = state.firstChunk
+        ? 1
+        : Math.min(0.94, 0.04 + state.rust * 0.12 + state.javaBoot * 0.78);
       fill.style.width = (value * 100).toFixed(1) + '%';
+    }
+
+    function rustSectionCount() {
+      const module = mcBridge && mcBridge.state && mcBridge.state.module;
+      if (!module || typeof module.java_section_count !== 'function') return 0;
+      try { return Number(module.java_section_count()) || 0; }
+      catch (_) { return 0; }
     }
 
     function fail(error, detail) {
       if (state.failed) return;
       state.failed = true;
+      finishSplash();
       console.error('Minecraft failed to start', error);
       loading.classList.remove('hidden', 'done');
       loading.classList.add('error');
@@ -1380,15 +1396,15 @@
 
     // Java-only failures are survivable: the Rust body still draws its arena.
     function enableRendererOnly() {
+      // Explicit preview escape hatch; this is not a successful Java world.
       state.failed = false;
-      state.javaReady = true;
-      state.firstChunk = true;
-      state.firstChunkAt = performance.now() - 5000;
+      state.rendererOnly = true;
       loading.classList.remove('error');
       errorBox.style.display = 'none';
       errorBox.textContent = '';
       errorActions.innerHTML = '';
-      maybeFinish();
+      loading.classList.add('gone');
+      toast('Renderer-only preview — no Java world sections were received.');
     }
 
     function offerRendererOnly(note, auto) {
@@ -1458,8 +1474,14 @@
     /* ------------------------------------------------------------- boot flow */
     function maybeFinish() {
       if (state.menuOpen || state.done || state.failed) return;
+      const sectionCount = rustSectionCount();
+      if (sectionCount > 0 && !state.firstChunk) {
+        state.firstChunk = true;
+        state.firstChunkAt = performance.now();
+        state.javaBoot = 1;
+      }
       const now = performance.now();
-      if (!state.bodyReady || !state.javaReady || !state.firstChunk) return;
+      if (!state.bodyReady || !state.javaReady || sectionCount <= 0 || !state.firstChunk) return;
       if (now < state.minUntil || now < state.firstChunkAt + 150) return;
       state.done = true;
       if (state.javaFallbackTimer) { clearInterval(state.javaFallbackTimer); state.javaFallbackTimer = 0; }
@@ -1599,7 +1621,35 @@
       } else if (data.type === 'ready') {
         state.javaReady = true;
         state.java = 1;
-        if (!state.done && !state.failed) status('Java brain ready — waiting for terrain…');
+        if (!state.done && !state.failed) status('Java client ready — verifying Rust terrain…');
+        progress();
+      } else if (data.type === 'java-stage') {
+        const stage = String(data.stage || '');
+        console.log('[BRAIN_BOOT_STAGE] ' + stage + (data.detail ? ' ' + data.detail : ''));
+        const milestones = {
+          'teavm-main-dispatch-enter': 0.04,
+          'teavm-main-dispatch-return': 0.08,
+          'client-main-enter': 0.10,
+          'client-os-properties-ready': 0.12,
+          'chunk-bridge-install-enter': 0.14,
+          'chunk-bridge-installed': 0.16,
+          'mojang-main-enter': 0.20,
+          'chunk-bridge-hook-register': 0.25,
+          'chunk-bridge-first-frame-hook': 0.32,
+          'world-create-request-accepted': 0.42,
+          'world-folder-check-enter': 0.48,
+          'existing-world-open-enter': 0.55,
+          'fresh-world-create-enter': 0.55,
+          'world-preset-dimensions-enter': 0.65,
+          'world-start-call-return': 0.72,
+          'world-level-and-player-ready': 0.82,
+          'first-loaded-chunk-scan': 0.90,
+          'first-java-section-capture-enter': 0.95,
+          'first-java-section-emitted': 0.98
+        };
+        state.javaStage = stage;
+        state.javaBoot = Math.max(state.javaBoot, milestones[stage] || 0);
+        if (!state.done && !state.failed) status('Java startup: ' + stage.replace(/-/g, ' '));
         progress();
       } else if (data.type === 'world-upgrade-progress') {
         const total = Math.max(1, Number(data.total) || 1);
@@ -2471,10 +2521,6 @@
         status('Loading terrain...');
         fadeTimer = setTimeout(() => {
           screenFade.classList.remove('on');
-          if (state.bodyReady && !state.firstChunk) {
-            state.firstChunk = true;
-            state.firstChunkAt = performance.now();
-          }
           progress();
           maybeFinish();
           // The brain's reported progress reaches 1.0 when its JavaScript has
@@ -2492,7 +2538,7 @@
             if (!fallbackSince) { fallbackSince = performance.now(); return; }
             if (performance.now() - fallbackSince < 240000) return;
             clearInterval(state.javaFallbackTimer); state.javaFallbackTimer = 0;
-            offerRendererOnly('The Java client stopped before producing a world. Continuing with the built-in renderer.', true);
+            offerRendererOnly('The Java client stopped before producing a world. You can explicitly open a renderer-only preview.', false);
           }, 4000);
         }, 80);
       }, 280);
@@ -2510,6 +2556,34 @@
 
     /* QA hook: ?screen=select|create|upgrade opens a world screen directly so
        the layout can be screenshotted without clicking through the menu. */
+    // CI-only end-to-end smoke path: create a real Java singleplayer world
+    // after the Rust Body and menu are ready. The isolated browser profile keeps
+    // this save out of a player's normal world list.
+    if (params.get('smoke-world') === '1') {
+      const launchSmokeWorld = () => {
+        if (!state.bodyReady || !menu.classList.contains('open')) {
+          setTimeout(launchSmokeWorld, 250);
+          return;
+        }
+        beginWorld({
+          id: 'ci-smoke-world',
+          name: 'CI Smoke World',
+          folder: 'ci-smoke-world',
+          seed: '26032603',
+          mode: 'creative',
+          difficulty: 'peaceful',
+          type: 'default',
+          commands: true,
+          structures: true,
+          bonus: false,
+          keepInv: false,
+          daylight: true,
+          coords: true,
+        });
+      };
+      setTimeout(launchSmokeWorld, 500);
+    }
+
     (function openDevScreen() {
       const which = params.get('screen');
       if (!which) return;
@@ -2872,8 +2946,9 @@
 
     /* ------------------------------------------------------------- Java link */
     mcBridge.state.onProgress = (value, text) => {
+      // This reports bundle download/extraction, not Java world startup.
       state.java = value || 0;
-      if (text) status(text);
+      if (text && !state.javaStage) status(text);
     };
     mcBridge.state.onJavaReady = () => { state.javaReady = true; state.java = 1; progress(); };
     mcBridge.state.onError = (text) => {
@@ -2889,11 +2964,10 @@
       if (mcBridge.state.javaReady) state.javaReady = true;
       if (window.__mcBodyError) fail(new Error(window.__mcBodyError));
       if (state.failed && state.bodyReady) offerRendererOnly(null);
-      if (!state.firstChunk && state.bodyReady) {
-        if (params.get('java') === '0' || state.brainMissing || mcBridge.state.sections > 0) {
-          state.firstChunk = true;
-          state.firstChunkAt = performance.now();
-        }
+      if (!state.firstChunk && rustSectionCount() > 0) {
+        state.firstChunk = true;
+        state.firstChunkAt = performance.now();
+        state.javaBoot = 1;
       }
       progress();
       maybeFinish();
@@ -2918,7 +2992,7 @@
           } catch (e) { brain = false; }
           if (brain) {
             $('mc-brain').addEventListener('load', flushBrainQueue);
-            $('mc-brain').src = 'play.html?embedded=1&scale=0.5&stats=0';
+            $('mc-brain').src = 'play.html?embedded=1&scale=0.5&stats=0' + (params.get('wasm') === '1' ? '&wasm=1' : '');
           } else {
             console.warn('clientmain.js not deployed — renderer-only mode');
             state.javaReady = true;
@@ -2963,6 +3037,7 @@
         state.rust = 1;
         state.booted = true;
         progress();
+        finishSplash();
         // Pre-warm the menu's audio so the first click is not silent.
         mcAudio.unlock();
         if (params.get('autostart') === '1') startGame();

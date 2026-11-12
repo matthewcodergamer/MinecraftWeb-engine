@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<link rel="icon" type="image/png" sizes="16x16" href="ui/icon_16x16.png">
-<link rel="icon" type="image/png" sizes="32x32" href="ui/icon_32.png">
+<link rel="icon" type="image/svg+xml" href="ui/grass_block_icon.svg">
+<link rel="manifest" href="site.webmanifest">
 <title>Minecraft</title>
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; overflow-x: hidden; overscroll-behavior: none; }
@@ -170,12 +170,25 @@ async function fetchWithProgress(url, label, from, to) {
   });
 }
 
+function reportBootStage(stage, detail) {
+  const payload = { source: 'mc-brain', type: 'java-stage', stage, detail: detail || '' };
+  console.log('[TEAVM_BOOT] ' + stage + (detail ? ' ' + detail : ''));
+  if (window.parent !== window) window.parent.postMessage(payload, '*');
+}
+
 function loadClassicScript(src) {
   return new Promise((res, rej) => {
+    reportBootStage('client-script-load-start', src.startsWith('blob:') ? 'blob-url' : src);
     const s = document.createElement('script');
     s.src = src;
-    s.onload = res;
-    s.onerror = () => rej(new Error('failed to load ' + s.src));
+    s.onload = () => {
+      reportBootStage('client-script-load-complete');
+      res();
+    };
+    s.onerror = () => {
+      reportBootStage('client-script-load-error', s.src);
+      rej(new Error('failed to load ' + s.src));
+    };
     document.body.appendChild(s);
   });
 }
@@ -232,6 +245,32 @@ async function downloadPart(url, expected, onBytes) {
 }
 
 async function loadBrain() {
+  reportBootStage('client-bundle-load-enter');
+  if (params.get('wasm') === '1') {
+    await loadClassicScript('clientmain.wasm-runtime.js');
+    if (!window.TeaVM || !TeaVM.wasmGC || typeof TeaVM.wasmGC.load !== 'function') {
+      throw new Error('TeaVM Wasm GC runtime did not expose TeaVM.wasmGC.load');
+    }
+    const teavm = await TeaVM.wasmGC.load('clientmain.wasm', {
+      installImports(imports) {
+        imports.mcHeap = {
+          heapView(addr, len) {
+            const heap = globalThis.__mcHeap;
+            if (!heap || !heap.buffer) throw new Error('mcHeap buffer is not initialized');
+            return new Int8Array(heap.buffer, addr, len);
+          },
+          isHeapView(view) {
+            const heap = globalThis.__mcHeap;
+            return !!(heap && heap.buffer && view && view.buffer === heap.buffer);
+          },
+        };
+      },
+    });
+    window.__mcTeaVM = teavm;
+    window.__mcRunMain = () => teavm.exports.main([]);
+    reportBootStage('wasm-gc-module-instantiated');
+    return;
+  }
   const explicit = params.get('js');
   if (explicit) {
     await loadClassicScript(explicit + '.js');
@@ -255,6 +294,8 @@ async function loadBrain() {
   const downloadTotal = manifest.downloadTotal
     || parts.reduce((n, p) => n + (p.size || 0), 0);
   const rawTotal = manifest.total || downloadTotal;
+  reportBootStage('client-bundle-manifest-ready',
+    'compressed_bytes=' + downloadTotal + ' raw_bytes=' + rawTotal + ' parts=' + parts.length);
   const received = new Array(parts.length).fill(0);
   const buffers = new Array(parts.length);
   const mb = (n) => (n / 1048576).toFixed(1);
@@ -299,12 +340,14 @@ async function loadBrain() {
   await Promise.all(Array.from({ length: Math.min(3, parts.length) }, worker));
   // buffers[i] is an array of stream chunks; flatten them into one Blob.
   const packed = new Blob([].concat.apply([], buffers));
+  reportBootStage('client-bundle-download-complete', 'compressed_bytes=' + packed.size);
   let scriptData = packed;
   if (manifest.encoding === 'gzip') {
     if (typeof DecompressionStream !== 'function') {
       throw new Error('This browser cannot decompress the client bundle (no DecompressionStream gzip).');
     }
     msg('Extracting Java Brain…');
+    reportBootStage('client-bundle-decompress-start');
     bar(0.985);
     const stream = packed.stream().pipeThrough(new DecompressionStream('gzip'));
     const reader = stream.getReader();
@@ -321,6 +364,7 @@ async function loadBrain() {
       }
     }
     scriptData = new Blob(chunks, { type: 'text/javascript' });
+    reportBootStage('client-bundle-decompress-complete', 'javascript_bytes=' + scriptData.size);
   }
   bar(1);
   msg('Starting Java client…');
@@ -362,6 +406,7 @@ function showStats() {
     msg('Loading Minecraft…');
     bar(0.9);
     await loadBrain();
+    reportBootStage('client-bundle-script-executed');
     bar(1);
     showStats();
     // The Minecraft window (the canvas) appears when the client creates it; hide the boot screen then.
@@ -371,7 +416,12 @@ function showStats() {
         clearInterval(waitCanvas);
       }
     }, 100);
-    main([]);
+    window.__mcBootStage = 'teavm-main-dispatch-enter';
+    reportBootStage(window.__mcBootStage);
+    if (typeof window.__mcRunMain === 'function') window.__mcRunMain();
+    else main([]);
+    window.__mcBootStage = 'teavm-main-dispatch-return';
+    reportBootStage(window.__mcBootStage);
     // The Java client reports fatal startup errors by setting
     // window.__mc.stage = 'failed'. Mirror that on the boot screen (and in the
     // owning page) instead of leaving the player on "Starting Java client…".

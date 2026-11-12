@@ -66,6 +66,10 @@ public final class ChunkBridge {
     private static final Uint8Array LIGHT = Uint8Array.create(4096);
 
     private static boolean installed;
+    private static boolean firstPumpLogged;
+    private static boolean firstLevelPlayerLogged;
+    private static boolean firstScanLogged;
+    private static boolean firstSectionLogged;
     private static boolean ready;
     private static boolean worldRequested;
     private static boolean freshWorld;
@@ -84,6 +88,7 @@ public final class ChunkBridge {
             return;
         }
         installed = true;
+        BrowserRuntime.report("stage", "chunk-bridge-hook-register");
         FrameLoop.addHook(ChunkBridge::pump);
     }
 
@@ -100,6 +105,10 @@ public final class ChunkBridge {
     }
 
     private static void pump() {
+        if (!firstPumpLogged) {
+            firstPumpLogged = true;
+            BrowserRuntime.report("stage", "chunk-bridge-first-frame-hook");
+        }
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null) {
             return;
@@ -107,6 +116,10 @@ public final class ChunkBridge {
         maybeStartWorld(minecraft);
         if (minecraft.level == null || minecraft.player == null) {
             return;
+        }
+        if (!firstLevelPlayerLogged) {
+            firstLevelPlayerLogged = true;
+            BrowserRuntime.report("stage", "world-level-and-player-ready");
         }
 
         // Options that are not part of LevelSettings/WorldOptions are applied
@@ -138,6 +151,10 @@ public final class ChunkBridge {
             return;
         }
         lastScan = now;
+        if (!firstScanLogged) {
+            firstScanLogged = true;
+            BrowserRuntime.report("stage", "first-loaded-chunk-scan");
+        }
 
         int pcx = minecraft.player.chunkPosition().x();
         int pcz = minecraft.player.chunkPosition().z();
@@ -170,6 +187,7 @@ public final class ChunkBridge {
             return;
         }
         worldRequested = true;
+        BrowserRuntime.report("stage", "world-create-request-accepted");
         try {
             String name = settingName();
             if (name.isEmpty()) {
@@ -198,14 +216,17 @@ public final class ChunkBridge {
             ResourceKey<WorldPreset> preset = worldPreset(settingType());
 
             BrowserRuntime.report("world-folder", folder);
-            if (minecraft.getLevelSource().levelExists(folder)) {
+            BrowserRuntime.report("stage", "world-folder-check-enter");
+            boolean existingWorld = minecraft.getLevelSource().levelExists(folder);
+            BrowserRuntime.report("stage", existingWorld ? "existing-world-open-enter" : "fresh-world-create-enter");
+            if (existingWorld) {
                 minecraft.createWorldOpenFlows().openWorld(folder, () -> { });
             } else {
                 freshWorld = true;
                 minecraft.createWorldOpenFlows().createFreshLevel(folder, settings, options,
                         provider -> presetDimensions(provider, preset), null);
             }
-            BrowserRuntime.report("stage", "world-start");
+            BrowserRuntime.report("stage", "world-start-call-return");
         } catch (Throwable t) {
             worldRequested = false;
             BrowserRuntime.report("error", "world-start: " + BrowserRuntime.describe(t));
@@ -233,6 +254,7 @@ public final class ChunkBridge {
     }
 
     private static WorldDimensions presetDimensions(HolderLookup.Provider provider, ResourceKey<WorldPreset> preset) {
+        BrowserRuntime.report("stage", "world-preset-dimensions-enter");
         if (preset == WorldPresets.NORMAL) {
             return WorldPresets.createNormalWorldDimensions(provider);
         }
@@ -356,6 +378,10 @@ public final class ChunkBridge {
         if (section == null) {
             return;
         }
+        if (!firstSectionLogged) {
+            firstSectionLogged = true;
+            BrowserRuntime.report("stage", "first-java-section-capture-enter");
+        }
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null || minecraft.level == null) {
             return;
@@ -403,6 +429,9 @@ public final class ChunkBridge {
         SENT_LIGHT.put(key, lightHash);
         emitSection(cx, cy, cz, IDS);
         emitLight(cx, cy, cz, LIGHT);
+        if (!ready) {
+            BrowserRuntime.report("stage", "first-java-section-emitted");
+        }
 
         // Only now is there real geometry in the Body. The page keeps the
         // Mojang loading overlay up until this fires, so it never fades to an

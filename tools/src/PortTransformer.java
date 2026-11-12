@@ -106,6 +106,27 @@ public class PortTransformer implements ClassHolderTransformer {
         boolean stubAll = STUB_CLASSES.contains(cls.getName());
         java.util.Set<MethodDescriptor> stubs = STUBS.get(cls.getName());
         boolean zeroNatives = ZERO_NATIVES.contains(cls.getName());
+        if (bodies != null && (cls.getName().equals("io.netty.buffer.VarHandleByteBufferAccess")
+                || cls.getName().equals("io.netty.util.internal.PlatformDependent0"))) {
+            for (Map.Entry<MethodDescriptor, MethodReference> rule : bodies.entrySet()) {
+                boolean found = false;
+                for (MethodHolder candidate : cls.getMethods()) {
+                    if (candidate.getDescriptor().equals(rule.getKey())) {
+                        found = true;
+                        break;
+                    }
+                }
+                System.out.println("PATCH_RULE_DIAG " + cls.getName() + "." + rule.getKey() + " matched=" + found);
+            }
+            for (MethodHolder candidate : cls.getMethods()) {
+                if (candidate.getName().equals("equals") || candidate.getName().equals("hashCodeAscii")
+                        || candidate.getName().equals("getShort") || candidate.getName().equals("putShort")
+                        || candidate.getName().startsWith("get") || candidate.getName().startsWith("set")) {
+                    System.out.println("PATCH_METHOD_DIAG " + cls.getName() + "." + candidate.getDescriptor()
+                            + " static=" + candidate.hasModifier(ElementModifier.STATIC));
+                }
+            }
+        }
         for (MethodHolder method : cls.getMethods()) {
             if (zeroNatives && method.hasModifier(ElementModifier.NATIVE)) {
                 zeroBody(method);
