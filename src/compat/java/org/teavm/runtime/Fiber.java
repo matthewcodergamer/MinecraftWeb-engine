@@ -18,6 +18,7 @@ package org.teavm.runtime;
 import org.teavm.interop.AsyncCallback;
 import org.teavm.interop.StaticInit;
 import org.teavm.interop.Unmanaged;
+import mcport.rt.BrowserRuntime;
 
 @StaticInit
 public final class Fiber {
@@ -45,6 +46,8 @@ public final class Fiber {
 
     private static Fiber current;
     private static PendingCall lastPendingCall;
+    private static int startCount;
+    private static int resumeCount;
 
     private Fiber(FiberRunner runner, boolean daemon) {
         this.runner = runner;
@@ -343,16 +346,28 @@ public final class Fiber {
     }
 
     static void startMain(String[] args) {
+        BrowserRuntime.report("trace", "fiber-startMain-enter");
         start(() -> runMain(args), false);
+        BrowserRuntime.report("trace", "fiber-startMain-return");
     }
 
     public static native void runMain(String[] args);
 
     private void start() {
+        int traceId = ++startCount;
+        if (traceId <= 20 || traceId % 100 == 0) {
+            BrowserRuntime.report("trace", "fiber-start-enter-" + traceId);
+        }
         Fiber former = current;
         current = this;
         while (true) {
+            if (traceId <= 20) {
+                BrowserRuntime.report("trace", "fiber-runner-before-" + traceId);
+            }
             runner.run();
+            if (traceId <= 20) {
+                BrowserRuntime.report("trace", "fiber-runner-after-" + traceId);
+            }
             if (!isPendingResume) {
                 break;
             }
@@ -360,14 +375,24 @@ public final class Fiber {
             state = STATE_RESUMING;
         }
         current = former;
+        if (traceId <= 20 || traceId % 100 == 0) {
+            BrowserRuntime.report("trace", "fiber-start-return-" + traceId + "-state-" + state);
+        }
         if (!isSuspending() && !daemon && --userThreadCount == 0) {
             // Browser event scheduling is owned by the host; no native EventQueue shutdown here.
         }
     }
 
     void resume() {
+        int traceId = ++resumeCount;
+        if (traceId <= 50 || traceId % 100 == 0) {
+            BrowserRuntime.report("trace", "fiber-resume-enter-" + traceId);
+        }
         state = STATE_RESUMING;
         start();
+        if (traceId <= 50 || traceId % 100 == 0) {
+            BrowserRuntime.report("trace", "fiber-resume-return-" + traceId);
+        }
     }
 
     public interface FiberRunner {
