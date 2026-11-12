@@ -361,7 +361,7 @@ public final class Fiber {
         }
         current = former;
         if (!isSuspending() && !daemon && --userThreadCount == 0) {
-            EventQueue.stop();
+            // Browser event scheduling is owned by the host; no native EventQueue shutdown here.
         }
     }
 
