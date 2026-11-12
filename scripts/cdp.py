@@ -164,15 +164,29 @@ def main():
                 save_browser_error("Uncaught browser exception: " + detail)
                 if not a.quiet:
                     print("{:7.2f}s EXCEPTION: {}".format(time.time() - t0, detail[:3000]), flush=True)
+            elif m == "Network.responseReceived":
+                response = msg.get("params", {}).get("response", {})
+                status = int(response.get("status", 0) or 0)
+                if status >= 400:
+                    detail = "HTTP {} {} ({})".format(status, response.get("url", ""), response.get("statusText", ""))
+                    failed_requests.append(detail)
+                    save_browser_error(detail)
+            elif m == "Network.loadingFailed":
+                params = msg.get("params", {})
+                detail = "Network load failed: {} ({})".format(params.get("errorText", ""), params.get("requestId", ""))
+                failed_requests.append(detail)
+                save_browser_error(detail)
             elif m == "Log.entryAdded":
                 entry = msg.get("params", {}).get("entry", {})
                 message = entry.get("text", "")
                 if entry.get("level") == "error" or any(token in message.lower() for token in ("webassembly.compile", "compileerror", "br_on_cast", "global.set")):
                     save_browser_error("Chrome log: " + message)
 
+        failed_requests = []
         ws.call("Runtime.enable", pump=pump)
         ws.call("Page.enable", pump=pump)
         ws.call("Log.enable", pump=pump)
+        ws.call("Network.enable", pump=pump)
         # This timer is deliberately installed before page scripts. Its console events
         # are delivered by CDP without Runtime.evaluate polling: if the renderer's main
         # thread is monopolized, heartbeat ticks stop; when it yields, queued ticks resume.
@@ -214,6 +228,15 @@ def main():
                 break
         print(f"{time.time() - t0:7.2f}s condition {'met' if ok else 'NOT met (timeout)'}", flush=True)
         if not ok:
+            try:
+                state_expr = "JSON.stringify({url:location.href,readyState:document.readyState,title:document.title,body:(document.body&&document.body.innerText||'').slice(0,4000),mc:window.__mc||null,bodyReady:window.__mcBodyReady,bodyError:window.__mcBodyError,bridge:window.mcBridge&&window.mcBridge.state?{error:window.mcBridge.state.error,sections:window.mcBridge.state.sections}:null,iframe:(()=>{const f=document.getElementById('mc-brain');return f?{src:f.src,readyState:f.contentDocument&&f.contentDocument.readyState,mc:f.contentWindow&&f.contentWindow.__mc}:null})()})"
+                state_result = ws.call("Runtime.evaluate", {"expression": state_expr, "returnByValue": True}, pump=pump, timeout_sec=10)
+                state_value = state_result.get("result", {}).get("result", {}).get("value")
+                if state_value:
+                    save_browser_error("CDP timeout page state: " + str(state_value))
+                    print("timeout page state: " + str(state_value)[:8000], flush=True)
+            except Exception as exc:
+                save_browser_error("Could not read timeout page state: " + type(exc).__name__ + ": " + str(exc))
             diagnostic_path = a.screenshot or "cdp-timeout.png"
             try:
                 shot = ws.call("Page.captureScreenshot", {"format": "png"}, pump=pump, timeout_sec=10)
