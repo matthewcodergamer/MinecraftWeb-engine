@@ -16,7 +16,7 @@ import urllib.request
 
 VERSION = os.environ.get("MC_VERSION", "26.3")
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-OUT = ROOT / "ui" / "assets" / "full"
+OUT = ROOT / "web" / "ui" / "assets" / "full"
 MANIFEST_URL = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 OBJECT_BASE = "https://resources.download.minecraft.net"
 
