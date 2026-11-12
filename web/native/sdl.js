@@ -469,7 +469,19 @@
       state.title = H().cstr(titlePtr) || 'Minecraft';
       document.title = state.title;
       state.flags = flags;
-      createCanvas();
+      try {
+        createCanvas();
+      } catch (error) {
+        console.error('[MinecraftWeb SDL] SDL_CreateWindow failed while creating the browser canvas:', error);
+        setError('SDL_CreateWindow failed: ' + (error && error.message ? error.message : String(error)));
+        return 0;
+      }
+      if (!state.canvas) {
+        console.error('[MinecraftWeb SDL] SDL_CreateWindow did not create a canvas; returning a null handle.');
+        setError('SDL_CreateWindow did not create a browser canvas');
+        return 0;
+      }
+      console.info('[MinecraftWeb SDL] SDL_CreateWindow created browser canvas; handle=' + state.windowId);
       return state.windowId;
     },
     SDL_DestroyWindow: () => {},
