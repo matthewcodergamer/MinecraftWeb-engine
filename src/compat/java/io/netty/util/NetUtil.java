@@ -227,28 +227,9 @@ public final class NetUtil {
      * @return The <a href ="https://www.freebsd.org/cgi/man.cgi?sysctl(8)">sysctl</a> value for {@code sysctlKey}.
      */
     private static Integer sysctlGetInt(String sysctlKey) throws IOException {
-        Process process = new ProcessBuilder("sysctl", sysctlKey).start();
-        try {
-            // Suppress warnings about resource leaks since the buffered reader is closed below
-            InputStream is = process.getInputStream();
-            InputStreamReader isr = new InputStreamReader(new BoundedInputStream(is));
-            try (BufferedReader br = new BufferedReader(isr)) {
-                String line = br.readLine();
-                if (line != null && line.startsWith(sysctlKey)) {
-                    for (int i = line.length() - 1; i > sysctlKey.length(); --i) {
-                        if (!Character.isDigit(line.charAt(i))) {
-                            return Integer.valueOf(line.substring(i + 1));
-                        }
-                    }
-                }
-                return null;
-            }
-        } finally {
-            // No need of 'null' check because we're initializing
-            // the Process instance in first line. Any exception
-            // raised will directly lead to throwable.
-            process.destroy();
-        }
+        // Browsers cannot spawn host processes. The browser-safe class initializer
+        // already uses the portable SOMAXCONN default; keep this fallback inert too.
+        return null;
     }
 
     /**
