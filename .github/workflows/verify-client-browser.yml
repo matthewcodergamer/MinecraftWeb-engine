@@ -100,7 +100,8 @@ jobs:
           for class in \
             net.minecraft.util.filefix.FileFixerUpper \
             net.minecraft.client.renderer.item.CuboidItemModel \
-            net.minecraft.client.renderer.item.CuboidItemModelWrapper; do
+            net.minecraft.client.renderer.item.CuboidItemModelWrapper \
+            com.mojang.blaze3d.platform.Window; do
             name="${class##*.}"
             echo "===== $class =====" | tee "build/diagnostics/$name.txt"
             if jar tf "$jar" | grep -Fx "${class//.//}.class" >/dev/null; then
@@ -274,6 +275,9 @@ jobs:
           raise SystemExit("TeaVM 0.16.0 Wasm GC runtime resource was not found in tools/lib/*.jar")
           PY
 
+      - name: Apply Wasm-GC WeakReference compatibility fallback
+        run: python3 scripts/patch_teavm_wasm_runtime.py build/web/clientmain.wasm-runtime.js
+
       - name: Stage client page and vanilla resources
         env:
           MC_DIR: ${{ runner.temp }}/minecraft
@@ -304,7 +308,7 @@ jobs:
       - name: Check browser and JavaScript syntax
         run: |
           google-chrome --version
-          python3 -m py_compile scripts/fetch_minecraft.py scripts/cdp.py
+          python3 -m py_compile scripts/fetch_minecraft.py scripts/cdp.py scripts/patch_teavm_wasm_runtime.py
           bash -n scripts/build_client_probe.sh scripts/build_body.sh
 
       - name: Run real client singleplayer-to-Rust smoke test
