@@ -330,18 +330,17 @@ impl Renderer {
             14,
             [sky.sun_color[0], sky.sun_color[1], sky.sun_color[2], 1.0],
         );
-        // Noon factor peaks at solar noon and fades to zero at sunrise/sunset.
-        let noon_factor = smoothstep(0.0, 1.0, sky.sun_dir[1].max(0.0));
-        let inv_noon_factor = 1.0 - noon_factor;
-        write4(
-            15,
-            [
-                noon_factor,
-                inv_noon_factor,
-                if COMPLEMENTARY_ENABLED.load(Ordering::Relaxed) { 1.0 } else { 0.0 },
-                0.0,
-            ],
-        );
+        // Keep the vanilla path as the default. Only calculate and upload
+        // Complementary-specific daylight inputs while the pack is enabled.
+        let use_complementary = COMPLEMENTARY_ENABLED.load(Ordering::Relaxed);
+        let complementary_uniform = if use_complementary {
+            let noon_factor = smoothstep(0.0, 1.0, sky.sun_dir[1].max(0.0));
+            let inv_noon_factor = 1.0 - noon_factor;
+            [noon_factor, inv_noon_factor, 1.0, 0.0]
+        } else {
+            [0.0, 0.0, 0.0, 0.0]
+        };
+        write4(15, complementary_uniform);
         self.queue.write_buffer(&self.uniform_buffer, 0, &uniform);
         self.horizon = sky.horizon;
         (pose.view_projection, pose.position)
