@@ -28,10 +28,19 @@ public final class AssetIndexPatches {
     }
 
     public static Path createIndexFs(Path assetsDir, String indexName) {
-        String key = "assets/" + indexName + ".json";
+        // IndexedAssetSource receives the index id (for example "26.3"), while
+        // the resource archive preserves the launcher's canonical directory layout.
+        // The previous lookup omitted "indexes/" and incorrectly requested
+        // assets/26.3.json, although pack_resources.py stores assets/indexes/26.3.json.
+        String key = "assets/indexes/" + indexName + ".json";
         byte[] data = ClasspathResources.bytes(key);
         if (data == null) {
-            throw new UncheckedIOException(new NoSuchFileException(key));
+            // Compatibility fallback for older resource archives that used the flat path.
+            String legacyKey = "assets/" + indexName + ".json";
+            data = ClasspathResources.bytes(legacyKey);
+            if (data == null) {
+                throw new UncheckedIOException(new NoSuchFileException(key));
+            }
         }
         JsonObject root = JsonParser.parseString(new String(data, StandardCharsets.UTF_8)).getAsJsonObject();
         JsonObject objects = root.getAsJsonObject("objects");
