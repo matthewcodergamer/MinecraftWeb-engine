@@ -123,6 +123,26 @@ fn complementary_water_fresnel(
     return fresnel_m;
 }
 
+
+// GetReflection() Step 1 and ray-march initialization from reflections.glsl.
+// The caller supplies the same view-space inputs and precomputed Fresnel.
+fn complementary_reflection_direction(
+    normalized_view_position: vec3<f32>,
+    reflection_normal: vec3<f32>
+) -> vec3<f32> {
+    return normalize(reflect(normalized_view_position, reflection_normal));
+}
+
+fn complementary_reflection_ray_start(
+    view_position: vec3<f32>,
+    reflection_normal: vec3<f32>,
+    view_position_length: f32,
+    fresnel: f32
+) -> vec3<f32> {
+    return view_position + reflection_normal *
+        (view_position_length * 0.025 * (1.0 - fresnel) + 0.05);
+}
+
 fn composite_water_reflection(
     base_color: vec3<f32>,
     reflection_color: vec3<f32>,
