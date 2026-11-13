@@ -1,3 +1,124 @@
+// Source-driven Complementary Reimagined formula ports.
+// Reference files:
+// shaders/program/gbuffers_water.glsl
+// shaders/lib/materials/materialMethods/reflections.glsl
+// shaders/lib/colors/lightAndAmbientColors.glsl
+//
+// The upstream source's large GetReflection() ray marcher depends on many
+// pack macros, uniforms, samplers, fog/sky helpers and optional WSR paths.
+// This module ports the exact water Fresnel weighting at its call site and
+// the complete light/ambient color-mixing equations for the Overworld path.
+// The caller supplies compile-time-configuration-dependent weather modifiers.
+
+struct ComplementaryLightInputs {
+    sky_color: vec3<f32>,
+    vs_brightness: f32,
+    noon_factor: f32,
+    inv_noon_factor: f32,
+    sun_visibility2: f32,
+    rain_factor: f32,
+    // Exact drlcRainM + drlcSnowM + drlcDryM term from the source config.
+    biome_weather_light_offset: vec3<f32>,
+    // Exact source rainShadowVisReduce value after its preprocessor branches.
+    rain_shadow_visibility_reduce: f32,
+    // true for COMPOSITE1's light-shaft variant; false for ground/cloud.
+    composite1: u32,
+};
+
+struct ComplementaryLightColors {
+    day_light_color: vec3<f32>,
+    ambient_color: vec3<f32>,
+    light_color: vec3<f32>,
+};
+
+fn complementary_light_and_ambient_colors(
+    input: ComplementaryLightInputs
+) -> ComplementaryLightColors {
+    // lightAndAmbientColors.glsl: noon/sunset clear colors.
+    let noon_clear_light_color = vec3<f32>(0.65, 0.55, 0.375) * 2.05;
+    let noon_clear_ambient_color = pow(input.sky_color, vec3<f32>(0.75)) * 0.85;
+    let sunset_clear_light_color =
+        pow(vec3<f32>(0.64, 0.45, 0.3),
+            vec3<f32>(1.5 + input.inv_noon_factor)) * 5.0;
+    let sunset_clear_ambient_color =
+        noon_clear_ambient_color * vec3<f32>(1.21, 0.92, 0.76) * 0.95;
+
+    let noon_factor_dm = select(input.noon_factor,
+                                input.noon_factor * input.noon_factor,
+                                input.composite1 != 0u);
+    let day_light_color = mix(sunset_clear_light_color,
+                              noon_clear_light_color, noon_factor_dm);
+    let day_ambient_color = mix(sunset_clear_ambient_color,
+                                noon_clear_ambient_color, noon_factor_dm);
+
+    // Night clear values and weather values are copied from the same
+    // Overworld branch; preprocessor-selected biome/rain offsets are inputs.
+    let night_clear_light_color =
+        0.9 * vec3<f32>(0.15, 0.14, 0.20) *
+        (0.4 + input.vs_brightness * 0.4);
+    let night_clear_ambient_color =
+        0.9 * vec3<f32>(0.09, 0.12, 0.17) *
+        (1.55 + input.vs_brightness * 0.77);
+    let clear_light_color = mix(night_clear_light_color,
+                                day_light_color, input.sun_visibility2);
+    let clear_ambient_color = mix(night_clear_ambient_color,
+                                  day_ambient_color, input.sun_visibility2);
+
+    let day_rain_light_color =
+        vec3<f32>(0.21, 0.16, 0.13) * 0.85 +
+        input.noon_factor * vec3<f32>(0.0, 0.02, 0.06) +
+        input.biome_weather_light_offset;
+    let day_rain_ambient_color =
+        vec3<f32>(0.2, 0.2, 0.25) * (1.8 + 0.5 * input.vs_brightness);
+    let night_rain_light_color =
+        vec3<f32>(0.03, 0.035, 0.05) *
+        (0.5 + 0.5 * input.vs_brightness);
+    let night_rain_ambient_color =
+        vec3<f32>(0.16, 0.20, 0.3) *
+        (0.75 + 0.6 * input.vs_brightness);
+
+    let rain_light_color = mix(
+        night_rain_light_color,
+        day_rain_light_color * (1.0 - input.rain_shadow_visibility_reduce),
+        input.sun_visibility2
+    ) * 2.5;
+    let rain_ambient_color = mix(
+        night_rain_ambient_color,
+        day_rain_ambient_color * (1.0 + input.rain_shadow_visibility_reduce),
+        input.sun_visibility2
+    );
+
+    var output: ComplementaryLightColors;
+    output.day_light_color = day_light_color;
+    output.light_color = mix(clear_light_color, rain_light_color, input.rain_factor);
+    output.ambient_color = mix(clear_ambient_color, rain_ambient_color, input.rain_factor);
+    return output;
+}
+
+// Exact water Fresnel factor and final blend from gbuffers_water.glsl.
+// normal_m and normalized_view_position must be in the same view space.
+// reflect_mult is the material's reflectMult produced by material handling.
+fn complementary_water_fresnel(
+    normal_m: vec3<f32>,
+    normalized_view_position: vec3<f32>
+) -> f32 {
+    let fresnel = clamp(1.0 + dot(normal_m, normalized_view_position), 0.0, 1.0);
+    let fresnel_m = fresnel * fresnel * fresnel;
+    return fresnel_m;
+}
+
+fn composite_water_reflection(
+    base_color: vec3<f32>,
+    reflection_color: vec3<f32>,
+    normal_m: vec3<f32>,
+    normalized_view_position: vec3<f32>,
+    reflect_mult: f32
+) -> vec3<f32> {
+    let fresnel = complementary_water_fresnel(normal_m, normalized_view_position);
+    let reflection_weight = (fresnel * 0.85 + 0.15) * reflect_mult;
+    return mix(base_color, reflection_color, reflection_weight);
+}
+
 // Independently authored WebGPU lighting primitives for the complementary
 // renderer path. Not a line-by-line translation of proprietary GLSL.
 // See docs/COMPLEMENTARY_ASSETS.md.
