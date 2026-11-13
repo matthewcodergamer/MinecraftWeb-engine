@@ -48,6 +48,9 @@ public final class Fiber {
     private static PendingCall lastPendingCall;
     private static int startCount;
     private static int resumeCount;
+    private static int suspendCount;
+    private static int asyncCompleteCount;
+    private static int asyncErrorCount;
 
     private Fiber(FiberRunner runner, boolean daemon) {
         this.runner = runner;
@@ -268,6 +271,11 @@ public final class Fiber {
             }
             return fiber.result;
         }
+        int suspendId = ++suspendCount;
+        if (suspendId <= 100) {
+            BrowserRuntime.report("trace", "fiber-suspend-enter");
+            BrowserRuntime.report("trace", call.getClass().getName());
+        }
         PendingCall pendingCall = new PendingCall(call, lastPendingCall);
         if (lastPendingCall != null) {
             lastPendingCall.next = pendingCall;
@@ -277,6 +285,9 @@ public final class Fiber {
         fiber.state = STATE_SUSPENDING;
         pendingCall.callback = new AsyncCallbackImpl(pendingCall, javaThread, fiber);
         call.run(pendingCall.callback);
+        if (suspendId <= 100) {
+            BrowserRuntime.report("trace", "fiber-suspend-call-return");
+        }
         return null;
     }
 
@@ -293,6 +304,10 @@ public final class Fiber {
 
         @Override
         public void complete(Object result) {
+            int callbackId = ++asyncCompleteCount;
+            if (callbackId <= 100) {
+                BrowserRuntime.report("trace", "fiber-async-callback-complete");
+            }
             if (Fiber.current == this.fiber) {
                 fiber.result = result;
                 fiber.isPendingResume = true;
@@ -310,6 +325,12 @@ public final class Fiber {
 
         @Override
         public void error(Throwable e) {
+            int callbackId = ++asyncErrorCount;
+            if (callbackId <= 100) {
+                BrowserRuntime.report("error", "fiber-async-callback-error");
+                BrowserRuntime.report("error", e.getClass().getName());
+                if (e.getMessage() != null) BrowserRuntime.report("error", e.getMessage());
+            }
             if (Fiber.current == this.fiber) {
                 fiber.exception = e;
                 fiber.isPendingResume = true;
