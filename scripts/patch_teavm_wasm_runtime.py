@@ -34,6 +34,18 @@ source = apply_once(
     "createWeakRef(e,t,n){try{if(n!==null){r.register(e,{ref:t,queue:n})}return new WeakRef(e)}catch(o){return {deref:()=>e}}}",
 )
 
+# Trace the Wasm-GC event-queue bridge. This is deliberately diagnostic: the
+# browser remains responsive while Java Fibers are suspended, but the latest
+# smoke run shows no AsyncCallback completion. Log timer delays and callback
+# delivery so the next browser run distinguishes a bad deadline from a lost
+# function-reference callback.
+source = apply_once(
+    source,
+    "Wasm-GC async event queue tracing",
+    "offer(e,t,n){const r=Math.max(0,n-Date.now());return setTimeout(()=>{t(e)},r)}",
+    "offer(e,t,n){const r=Math.max(0,n-Date.now());const q=window.__mcAsyncQueue||(window.__mcAsyncQueue={scheduled:0,fired:0,failed:0});const id=++q.scheduled;if(id<=200)console.log('[TEAVM_ASYNC] schedule id='+id+' delay_ms='+r+' target='+n+' now='+Date.now());return setTimeout(()=>{q.fired++;if(id<=200)console.log('[TEAVM_ASYNC] fire id='+id);try{t(e)}catch(error){q.failed++;console.error('[TEAVM_ASYNC] callback-error id='+id,error);throw error}},r)}",
+)
+
 # TeaVM also emits a string-specific weak-reference helper. It needs the same
 # fallback because Wasm-GC references can fail the host WeakRef target check.
 source = apply_once(
