@@ -1,4 +1,4 @@
-name: Validate Complementary WGSL
+name: Validate Complementary and Sky WGSL
 
 on:
   workflow_dispatch:
@@ -7,6 +7,7 @@ on:
       - feat/client-headless-webgpu-boot
     paths:
       - "renderer/src/shaders/complementary/**/*.wgsl"
+      - "renderer/src/sky.wgsl"
       - ".github/workflows/validate-complementary-wgsl.yml"
 
 permissions:
@@ -24,5 +25,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Install Naga CLI
         run: cargo install naga-cli --locked
-      - name: Validate Complementary WGSL
+      - name: Validate Complementary lighting and reflection WGSL
         run: naga renderer/src/shaders/complementary/lighting.wgsl
+      - name: Validate procedural sky, sun, moon and stars WGSL
+        run: naga renderer/src/sky.wgsl
