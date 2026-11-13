@@ -289,10 +289,12 @@ public class TCompletableFuture<T> implements Future<T>, CompletionStage<T> {
     public T join() {
         Object r;
         boolean interrupted = false;
-        while (true) {
+        while ((r = snapshot()) == null) {
             try {
-                r = waitFor();
-                break;
+                // Object.wait() currently strands a Wasm-GC fiber when another
+                // fiber completes this future. Thread.sleep uses the working
+                // async timer/resume path and does not hold this future's monitor.
+                Thread.sleep(1);
             } catch (InterruptedException e) {
                 interrupted = true;
             }
