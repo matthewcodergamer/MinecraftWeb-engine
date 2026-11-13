@@ -20,6 +20,10 @@ public final class BrowserRuntime {
             + "if (window.__mcLog) window.__mcLog('REPORT', k + ' = ' + v);")
     public static native void report(String key, String value);
 
+    /** Captures tab visibility and focus at the exact Java fiber suspension point. */
+    @JSBody(script = "return 'visibilityState=' + document.visibilityState + ' hasFocus=' + document.hasFocus();")
+    public static native String suspendDocumentState();
+
     public static String describe(Throwable t) {
         StringBuilder sb = new StringBuilder();
         Throwable cur = t;
