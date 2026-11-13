@@ -49,7 +49,7 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// Full day/night cycle used by the renderer-only sky. Vanilla is 20 minutes;
 /// a shorter cycle makes the feature visible while testing on a phone.
 const DAY_SECONDS: f32 = 600.0;
-const UNIFORM_SIZE: u64 = 240;
+const UNIFORM_SIZE: u64 = 256;
 
 /// Default view distance in chunks. The Java brain streams sections; this caps
 /// how far the Body will *draw* them, which is the memory/bandwidth lever on
@@ -62,6 +62,9 @@ static RENDER_DISTANCE: AtomicU32 = AtomicU32::new(DEFAULT_RENDER_DISTANCE);
 /// debugging (`?post=0`). The scene is rendered to an offscreen Rgba8 target
 /// and the fullscreen pass in `post.wgsl` grades it onto the swap chain.
 static POST_ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// A/B switch for the live terrain lighting path; vanilla remains the default.
+static COMPLEMENTARY_ENABLED: AtomicBool = AtomicBool::new(false);
 
 thread_local! {
     /// Optional external time override (0 = sunrise, 0.25 = noon). Java can
@@ -90,6 +93,17 @@ pub fn set_post_enabled(on: bool) {
 #[wasm_bindgen]
 pub fn post_enabled() -> bool {
     POST_ENABLED.load(Ordering::Relaxed)
+}
+
+/// Enable or disable the Complementary-inspired live terrain lightmap.
+#[wasm_bindgen]
+pub fn set_complementary_enabled(on: bool) {
+    COMPLEMENTARY_ENABLED.store(on, Ordering::Relaxed);
+}
+
+#[wasm_bindgen]
+pub fn complementary_enabled() -> bool {
+    COMPLEMENTARY_ENABLED.load(Ordering::Relaxed)
 }
 
 /// Chunk (16 m) view distance. Clamped so a bad host value cannot turn the
@@ -315,6 +329,18 @@ impl Renderer {
         write4(
             14,
             [sky.sun_color[0], sky.sun_color[1], sky.sun_color[2], 1.0],
+        );
+        // Noon factor peaks at solar noon and fades to zero at sunrise/sunset.
+        let noon_factor = smoothstep(0.0, 1.0, sky.sun_dir[1].max(0.0));
+        let inv_noon_factor = 1.0 - noon_factor;
+        write4(
+            15,
+            [
+                noon_factor,
+                inv_noon_factor,
+                if COMPLEMENTARY_ENABLED.load(Ordering::Relaxed) { 1.0 } else { 0.0 },
+                0.0,
+            ],
         );
         self.queue.write_buffer(&self.uniform_buffer, 0, &uniform);
         self.horizon = sky.horizon;
