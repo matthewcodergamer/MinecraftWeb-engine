@@ -4,6 +4,56 @@
 // its source files were not retained, so byte-for-byte r5.9.3 equivalence has
 // not yet been independently verified.
 
+// Exact r5.9 Overworld blocklight palette from blocklightColors.glsl.
+// XLIGHT_* are configuration multipliers supplied by the pack; these
+// defaults represent neutral (1.0) settings.
+const BLOCKLIGHT_BASE: vec3<f32> = vec3<f32>(0.1775, 0.104, 0.077);
+const FIRE_LIGHT_COLOR: vec3<f32> = vec3<f32>(2.25, 0.83, 0.27) * 3.7;
+const LAVA_LIGHT_COLOR: vec3<f32> = vec3<f32>(3.25, 0.9, 0.2) * 3.9;
+const PORTAL_PINK_COLOR: vec3<f32> = vec3<f32>(1.8, 0.4, 2.2) * 0.8;
+
+fn complementary_blocklight_base(xlight: vec3<f32>) -> vec3<f32> {
+    return BLOCKLIGHT_BASE * xlight;
+}
+
+// Faithful AddSpecialLightDetail() port. This is deliberately not a plain
+// additive portal overlay: upstream normalizes by luminance, attenuates by
+// emission, scales the detail, darkens the original light, then adds the
+// albedo-modulated squared detail term.
+fn complementary_add_special_light_detail(
+    light: vec3<f32>, albedo: vec3<f32>, emission: f32
+) -> vec3<f32> {
+    var light_m = max(light, vec3<f32>(0.0));
+    let luminance = dot(light_m, vec3<f32>(0.2126, 0.7152, 0.0722));
+    light_m /= 0.2 + 0.8 * luminance;
+    light_m *= (1.0 / (1.0 + emission)) * 0.22;
+    return light * 0.9 + pow(light_m / (albedo + vec3<f32>(0.1)), vec3<f32>(2.0));
+}
+
+// Nether Portal material (mat == 25) uses 2x the portal color and emission
+// alpha 0.4 in GetSpecialBlocklightColor(). Crying Obsidian uses base color.
+fn complementary_portal_special_light() -> vec4<f32> {
+    return vec4<f32>(PORTAL_PINK_COLOR * 2.0, 0.4);
+}
+
+fn complementary_blend_special_blocklight(
+    base_light: vec3<f32>, portal_light: vec3<f32>, portal_intensity: f32,
+    albedo: vec3<f32>, emission: f32
+) -> vec3<f32> {
+    return complementary_add_special_light_detail(
+        base_light + portal_light * portal_intensity, albedo, emission
+    );
+}
+
+// Exact Overworld ground/cloud daylight vectors and noon interpolation from
+// lightAndAmbientColors.glsl (COMPOSITE1 is intentionally not selected here).
+fn get_complementary_daylight(inv_noon_factor: f32, noon_factor: f32) -> vec3<f32> {
+    let noon_light = vec3<f32>(0.65, 0.55, 0.375) * 2.05;
+    let sunset_light = pow(vec3<f32>(0.64, 0.45, 0.3),
+                           vec3<f32>(1.5 + inv_noon_factor)) * 5.0;
+    return mix(sunset_light, noon_light, noon_factor);
+}
+
 // Source-driven Complementary Reimagined formula ports.
 // Reference files:
 // shaders/program/gbuffers_water.glsl
@@ -61,8 +111,11 @@ fn complementary_light_and_ambient_colors(
     let noon_factor_dm = select(input.noon_factor,
                                 input.noon_factor * input.noon_factor,
                                 input.composite1 != 0u);
-    let day_light_color = mix(sunset_clear_light_color,
-                              noon_clear_light_color, noon_factor_dm);
+    // Keep the exact ground/cloud daylight helper explicit and reuse it in
+    // the evaluator; COMPOSITE1 uses its distinct light-shaft vectors above.
+    let day_light_color = get_complementary_daylight(
+        input.inv_noon_factor, noon_factor_dm
+    );
     let day_ambient_color = mix(sunset_clear_ambient_color,
                                 noon_clear_ambient_color, noon_factor_dm);
 
