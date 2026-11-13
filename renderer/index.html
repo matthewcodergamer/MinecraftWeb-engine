@@ -43,6 +43,28 @@
       mix-blend-mode: difference;
     }
     @media (pointer: coarse) { #crosshair { opacity: .55; } }
+    #shader-menu-button {
+      position: fixed; top: 12px; right: 12px; z-index: 20; padding: 9px 13px;
+      color: #fff; background: #343434; border: 2px solid #111; border-radius: 3px;
+      box-shadow: inset 0 0 0 1px #777, 0 2px 5px #0008;
+      font: 13px system-ui, sans-serif; cursor: pointer;
+    }
+    #shader-menu {
+      position: fixed; z-index: 21; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      width: min(390px, calc(100vw - 32px)); padding: 18px; box-sizing: border-box;
+      color: #eee; background: #292929; border: 2px solid #111;
+      box-shadow: inset 0 0 0 1px #777, 0 12px 40px #000b;
+      font: 14px/1.45 system-ui, sans-serif;
+    }
+    #shader-menu[hidden] { display: none; }
+    #shader-menu h2 { margin: 0 0 5px; font-size: 18px; font-weight: 600; }
+    #shader-menu p { margin: 0 0 15px; color: #bbb; font-size: 12px; }
+    #shader-menu label { display: flex; align-items: center; gap: 10px; padding: 12px;
+      background: #1c1c1c; border: 1px solid #555; cursor: pointer; }
+    #shader-menu input { width: 18px; height: 18px; accent-color: #79b7ff; }
+    #shader-menu .menu-actions { display: flex; justify-content: flex-end; margin-top: 15px; }
+    #shader-menu button { padding: 7px 18px; color: white; background: #505050;
+      border: 1px solid #888; border-radius: 2px; cursor: pointer; }
   </style>
 </head>
 <body>
@@ -51,14 +73,47 @@
   <div id="status">starting mc-body…</div>
   <div id="stats"></div>
   <div id="hint">WASD move · mouse look · Space jump · Ctrl sprint · F fly — tap to capture mouse</div>
+  <button id="shader-menu-button" type="button" aria-haspopup="dialog" aria-controls="shader-menu">Video Settings</button>
+  <section id="shader-menu" role="dialog" aria-modal="true" aria-labelledby="shader-menu-title" hidden>
+    <h2 id="shader-menu-title">Shaders</h2>
+    <p>Choose the active lighting renderer. Vanilla is enabled by default.</p>
+    <label for="complementary-toggle">
+      <input id="complementary-toggle" type="checkbox">
+      <span>Complementary Shaders</span>
+    </label>
+    <div class="menu-actions"><button id="shader-menu-done" type="button">Done</button></div>
+  </section>
 
   <!-- Harness only: loads the wasm module, hands the client jar's own block PNGs
        to Rust, then hands control to Rust. There is no rendering logic here. -->
   <script type="module">
-    import init, { run, texture_count, texture_name, upload_texture } from "./pkg/mc_body.js";
+    import init, { run, texture_count, texture_name, upload_texture, set_complementary_enabled, complementary_enabled } from "./pkg/mc_body.js";
 
     const status = document.getElementById('status');
     const hint = document.getElementById('hint');
+    const shaderMenu = document.getElementById('shader-menu');
+    const shaderMenuButton = document.getElementById('shader-menu-button');
+    const shaderMenuDone = document.getElementById('shader-menu-done');
+    const complementaryToggle = document.getElementById('complementary-toggle');
+
+    function closeShaderMenu() {
+      shaderMenu.hidden = true;
+      shaderMenuButton.focus();
+    }
+    shaderMenuButton.addEventListener('click', () => {
+      shaderMenu.hidden = !shaderMenu.hidden;
+      if (!shaderMenu.hidden) complementaryToggle.focus();
+    });
+    shaderMenuDone.addEventListener('click', closeShaderMenu);
+    complementaryToggle.addEventListener('change', () => {
+      set_complementary_enabled(complementaryToggle.checked);
+    });
+    window.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !shaderMenu.hidden) {
+        event.preventDefault();
+        closeShaderMenu();
+      }
+    });
     const fail = (error) => {
       status.textContent = String(error && error.stack || error);
       status.style.color = '#f88';
@@ -90,6 +145,7 @@
     (async () => {
       try {
         await init();
+        complementaryToggle.checked = complementary_enabled();
         status.textContent = 'loading block textures…';
         const archive = await loadArchive();
         let uploaded = 0;
