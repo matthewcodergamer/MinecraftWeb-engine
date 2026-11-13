@@ -234,58 +234,149 @@ fn evaluate_lighting(input: ComplementaryLightInputs) -> ComplementaryLightColor
 struct SsrResult {
     color: vec3<f32>,
     confidence: f32,
+    hit_uv: vec2<f32>,
+    hit_distance: f32,
 };
 
-// View-space ray march; requires a scene depth prepass and matching matrices.
-fn screen_space_reflection(
+// Port of the core screen-space ray-march/refinement and edge-confidence path
+// in Complementary reflections.glsl::GetReflection(). Engine-specific
+// WSR, DH/Voxy depth overrides, DoFog(), mirrored fallback and reprojection
+// are intentionally outside this Overworld screen-space variant.
+//
+// Matrices must be the WebGPU-adjusted equivalents of gbufferProjection and
+// gbufferProjectionInverse. Depth is WebGPU [0,1]; scene_depth is point-loaded
+// to avoid implicit-derivative sampling in the non-uniform march loop.
+fn complementary_get_reflection_ssr(
     view_position: vec3<f32>,
-    view_normal: vec3<f32>,
-    screen_uv: vec2<f32>
+    normal_m: vec3<f32>,
+    normalized_view_position: vec3<f32>,
+    player_view_length: f32,
+    screen_uv: vec2<f32>,
+    fresnel: f32,
+    dither: f32,
+    smoothness: f32,
+    z0: f32,
+    water_style: u32
 ) -> SsrResult {
     var result: SsrResult;
     result.color = vec3<f32>(0.0);
     result.confidence = 0.0;
-    if (screen_uv.x <= 0.0 || screen_uv.x >= 1.0 ||
-        screen_uv.y <= 0.0 || screen_uv.y >= 1.0) {
-        return result;
+    result.hit_uv = screen_uv;
+    result.hit_distance = frame.ssr_parameters.x;
+
+    // GetReflection Step 1: prepare reflected direction and start point.
+    let r_edge = vec2<f32>(0.525, 0.525);
+    var normal_mr = normalize(normal_m);
+    let reflected_direction = normalize(reflect(normalized_view_position, normal_mr));
+    let start = view_position + normal_mr *
+        (player_view_length * 0.025 * (1.0 - fresnel) + 0.05);
+
+    // WATER_STYLE >= 2 uses a second normal blend before calculating the ray.
+    // The caller supplies the already material-adjusted normal for that mode.
+    var ray_direction = reflected_direction * 0.5;
+    if (water_style >= 2u) {
+        ray_direction = normalize(reflect(normalized_view_position, normal_mr)) * 0.5;
     }
+    let base_step = ray_direction;
+    var ray_position = view_position + ray_direction;
+    var step_vector = ray_direction;
 
-    let incident = normalize(view_position);
-    let ray_direction = normalize(reflect(incident, normalize(view_normal)));
-    let max_distance = max(frame.ssr_parameters.x, 0.1);
-    let step_length = max(frame.ssr_parameters.y, 0.025);
-    let thickness = max(frame.ssr_parameters.z, 0.01);
-    let steps = u32(clamp(ceil(max_distance / step_length), 1.0, 96.0));
-    var distance_along_ray = step_length;
+    // Standard internal screen-space mode uses 38 samples and 10 refinements.
+    // The legacy -1 mode uses 30/6; select it by setting ssr_parameters.w < 0.
+    let legacy_mode = frame.ssr_parameters.w < 0.0;
+    let sample_count = select(38u, 30u, legacy_mode);
+    let refinement_count = select(10u, 6u, legacy_mode);
+    let edge = select(vec2<f32>(0.525, 0.525), vec2<f32>(0.6, 0.55), legacy_mode);
 
-    for (var i = 0u; i < steps; i = i + 1u) {
-        let ray_position = view_position + ray_direction * distance_along_ray;
+    var refinement = 0u;
+    var distance_to_hit = 0.0;
+    var error_distance = 9999999.0;
+    var hit_view_position = vec3<f32>(0.0);
+    var hit_uvz = vec3<f32>(0.0, 0.0, 1.0);
+    var sampled_depth = 1.0;
+
+    for (var i = 0u; i < 38u; i = i + 1u) {
+        if (i >= sample_count) { break; }
         let clip = frame.projection * vec4<f32>(ray_position, 1.0);
         if (clip.w <= 0.0) { break; }
         let ndc = clip.xyz / clip.w;
         let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
-        if (uv.x <= 0.001 || uv.x >= 0.999 || uv.y <= 0.001 ||
-            uv.y >= 0.999 || ndc.z <= 0.0 || ndc.z >= 1.0) {
+        if (abs(uv.x - 0.5) > edge.x || abs(uv.y - 0.5) > edge.y) {
             break;
         }
-        let depth_size = textureDimensions(scene_depth);
-        let pixel = clamp(vec2<i32>(uv * vec2<f32>(depth_size)),
-                          vec2<i32>(0), vec2<i32>(depth_size) - vec2<i32>(1));
-        let sampled_depth = textureLoad(scene_depth, pixel, 0).x;
-        let scene_position = reconstruct_view_position(uv, sampled_depth);
-        let separation = ray_position.z - scene_position.z;
-        // View space looks down -Z; negative separation means ray passed behind
-        // the visible surface. Thickness rejects most false positives.
-        if (separation < 0.0 && abs(separation) <= thickness) {
-            result.color = textureSampleLevel(scene_color, scene_sampler, uv, 0.0).rgb;
-            let edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
-            let edge_fade = smoothstep(0.0, 0.08, edge);
-            let distance_fade = 1.0 - clamp(distance_along_ray / max_distance, 0.0, 1.0);
-            result.confidence = edge_fade * distance_fade * frame.ssr_parameters.w;
-            break;
+
+        let dimensions = textureDimensions(scene_depth);
+        let pixel = clamp(vec2<i32>(uv * vec2<f32>(dimensions)),
+                          vec2<i32>(0), vec2<i32>(dimensions) - vec2<i32>(1));
+        sampled_depth = textureLoad(scene_depth, pixel, 0).x;
+        hit_view_position = reconstruct_view_position(uv, sampled_depth);
+        distance_to_hit = length(start - hit_view_position);
+        error_distance = length(ray_position - hit_view_position);
+
+        if (error_distance * 0.33333 < length(ray_direction)) {
+            refinement += 1u;
+            if (refinement >= refinement_count) {
+                hit_uvz = vec3<f32>(uv, sampled_depth);
+                break;
+            }
+            step_vector -= ray_direction;
+            ray_direction *= 0.1;
         }
-        distance_along_ray += step_length;
-        if (distance_along_ray > max_distance) { break; }
+
+        ray_direction *= 2.0;
+        step_vector += ray_direction * (0.95 + 0.1 * dither);
+        ray_position = start + step_vector;
+        hit_uvz = vec3<f32>(uv, sampled_depth);
     }
+
+    let hit_view_length = length(hit_view_position);
+    let depth_is_geometry = hit_uvz.z < 1.0;
+    // The source uses a geometry-facing test in gbuffers; in this reusable
+    // function we conservatively require a valid depth hit. Caller may add
+    // the original ScreenToView()/geoNormal test for gbuffers_water.
+    let possible_reflection = depth_is_geometry;
+
+    if (possible_reflection &&
+        error_distance * (1.0 - fresnel) < 1.0 + hit_view_length * 0.2) {
+        let abs_position = abs(hit_uvz.xy - vec2<f32>(0.5));
+        let cdist = abs_position / edge;
+        let border = clamp(1.0 - pow(max(cdist.x, cdist.y), 50.0), 0.0, 1.0);
+        result.confidence = border;
+
+        if (result.confidence > 0.001) {
+            var sample_uv = hit_uvz.xy;
+            let edge_factor0 = cdist * cdist;
+            let edge_factor1 = edge_factor0 * edge_factor0;
+            let edge_factor = edge_factor1 * edge_factor1;
+            if (legacy_mode) {
+                sample_uv.y += (dither - 0.5) *
+                    (0.05 * (edge_factor.x + edge_factor.y));
+            }
+
+            // Explicit LOD is required here: this sample occurs after
+            // non-uniform ray-march control flow. Smoothness/roughness LOD
+            // follows the source's exponential distance response.
+            let smoothness_dm = smoothness * smoothness;
+            let lod_factor = 1.0 - exp(-0.125 * (1.0 - smoothness_dm) * distance_to_hit);
+            var lod = log2(max(frame.viewport.y / 8.0 *
+                (1.0 - smoothness_dm) * lod_factor, 0.0001)) * 0.45;
+            if (z0 <= 0.56) { lod *= 2.22; }
+            lod = max(lod - 1.0, 0.0);
+            result.color = textureSampleLevel(scene_color, scene_sampler, sample_uv, lod).rgb;
+
+            var edge_fade = edge_factor;
+            edge_fade.x *= edge_fade.x;
+            edge_fade = vec2<f32>(1.0) - edge_fade;
+            let luminance = dot(result.color, vec3<f32>(0.2126, 0.7152, 0.0722));
+            let ref_factor = pow(max(edge_fade.x * edge_fade.y, 0.0),
+                                 2.0 + 3.0 * luminance);
+            result.confidence *= ref_factor;
+            let position_difference = hit_view_length - player_view_length;
+            result.confidence *= clamp(position_difference + 3.0, 0.0, 1.0);
+            result.hit_uv = sample_uv;
+            result.hit_distance = distance_to_hit;
+        }
+    }
+
     return result;
 }
