@@ -17,6 +17,8 @@ struct Camera {
     sky_zenith: vec4<f32>,
     sky_horizon: vec4<f32>,
     sun_color: vec4<f32>,
+    // x = noon factor, y = inverse noon factor, z = Complementary toggle, w reserved for portal intensity.
+    complementary: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -63,16 +65,39 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     return output;
 }
 
-// Vanilla lightmap curve: pow(0.8, 15 - level), then a warm shift at low
-// levels. Sky light is scaled by the time-of-day intensity; block light stays
-// full at night.
-fn lightmap(sky: f32, block: f32) -> vec3<f32> {
+// Vanilla lightmap retained as the A/B fallback.
+fn vanilla_lightmap(sky: f32, block: f32) -> vec3<f32> {
     let level = max(block, sky * camera.params.w);
-    // A floor of 0.12 keeps caves readable without flattening the contrast.
     let l = clamp(max(level, 0.12), 0.0, 1.0);
     let brightness = pow(0.8, 15.0 - l * 15.0);
     let warm = mix(vec3<f32>(1.0, 0.82, 0.62), vec3<f32>(1.0), l);
     return warm * brightness;
+}
+
+// Complementary Reimagined Overworld daylight and blocklight palette.
+const COMPLEMENTARY_BLOCKLIGHT_BASE: vec3<f32> = vec3<f32>(0.1775, 0.104, 0.077);
+
+fn complementary_daylight(inv_noon_factor: f32, noon_factor: f32) -> vec3<f32> {
+    let noon_light = vec3<f32>(0.65, 0.55, 0.375) * 2.05;
+    let sunset_light = pow(vec3<f32>(0.64, 0.45, 0.3),
+                           vec3<f32>(1.5 + inv_noon_factor)) * 5.0;
+    return mix(sunset_light, noon_light, noon_factor);
+}
+
+fn complementary_lightmap(sky: f32, block: f32) -> vec3<f32> {
+    let daylight = complementary_daylight(camera.complementary.y,
+                                          camera.complementary.x);
+    let sky_light = daylight * sky * camera.params.w;
+    let block_level = clamp(block, 0.0, 1.0);
+    let block_light = COMPLEMENTARY_BLOCKLIGHT_BASE * block_level * 15.0;
+    return max(sky_light, block_light);
+}
+
+fn lightmap(sky: f32, block: f32) -> vec3<f32> {
+    if (camera.complementary.z > 0.5) {
+        return complementary_lightmap(sky, block);
+    }
+    return vanilla_lightmap(sky, block);
 }
 
 @fragment
