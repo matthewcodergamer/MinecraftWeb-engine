@@ -9,6 +9,7 @@ import net.minecraft.SharedConstants;
 import net.minecraft.util.datafix.DataFixTypes;
 import net.minecraft.util.datafix.DataFixers;
 import org.teavm.runtime.Fiber;
+import org.teavm.classlib.java.util.concurrent.TCompletableFuture;
 
 /**
  * Isolates the browser client's boot deadlock, one primitive at a time.
@@ -35,6 +36,7 @@ public final class Probe {
 
             testMainSleep();
             testThreadJoin();
+            testDirectCompletableFutureJoin();
             testExecutorJoin();
             testExecutorSleepJoin();
             testSynchronizedContention();
@@ -77,6 +79,17 @@ public final class Probe {
             BrowserRuntime.report("error", "t2-interrupted");
         }
         BrowserRuntime.report("stage", "probe-t2-join-ok");
+    }
+
+    /** Diagnostic: call the TeaVM TCompletableFuture overlay directly before testing the JDK API mapping. */
+    private static void testDirectCompletableFutureJoin() {
+        BrowserRuntime.report("stage", "probe-t3-direct-enter");
+        TCompletableFuture<Integer> future = new TCompletableFuture<>();
+        Thread worker = new Thread(() -> future.complete(42), "probe-t3-direct-worker");
+        worker.setDaemon(true);
+        worker.start();
+        int value = future.join();
+        BrowserRuntime.report("stage", "probe-t3-direct-join-ok " + value);
     }
 
     /** T3: the exact pool used by DataFixers.optimize, with a task that never blocks. */
