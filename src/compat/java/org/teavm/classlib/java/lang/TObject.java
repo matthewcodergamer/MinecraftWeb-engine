@@ -38,35 +38,10 @@ import org.teavm.runtime.RuntimeArray;
 import org.teavm.runtime.RuntimeClass;
 import org.teavm.runtime.RuntimeObject;
 import org.teavm.runtime.reflect.ClassInfo;
-import mcport.rt.BrowserRuntime;
 
 @Superclass("")
 public class TObject {
     Monitor monitor;
-
-    /**
-     * Emits one browser trace line per interesting monitor event. The boot deadlock is a
-     * lost monitor handoff, so the object identity, current owner and waiter count are the
-     * only facts needed to see which lock never gets released.
-     */
-    private static void traceMonitor(String event, TObject o, TThread owner, int waiters) {
-        // Emit an unconditional marker before collecting optional diagnostic details.
-        // The previous all-in-one try/catch could silently swallow a failure while
-        // formatting the owner/object identity, making it impossible to tell whether
-        // the monitor hook itself was reached.
-        BrowserRuntime.report("monitor", "ENTER event=" + event);
-        try {
-            String objectId = Integer.toHexString(o.identity());
-            String ownerName = owner != null ? owner.getName() : "none";
-            String currentName = TThread.currentThread() != null
-                    ? TThread.currentThread().getName() : "none";
-            BrowserRuntime.report("monitor", event + " obj=" + objectId
-                    + " owner=" + ownerName + " me=" + currentName
-                    + " waiters=" + waiters + " count=" + (o.monitor != null ? o.monitor.count : -1));
-        } catch (Throwable ignored) {
-            BrowserRuntime.report("monitor", "DETAIL_ERROR event=" + event);
-        }
-    }
 
     static class Monitor {
         static final int MASK = 0x80000000;
@@ -170,7 +145,6 @@ public class TObject {
         if (monitor.enteringThreads == null) {
             monitor.enteringThreads = new ArrayDeque<>();
         }
-        traceMonitor("WAIT", o, monitor.owner, monitor.enteringThreads.size());
         monitor.enteringThreads.add(() -> {
             TThread.setCurrentThread(thread);
             o.monitor.owner = thread;
@@ -196,7 +170,6 @@ public class TObject {
 
         monitor.owner = null;
         if (monitor.enteringThreads != null && !monitor.enteringThreads.isEmpty()) {
-            traceMonitor("RELEASE", o, null, monitor.enteringThreads.size());
             if (PlatformDetector.isLowLevel() || PlatformDetector.isWebAssemblyGC()) {
                 EventQueue.offer(() -> waitForOtherThreads(o));
             } else {
@@ -213,7 +186,6 @@ public class TObject {
         }
         Monitor monitor = o.monitor;
         if (monitor.enteringThreads != null && !monitor.enteringThreads.isEmpty()) {
-            traceMonitor("HANDOFF", o, monitor.owner, monitor.enteringThreads.size());
             var enteringThreads = monitor.enteringThreads;
             PlatformRunnable r = enteringThreads.remove();
             monitor.enteringThreads = null;
@@ -493,7 +465,6 @@ public class TObject {
 
     final void waitImpl(long timeout, int nanos, AsyncCallback<Void> callback) {
         Monitor monitor = this.monitor;
-        traceMonitor("WAIT_OBJ", this, monitor.owner, monitor.count);
         var listener = new NotifyListenerImpl(this, callback, monitor.count);
         if (monitor.notifyListeners == null) {
             monitor.notifyListeners = new ArrayDeque<>();
@@ -564,7 +535,6 @@ public class TObject {
                 timerId = -1;
             }
             TThread.setCurrentThread(currentThread);
-            traceMonitor("WAKE", obj, obj.monitor != null ? obj.monitor.owner : null, lockCount);
             monitorEnterWait(obj, lockCount, callback);
         }
 
