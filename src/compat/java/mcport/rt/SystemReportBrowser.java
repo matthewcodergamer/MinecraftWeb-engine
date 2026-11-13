@@ -55,4 +55,39 @@ public final class SystemReportBrowser {
 
     @JSBody(script = "return navigator.userAgent;")
     private static native String userAgent();
+    /**
+     * Minimal crash-safe replacement for Minecraft.fillSystemReport.
+     *
+     * The original method registers several lazy diagnostic lambdas. During early browser
+     * startup those lambdas can capture unavailable platform/render state and can themselves
+     * fail while Minecraft is trying to report the original startup error. Keep this report
+     * deliberately eager and string-only so report generation cannot invoke those lambdas.
+     */
+    public static SystemReport fillMinecraft(
+            SystemReport report,
+            net.minecraft.client.Minecraft minecraft,
+            net.minecraft.client.resources.language.LanguageManager languageManager,
+            String launchedVersion,
+            net.minecraft.client.Options options) {
+        if (report == null) {
+            report = new SystemReport();
+        }
+
+        report.setDetail("Launched Version", launchedVersion != null ? launchedVersion : "<unknown>");
+        report.setDetail("Platform", "Browser");
+        report.setDetail("Runtime", "TeaVM / WebAssembly");
+        report.setDetail("CPU", "Browser runtime");
+        report.setDetail("Memory", "Browser-managed");
+        report.setDetail("Backend library", "WebGPU / browser");
+        report.setDetail("Window size", "<not initialized>");
+        report.setDetail("Surface Info", "<not initialized>");
+        report.setDetail("Graphics Device", "<not initialized>");
+        report.setDetail("Graphics Backend", "WebGPU");
+        report.setDetail("Type", "Client");
+        report.setDetail("Locale", String.valueOf(java.util.Locale.getDefault()));
+        report.setDetail("System encoding", "<browser-managed>");
+        report.setDetail("File encoding", "<browser-managed>");
+        return report;
+    }
+
 }
