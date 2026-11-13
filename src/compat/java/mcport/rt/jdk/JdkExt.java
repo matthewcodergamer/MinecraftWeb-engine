@@ -143,8 +143,12 @@ public final class JdkExt {
         // constructor to throw "TypeToken must be created with a type argument".
         // This is deliberately limited to Gson TypeToken subclasses; ordinary reflection
         // keeps the original superclass result.
-        if (superclass != null && "com.google.gson.reflect.TypeToken".equals(superclass.getName())) {
-            return new SimpleParameterizedType(superclass, Object.class);
+        if (com.google.gson.reflect.TypeToken.class.isAssignableFrom(cls)) {
+            // Gson may construct TypeToken through an intermediate anonymous/helper subclass.
+            // TeaVM drops Signature attributes, so checking only the immediate superclass
+            // misses those subclasses and Gson throws "TypeToken must be created with a type argument".
+            // Synthesize a valid parameterized token for every Gson TypeToken descendant.
+            return new SimpleParameterizedType(com.google.gson.reflect.TypeToken.class, Object.class);
         }
         return superclass;
     }
