@@ -185,14 +185,10 @@ public class TThreadPoolExecutor extends AbstractExecutorService {
     }
 
     public int getPoolSize() {
-        synchronized (lock) {
-            return workers;
-        }
+        return workers;
     }
 
     public int getActiveCount() {
-        synchronized (lock) {
-            return workers - idle;
-        }
+        return workers - idle;
     }
 }
