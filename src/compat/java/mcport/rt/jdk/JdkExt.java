@@ -138,6 +138,14 @@ public final class JdkExt {
                 return new SimpleParameterizedType(superclass, enclosing);
             }
         }
+        // Gson's TypeToken subclasses also rely on Signature metadata. TeaVM does not
+        // retain that metadata, so return a safe Object token instead of allowing Gson's
+        // constructor to throw "TypeToken must be created with a type argument".
+        // This is deliberately limited to Gson TypeToken subclasses; ordinary reflection
+        // keeps the original superclass result.
+        if (superclass != null && "com.google.gson.reflect.TypeToken".equals(superclass.getName())) {
+            return new SimpleParameterizedType(superclass, Object.class);
+        }
         return superclass;
     }
 
