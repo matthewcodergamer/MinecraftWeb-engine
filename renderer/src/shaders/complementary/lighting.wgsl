@@ -23,6 +23,7 @@ struct ComplementaryLightInputs {
     rain_shadow_visibility_reduce: f32,
     // true for COMPOSITE1's light-shaft variant; false for ground/cloud.
     composite1: u32,
+    deferred1: u32,
 };
 
 struct ComplementaryLightColors {
@@ -35,11 +36,19 @@ fn complementary_light_and_ambient_colors(
     input: ComplementaryLightInputs
 ) -> ComplementaryLightColors {
     // lightAndAmbientColors.glsl: noon/sunset clear colors.
-    let noon_clear_light_color = vec3<f32>(0.65, 0.55, 0.375) * 2.05;
+    let noon_clear_light_color = select(
+        vec3<f32>(0.65, 0.55, 0.375) * 2.05,
+        vec3<f32>(0.4, 0.75, 1.3),
+        input.composite1 != 0u
+    );
     let noon_clear_ambient_color = pow(input.sky_color, vec3<f32>(0.75)) * 0.85;
-    let sunset_clear_light_color =
+    let sunset_clear_light_color = select(
         pow(vec3<f32>(0.64, 0.45, 0.3),
-            vec3<f32>(1.5 + input.inv_noon_factor)) * 5.0;
+            vec3<f32>(1.5 + input.inv_noon_factor)) * 5.0,
+        pow(vec3<f32>(0.62, 0.39, 0.24),
+            vec3<f32>(1.5 + input.inv_noon_factor)) * 6.8,
+        input.composite1 != 0u
+    );
     let sunset_clear_ambient_color =
         noon_clear_ambient_color * vec3<f32>(1.21, 0.92, 0.76) * 0.95;
 
@@ -53,9 +62,16 @@ fn complementary_light_and_ambient_colors(
 
     // Night clear values and weather values are copied from the same
     // Overworld branch; preprocessor-selected biome/rain offsets are inputs.
-    let night_clear_light_color =
-        0.9 * vec3<f32>(0.15, 0.14, 0.20) *
-        (0.4 + input.vs_brightness * 0.4);
+    let night_clear_light_color = select(
+        select(
+            0.9 * vec3<f32>(0.15, 0.14, 0.20) *
+                (0.4 + input.vs_brightness * 0.4),
+            0.9 * vec3<f32>(0.11, 0.14, 0.20),
+            input.deferred1 != 0u
+        ),
+        vec3<f32>(0.08, 0.12, 0.23),
+        input.composite1 != 0u
+    );
     let night_clear_ambient_color =
         0.9 * vec3<f32>(0.09, 0.12, 0.17) *
         (1.55 + input.vs_brightness * 0.77);
