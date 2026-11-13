@@ -15,16 +15,15 @@ import java.util.concurrent.TimeUnit;
  * started on demand up to maximumPoolSize and retire after keepAlive when idle.
  */
 public class TThreadPoolExecutor extends AbstractExecutorService {
-    private final Object lock = new Object();
     private final ArrayDeque<Runnable> tasks = new ArrayDeque<>();
     private final BlockingQueue<Runnable> workQueue;
     private int corePoolSize;
     private int maximumPoolSize;
     private long keepAliveMillis;
     private ThreadFactory threadFactory;
-    private int workers;
-    private int idle;
-    private boolean shutdown;
+    private volatile int workers;
+    private volatile int idle;
+    private volatile boolean shutdown;
 
     public TThreadPoolExecutor(int corePoolSize, int maximumPoolSize, long keepAliveTime, TimeUnit unit,
             BlockingQueue<Runnable> workQueue) {
@@ -48,25 +47,15 @@ public class TThreadPoolExecutor extends AbstractExecutorService {
         if (command == null) {
             throw new NullPointerException();
         }
-        boolean spawn;
-        synchronized (lock) {
-            if (shutdown) {
-                throw new RejectedExecutionException("executor shut down");
-            }
-            tasks.addLast(command);
-            spawn = idle == 0 && workers < Math.max(1, maximumPoolSize);
-            if (spawn) {
-                workers++;
-            } else {
-                lock.notify();
-            }
+        if (shutdown) {
+            throw new RejectedExecutionException("executor shut down");
         }
-        if (spawn) {
+        tasks.addLast(command);
+        if (idle == 0 && workers < Math.max(1, maximumPoolSize)) {
+            workers++;
             Thread t = threadFactory.newThread(this::workerLoop);
             if (t == null) {
-                synchronized (lock) {
-                    workers--;
-                }
+                workers--;
                 throw new RejectedExecutionException("thread factory returned null");
             }
             t.start();
@@ -74,36 +63,32 @@ public class TThreadPoolExecutor extends AbstractExecutorService {
     }
 
     private void workerLoop() {
+        long deadline = System.currentTimeMillis() + keepAliveMillis;
         while (true) {
-            Runnable task;
-            synchronized (lock) {
-                long deadline = System.currentTimeMillis() + keepAliveMillis;
-                while (tasks.isEmpty()) {
-                    if (shutdown) {
-                        workers--;
-                        lock.notifyAll();
-                        return;
-                    }
-                    long left = deadline - System.currentTimeMillis();
-                    if (workers > corePoolSize && left <= 0) {
-                        workers--;
-                        return;
-                    }
-                    idle++;
-                    try {
-                        if (workers > corePoolSize) {
-                            lock.wait(Math.max(1, left));
-                        } else {
-                            lock.wait();
-                        }
-                    } catch (InterruptedException e) {
-                        // re-check state
-                    } finally {
-                        idle--;
-                    }
+            Runnable task = tasks.pollFirst();
+            while (task == null) {
+                if (shutdown) {
+                    workers--;
+                    return;
+                }
+                long left = deadline - System.currentTimeMillis();
+                if (workers > corePoolSize && left <= 0) {
+                    workers--;
+                    return;
+                }
+                idle++;
+                try {
+                    // Cooperative Wasm-GC fibers must yield through the event loop;
+                    // do not wait on the executor monitor from a worker fiber.
+                    Thread.sleep(workers > corePoolSize ? Math.max(1, Math.min(left, 10)) : 1);
+                } catch (InterruptedException e) {
+                    // Re-check shutdown and queued work after interruption.
+                } finally {
+                    idle--;
                 }
                 task = tasks.pollFirst();
             }
+
             Thread self = Thread.currentThread();
             beforeExecute(self, task);
             Throwable thrown = null;
@@ -135,51 +120,41 @@ public class TThreadPoolExecutor extends AbstractExecutorService {
 
     @Override
     public void shutdown() {
-        synchronized (lock) {
-            shutdown = true;
-            lock.notifyAll();
-        }
+        shutdown = true;
     }
 
     @Override
     public List<Runnable> shutdownNow() {
-        synchronized (lock) {
-            shutdown = true;
-            List<Runnable> left = new ArrayList<>(tasks);
-            tasks.clear();
-            lock.notifyAll();
-            return left;
-        }
+        shutdown = true;
+        List<Runnable> left = new ArrayList<>(tasks);
+        tasks.clear();
+        return left;
     }
 
     @Override
     public boolean isShutdown() {
-        synchronized (lock) {
-            return shutdown;
-        }
+        return shutdown;
     }
 
     @Override
     public boolean isTerminated() {
-        synchronized (lock) {
-            return shutdown && workers == 0 && tasks.isEmpty();
-        }
+        return shutdown && workers == 0 && tasks.isEmpty();
     }
 
     @Override
     public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
-        long deadline = System.currentTimeMillis() + unit.toMillis(timeout);
-        synchronized (lock) {
-            while (!(shutdown && workers == 0 && tasks.isEmpty())) {
-                long left = deadline - System.currentTimeMillis();
-                if (left <= 0) {
-                    return false;
-                }
-                lock.wait(left);
+        long timeoutMillis = unit.toMillis(timeout);
+        long deadline = System.currentTimeMillis() + timeoutMillis;
+        while (!(shutdown && workers == 0 && tasks.isEmpty())) {
+            long left = deadline - System.currentTimeMillis();
+            if (left <= 0) {
+                return false;
             }
-            return true;
+            Thread.sleep(Math.min(left, 10));
         }
+        return true;
     }
+
 
     public BlockingQueue<Runnable> getQueue() {
         return workQueue;
