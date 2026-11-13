@@ -28,6 +28,7 @@ public final class FrameLoop {
     }
 
     public static void endFrame() {
+        BrowserRuntime.report("trace", "frame-loop-endframe-enter");
         for (int i = 0; i < HOOKS.size(); i++) {
             try {
                 HOOKS.get(i).run();
@@ -36,6 +37,7 @@ public final class FrameLoop {
             }
         }
         frameStats();
+        BrowserRuntime.report("trace", "frame-loop-wait-enter");
         waitForNextFrame(vsync);
     }
 
@@ -43,7 +45,11 @@ public final class FrameLoop {
     private static native void waitForNextFrame(boolean vsync);
 
     private static void waitForNextFrame(boolean vsync, AsyncCallback<Void> callback) {
-        schedule(vsync, () -> callback.complete(null));
+        BrowserRuntime.report("trace", "frame-loop-schedule-requested");
+        schedule(vsync, () -> {
+            BrowserRuntime.report("trace", "frame-loop-resume-callback");
+            callback.complete(null);
+        });
     }
 
     @JSFunctor
@@ -52,7 +58,7 @@ public final class FrameLoop {
     }
 
     @JSBody(params = {"vsync", "resume"}, script = ""
-            + "if (vsync || document.hidden) { requestAnimationFrame(function() { resume(); }); return; }"
+            + "if (vsync || document.hidden) { requestAnimationFrame(function() { console.log('[FRAME_LOOP] raf-fired'); resume(); }); return; }"
             + "var ch = window.__mcFrameChannel || (window.__mcFrameChannel = new MessageChannel());"
             + "ch.port1.onmessage = function() { resume(); }; ch.port2.postMessage(0);")
     private static native void schedule(boolean vsync, Resume resume);
