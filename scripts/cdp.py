@@ -107,6 +107,8 @@ def main():
     ap.add_argument("--eval", action="append", default=[])
     ap.add_argument("--preload-js", help="JavaScript evaluated in every new document before page scripts")
     ap.add_argument("--assert-js", action="append", default=[], help="JavaScript expression that must be truthy after the wait condition")
+    ap.add_argument("--eval-on-timeout", action="store_true",
+                    help="still run --eval expressions when the wait condition times out (best effort)")
     ap.add_argument("--viewport", help="emulate a CSS viewport, e.g. 414x896")
     ap.add_argument("--dpr", type=float, default=2.0, help="device scale factor for --viewport")
     ap.add_argument("--gpu", action="store_true", help="use the real GPU instead of SwiftShader")
@@ -278,6 +280,13 @@ def main():
         else:
             print("skipping post-timeout assertions/evaluations: page did not become responsive", flush=True)
             assert_ok = False
+            if a.eval_on_timeout:
+                for expr in a.eval:
+                    try:
+                        r = ws.call("Runtime.evaluate", {"expression": expr, "returnByValue": True}, pump=pump, timeout_sec=15)
+                        print(f"eval (timeout) {expr} => {json.dumps(r.get('result', {}).get('result', {}).get('value'))[:4000]}")
+                    except (TimeoutError, EOFError, OSError) as exc:
+                        print(f"eval (timeout) unavailable: {type(exc).__name__}: {exc}", flush=True)
         if a.screenshot and ok and assert_ok:
             try:
                 r = ws.call("Page.captureScreenshot", {"format": "png"}, pump=pump, timeout_sec=10)

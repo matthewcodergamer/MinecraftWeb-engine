@@ -44,6 +44,12 @@ public final class Fiber {
     private boolean isPendingResume;
     private boolean daemon;
 
+    private Thread owner;
+    private String lastSuspend;
+    private String lastResume;
+    private boolean finished;
+    private int id;
+
     private static Fiber current;
     private static PendingCall lastPendingCall;
     private static int startCount;
@@ -51,10 +57,63 @@ public final class Fiber {
     private static int suspendCount;
     private static int asyncCompleteCount;
     private static int asyncErrorCount;
+    // Live fiber registry: every thread the client starts is one fiber, so a dump
+    // of this array shows exactly which fiber is stuck and where. Allocated lazily
+    // because this class is @StaticInit and may only own constant static data.
+    private static Fiber[] all;
+    private static int allCount;
 
     private Fiber(FiberRunner runner, boolean daemon) {
         this.runner = runner;
         this.daemon = daemon;
+        this.id = allCount;
+        if (all == null) {
+            all = new Fiber[128];
+        }
+        if (allCount < all.length) {
+            all[allCount++] = this;
+        }
+    }
+
+    /**
+     * Snapshot of every fiber the client has started. Used by the boot watchdog to
+     * prove whether a stall is a deadlock between fibers or a lost wakeup.
+     */
+    public static String dump() {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < allCount; ++i) {
+            Fiber f = all[i];
+            if (f == null) {
+                continue;
+            }
+            if (sb.length() > 0) {
+                sb.append(" | ");
+            }
+            sb.append('#').append(f.id);
+            sb.append(f.daemon ? "(daemon)" : "(user)");
+            String name = null;
+            try {
+                if (f.owner != null) {
+                    name = f.owner.getName();
+                }
+            } catch (Throwable ignored) {
+            }
+            sb.append(" \"").append(name != null ? name : "?").append('"');
+            sb.append(" state=").append(f.state);
+            if (f.finished) {
+                sb.append(" FINISHED");
+            }
+            if (f.isPendingResume) {
+                sb.append(" pendingResume");
+            }
+            if (f.lastSuspend != null) {
+                sb.append(" suspendedAt=").append(f.lastSuspend);
+            }
+            if (f.lastResume != null) {
+                sb.append(" lastResume=").append(f.lastResume);
+            }
+        }
+        return sb.toString();
     }
 
     public void push(int value) {
@@ -272,8 +331,9 @@ public final class Fiber {
             return fiber.result;
         }
         int suspendId = ++suspendCount;
+        fiber.lastSuspend = call.getClass().getName();
         if (suspendId <= 100) {
-            BrowserRuntime.report("trace", "fiber-suspend-enter");
+            BrowserRuntime.report("trace", "fiber-" + fiber.id + "-suspend-enter");
             BrowserRuntime.report("trace", "fiber-suspend-document-state suspend_id=" + suspendId + " " + BrowserRuntime.suspendDocumentState());
             BrowserRuntime.report("trace", call.getClass().getName());
         }
@@ -378,10 +438,16 @@ public final class Fiber {
     private void start() {
         int traceId = ++startCount;
         if (traceId <= 20 || traceId % 100 == 0) {
-            BrowserRuntime.report("trace", "fiber-start-enter");
+            BrowserRuntime.report("trace", "fiber-" + id + "-start-enter");
         }
         Fiber former = current;
         current = this;
+        if (owner == null) {
+            try {
+                owner = Thread.currentThread();
+            } catch (Throwable ignored) {
+            }
+        }
         try {
             while (true) {
                 if (traceId <= 20) {
@@ -417,9 +483,12 @@ public final class Fiber {
             // A failed fiber must not leave itself installed as the current thread.
             current = former;
         }
+        if (!isSuspending()) {
+            finished = true;
+        }
         if (traceId <= 20 || traceId % 100 == 0) {
-            BrowserRuntime.report("trace", isSuspending()
-                    ? "fiber-start-return-suspended" : "fiber-start-return-complete");
+            BrowserRuntime.report("trace", "fiber-" + id + (isSuspending()
+                    ? "-start-return-suspended" : "-start-return-complete"));
         }
         if (!isSuspending() && !daemon && --userThreadCount == 0) {
             // Browser event scheduling is owned by the host; no native EventQueue shutdown here.
@@ -428,13 +497,14 @@ public final class Fiber {
 
     void resume() {
         int traceId = ++resumeCount;
+        lastResume = "from#" + (current != null ? current.id : -1);
         if (traceId <= 50 || traceId % 100 == 0) {
-            BrowserRuntime.report("trace", "fiber-resume-enter");
+            BrowserRuntime.report("trace", "fiber-" + id + "-resume-enter " + lastResume);
         }
         state = STATE_RESUMING;
         start();
         if (traceId <= 50 || traceId % 100 == 0) {
-            BrowserRuntime.report("trace", "fiber-resume-return");
+            BrowserRuntime.report("trace", "fiber-" + id + "-resume-return");
         }
     }
 

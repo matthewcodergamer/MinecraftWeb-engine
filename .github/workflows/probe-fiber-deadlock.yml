@@ -1,0 +1,144 @@
+name: Probe fiber deadlock (fast)
+
+# Builds only mcport.Probe: the exact DataFixers.optimize() + timer-hack-thread +
+# join() sequence net.minecraft.client.main.Main runs, plus a watchdog that dumps
+# every live TeaVM fiber. Runs on the 16 GB runner in ~10 minutes.
+
+on:
+  push:
+    branches:
+      - fix/teavm-datafixer-fiber-deadlock
+    paths:
+      - ".github/workflows/probe-fiber-deadlock.yml"
+      - "src/**"
+      - "scripts/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe-fiber:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Fetch official Minecraft 26.3 client
+        env:
+          MC_DIR: ${{ runner.temp }}/minecraft
+          MC_VERSION: "26.3"
+        run: python3 scripts/fetch_minecraft.py --version "$MC_VERSION" --dest "$MC_DIR"
+
+      - name: Fetch TeaVM toolchain
+        run: |
+          python3 scripts/fetch_deps.py \
+            org.teavm:teavm-tooling:0.16.0 \
+            org.teavm:teavm-classlib:0.16.0 \
+            org.teavm:teavm-jso-apis:0.16.0 \
+            org.teavm:teavm-jso-impl:0.16.0 \
+            org.teavm:teavm-platform:0.16.0
+
+      - name: Compile fiber probe to WebAssembly GC
+        env:
+          MC_DIR: ${{ runner.temp }}/minecraft
+          MC_VERSION: "26.3"
+          JDK: ${{ env.JAVA_HOME }}
+          PORT_HEAP: 12g
+          PORT_STACK: 256m
+          PORT_OPT: ADVANCED
+          PORT_LENIENT: "true"
+          PORT_JAVA_OPTS: "-XX:+UseSerialGC"
+        run: bash scripts/build.sh mcport.Probe wasm
+
+      - name: Stage TeaVM 0.16.0 Wasm GC browser runtime
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          resources = (
+              "org/teavm/backend/wasm/wasm-gc-runtime.min.js",
+              "org/teavm/backend/wasm/wasm-gc-runtime.js",
+          )
+          target = Path("build/web/probe.wasm-runtime.js")
+          for resource in resources:
+              for jar in sorted(Path("tools/lib").glob("*.jar")):
+                  try:
+                      with ZipFile(jar) as archive:
+                          data = archive.read(resource)
+                  except (KeyError, OSError):
+                      continue
+                  target.write_bytes(data)
+                  print(f"Copied {resource} from {jar}: {len(data):,} bytes")
+                  raise SystemExit(0)
+          raise SystemExit("TeaVM Wasm GC runtime resource not found")
+          PY
+
+      - name: Apply Wasm-GC WeakReference compatibility fallback
+        run: python3 scripts/patch_teavm_wasm_runtime.py build/web/probe.wasm-runtime.js
+
+      - name: Stage probe page
+        run: |
+          cat > build/web/probe-page.html <<'HTML'
+          <!doctype html><meta charset="utf-8"><title>fiber probe</title>
+          <script>
+          window.__log = [];
+          const _log = console.log;
+          console.log = function () { window.__log.push(Array.prototype.join.call(arguments, ' ')); _log.apply(console, arguments); };
+          setInterval(function () {
+            console.log('[PROBE_HEARTBEAT] t=' + Math.round(performance.now() / 1000) + 's stage=' + ((window.__mc || {}).stage || '-'));
+          }, 5000);
+          </script>
+          <script src="probe.wasm-runtime.js"></script>
+          <script>
+          (async () => {
+            try {
+              const teavm = await TeaVM.wasmGC.load('probe.wasm');
+              window.__teavm = teavm;
+              console.log('[PAGE] instantiated');
+              teavm.exports.main([]);
+              window.__returned = true;
+              console.log('[PAGE] main dispatch returned');
+            } catch (e) {
+              window.__error = String((e && e.stack) || e);
+              console.log('[PAGE] ERROR ' + window.__error);
+            }
+          })();
+          </script>
+          HTML
+
+      - name: Run fiber probe in Chrome
+        env:
+          CHROME: /usr/bin/google-chrome
+        run: |
+          google-chrome --version
+          python3 -m http.server 8765 --bind 127.0.0.1 --directory build/web > /tmp/probe-http.log 2>&1 &
+          sleep 1
+          python3 scripts/cdp.py "http://127.0.0.1:8765/probe-page.html" \
+            --until-js "window.__mc && (window.__mc.stage === 'probe-complete' || window.__mc.stage === 'probe-failed')" \
+            --timeout 300 \
+            --eval-on-timeout \
+            --eval "JSON.stringify({stage:(window.__mc||{}).stage,error:(window.__mc||{}).error,fibers:(window.__mc||{}).fibers,returned:window.__returned,pageError:window.__error})" 2>&1 | tail -120
+
+      - name: Upload probe diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-fiber-diagnostics
+          path: |
+            build/browser_error.txt
+            build/mcport.Probe.wasm.log
+          if-no-files-found: warn
+          retention-days: 7
