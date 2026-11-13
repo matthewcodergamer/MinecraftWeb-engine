@@ -29,7 +29,7 @@ REDIRECT java.lang.Class getGenericSuperclass()Ljava/lang/reflect/Type; -> mcpor
 BODY_STATIC org.joml.MemUtil createInstance()Lorg/joml/MemUtil; -> org.joml.BrowserMemUtil createInstance
 
 # --- net.minecraft.SystemReport: JMX/OSHI system probing -> browser equivalents ------------
-BODY_STATIC net.minecraft.client.Minecraft fillSystemReport(Lnet/minecraft/SystemReport;)V -> mcport.rt.SystemReportBrowser fillSystemReport
+BODY_STATIC net.minecraft.client.Minecraft fillSystemReport(Lnet/minecraft/SystemReport;Lnet/minecraft/client/Minecraft;Lnet/minecraft/client/resources/language/LanguageManager;Ljava/lang/String;Lnet/minecraft/client/Options;)Lnet/minecraft/SystemReport; -> mcport.rt.SystemReportBrowser fillMinecraft
 BODY_STATIC net.minecraft.SystemReport lambda$new$3()Ljava/lang/Object; -> mcport.rt.SystemReportBrowser heap
 BODY_STATIC net.minecraft.SystemReport lambda$new$4()Ljava/lang/Object; -> mcport.rt.SystemReportBrowser nonHeap
 BODY net.minecraft.SystemReport lambda$new$6()V -> mcport.rt.SystemReportBrowser hardware
