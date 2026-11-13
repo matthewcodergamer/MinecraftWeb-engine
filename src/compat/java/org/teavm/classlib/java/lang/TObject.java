@@ -21,7 +21,6 @@ import org.teavm.backend.wasm.runtime.WasmGCSupport;
 import org.teavm.classlib.PlatformDetector;
 import org.teavm.dependency.PluggableDependency;
 import org.teavm.interop.Address;
-import org.teavm.interop.Async;
 import org.teavm.interop.AsyncCallback;
 import org.teavm.interop.DelegateTo;
 import org.teavm.interop.NoSideEffects;
@@ -147,8 +146,9 @@ public class TObject {
         }
     }
 
-    @Async
-    static native void monitorEnterWait(TObject o, int count);
+    static void monitorEnterWait(TObject o, int count) {
+        TObjectAsync.monitorEnterWait(o, count);
+    }
 
     static void monitorEnterWait(TObject o, int count, AsyncCallback<Void> callback) {
         TThread thread = TThread.currentThread();
@@ -487,8 +487,9 @@ public class TObject {
         waitImpl(timeout, nanos);
     }
 
-    @Async
-    private native void waitImpl(long timeout, int nanos) throws TInterruptedException;
+    private void waitImpl(long timeout, int nanos) throws TInterruptedException {
+        TObjectAsync.waitImpl(this, timeout, nanos);
+    }
 
     final void waitImpl(long timeout, int nanos, AsyncCallback<Void> callback) {
         Monitor monitor = this.monitor;
