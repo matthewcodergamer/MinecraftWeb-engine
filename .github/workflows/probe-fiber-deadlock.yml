@@ -60,7 +60,7 @@ jobs:
           PORT_STACK: 256m
           PORT_OPT: ADVANCED
           PORT_LENIENT: "true"
-          PORT_JAVA_OPTS: "-XX:+UseSerialGC -Dport.why=org.teavm.classlib.java.lang.TObject"
+          PORT_JAVA_OPTS: "-XX:+UseSerialGC -Dport.why=java.lang.Object,java.lang.Thread"
         run: bash scripts/build.sh mcport.Probe wasm
 
       - name: Stage TeaVM 0.16.0 Wasm GC browser runtime
