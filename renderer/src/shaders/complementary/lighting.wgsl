@@ -281,12 +281,10 @@ fn complementary_get_reflection_ssr(
     var ray_position = view_position + ray_direction;
     var step_vector = ray_direction;
 
-    // Standard internal screen-space mode uses 38 samples and 10 refinements.
-    // The legacy -1 mode uses 30/6; select it by setting ssr_parameters.w < 0.
-    let legacy_mode = frame.ssr_parameters.w < 0.0;
-    let sample_count = select(38u, 30u, legacy_mode);
-    let refinement_count = select(10u, 6u, legacy_mode);
-    let edge = select(vec2<f32>(0.525, 0.525), vec2<f32>(0.6, 0.55), legacy_mode);
+    // Standard internal mode: 38 samples, 10 refinements, 0.525 screen edge.
+    let sample_count = 38u;
+    let refinement_count = 10u;
+    let edge = vec2<f32>(0.525, 0.525);
 
     var refinement = 0u;
     var distance_to_hit = 0.0;
@@ -348,11 +346,6 @@ fn complementary_get_reflection_ssr(
             let edge_factor0 = cdist * cdist;
             let edge_factor1 = edge_factor0 * edge_factor0;
             let edge_factor = edge_factor1 * edge_factor1;
-            if (legacy_mode) {
-                sample_uv.y += (dither - 0.5) *
-                    (0.05 * (edge_factor.x + edge_factor.y));
-            }
-
             // Explicit LOD is required here: this sample occurs after
             // non-uniform ray-march control flow. Smoothness/roughness LOD
             // follows the source's exponential distance response.
