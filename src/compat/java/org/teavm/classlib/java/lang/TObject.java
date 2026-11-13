@@ -51,12 +51,21 @@ public class TObject {
      * only facts needed to see which lock never gets released.
      */
     private static void traceMonitor(String event, TObject o, TThread owner, int waiters) {
+        // Emit an unconditional marker before collecting optional diagnostic details.
+        // The previous all-in-one try/catch could silently swallow a failure while
+        // formatting the owner/object identity, making it impossible to tell whether
+        // the monitor hook itself was reached.
+        BrowserRuntime.report("monitor", "ENTER event=" + event);
         try {
+            String objectId = Integer.toHexString(o.identity());
             String ownerName = owner != null ? owner.getName() : "none";
-            BrowserRuntime.report("monitor", event + " obj=" + Integer.toHexString(o.identity())
-                    + " owner=" + ownerName + " me=" + TThread.currentThread().getName()
+            String currentName = TThread.currentThread() != null
+                    ? TThread.currentThread().getName() : "none";
+            BrowserRuntime.report("monitor", event + " obj=" + objectId
+                    + " owner=" + ownerName + " me=" + currentName
                     + " waiters=" + waiters + " count=" + (o.monitor != null ? o.monitor.count : -1));
         } catch (Throwable ignored) {
+            BrowserRuntime.report("monitor", "DETAIL_ERROR event=" + event);
         }
     }
 
