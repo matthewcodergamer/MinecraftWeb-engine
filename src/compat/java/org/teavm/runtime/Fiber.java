@@ -274,6 +274,7 @@ public final class Fiber {
         int suspendId = ++suspendCount;
         if (suspendId <= 100) {
             BrowserRuntime.report("trace", "fiber-suspend-enter");
+            BrowserRuntime.report("trace", "fiber-suspend-document-state suspend_id=" + suspendId + " " + BrowserRuntime.suspendDocumentState());
             BrowserRuntime.report("trace", call.getClass().getName());
         }
         PendingCall pendingCall = new PendingCall(call, lastPendingCall);
