@@ -138,7 +138,7 @@ public class TThread extends TObject implements TRunnable {
 
         // Wasm-GC fibers can suspend reliably through Thread.sleep, but the
         // Object.wait/notify handoff used by finishedLock can strand the
-        // joining fiber. Poll the volatile-in-this-runtime alive state using
+        // joining fiber. Poll the shared cooperative-runtime alive state using
         // the already-working async sleep path instead of waiting on a monitor.
         boolean timed = millis > 0 || nanos > 0;
         long timeout = millis;
@@ -153,10 +153,18 @@ public class TThread extends TObject implements TRunnable {
                 if (remaining <= 0) {
                     return;
                 }
-                sleep(Math.min(remaining, 10));
+                pauseForJoin(Math.min(remaining, 10));
             } else {
-                sleep(1);
+                pauseForJoin(1);
             }
+        }
+    }
+
+    private static void pauseForJoin(long millis) throws InterruptedException {
+        try {
+            sleep(millis);
+        } catch (TInterruptedException e) {
+            throw new InterruptedException();
         }
     }
 
