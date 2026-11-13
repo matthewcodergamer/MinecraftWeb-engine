@@ -1,14 +1,8 @@
 name: Verify real Minecraft client in browser
 
 on:
-  push:
-    paths:
-      - "src/**"
-      - "patches/**"
-      - "scripts/**"
-      - "web/**"
-      - "renderer/**"
-      - ".github/workflows/verify-client-browser.yml"
+  # Keep the expensive full-client smoke test manual while the isolated probe
+  # is diagnosing the fiber/monitor issue. Re-enable push after the probe passes.
   pull_request:
     paths:
       - "src/**"
