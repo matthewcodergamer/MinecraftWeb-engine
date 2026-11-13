@@ -12,6 +12,22 @@ public final class SystemReportBrowser {
     private SystemReportBrowser() {
     }
 
+    /**
+     * Minecraft.fillSystemReport: system diagnostics must never prevent the browser client
+     * from starting. The vanilla suppliers probe JVM management beans, OSHI and native
+     * platform details; those APIs are not present in TeaVM/WebAssembly.
+     */
+    public static void fillSystemReport(SystemReport report) {
+        report.setDetail("Operating System", "Browser");
+        report.setDetail("Runtime", "TeaVM WebAssembly GC");
+        report.setDetail("Graphics", "WebGPU");
+        report.setDetail("Processor Logical Cores", String.valueOf(logicalCores()));
+        report.setDetail("Device Memory (GB)", deviceMemory());
+        report.setDetail("Platform", platform());
+        report.setDetail("User Agent", userAgent());
+        report.setDetail("Java VM", "Not available in browser");
+    }
+
     /** lambda$new$3: "Memory (heap)". */
     public static Object heap() {
         return describeHeap();
