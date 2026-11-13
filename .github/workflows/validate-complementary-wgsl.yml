@@ -1,0 +1,28 @@
+name: Validate Complementary WGSL
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/client-headless-webgpu-boot
+    paths:
+      - "renderer/src/shaders/complementary/**/*.wgsl"
+      - ".github/workflows/validate-complementary-wgsl.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout shader branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/client-headless-webgpu-boot
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install Naga CLI
+        run: cargo install naga-cli --locked
+      - name: Validate Complementary WGSL
+        run: naga renderer/src/shaders/complementary/lighting.wgsl
