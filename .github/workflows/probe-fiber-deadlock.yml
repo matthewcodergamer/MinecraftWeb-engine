@@ -130,7 +130,7 @@ jobs:
             --until-js "window.__mc && (window.__mc.stage === 'probe-complete' || window.__mc.stage === 'probe-failed')" \
             --timeout 300 \
             --eval-on-timeout \
-            --eval "JSON.stringify({stage:(window.__mc||{}).stage,error:(window.__mc||{}).error,fibers:(window.__mc||{}).fibers,returned:window.__returned,pageError:window.__error})" 2>&1 | tail -120
+            --eval "JSON.stringify(window.__mc||{})" 2>&1 | tail -120
 
       - name: Upload probe diagnostics
         if: always()

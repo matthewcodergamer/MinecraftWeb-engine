@@ -17,6 +17,9 @@ public final class BrowserRuntime {
             + "  console.log('[JAVA_STAGE] ' + v + ' @' + Math.round(performance.now()) + 'ms');"
             + "  if (window.parent !== window) window.parent.postMessage({source:'mc-brain',type:'java-stage',stage:v}, '*');"
             + "}"
+            + "if (k === 'monitor') {"
+            + "  console.log('[JAVA_MONITOR] ' + v + ' @' + Math.round(performance.now()) + 'ms');"
+            + "}"
             + "if (window.__mcLog) window.__mcLog('REPORT', k + ' = ' + v);")
     public static native void report(String key, String value);
 
