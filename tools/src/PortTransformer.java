@@ -103,6 +103,25 @@ public class PortTransformer implements ClassHolderTransformer {
     @Override
     public void transformClass(ClassHolder cls, ClassHolderTransformerContext context) {
         Map<MethodDescriptor, MethodReference> bodies = BODIES.get(cls.getName());
+        // The Minecraft system-report override is a required startup compatibility patch.
+        // Fail the client build immediately if Mojang changes its descriptor or the rule drifts.
+        if (cls.getName().equals("net.minecraft.client.Minecraft") && bodies != null) {
+            for (Map.Entry<MethodDescriptor, MethodReference> rule : bodies.entrySet()) {
+                boolean matched = false;
+                for (MethodHolder candidate : cls.getMethods()) {
+                    if (candidate.getDescriptor().equals(rule.getKey())) {
+                        matched = true;
+                        break;
+                    }
+                }
+                System.out.println("PATCH_RULE_MATCH " + cls.getName() + "." + rule.getKey()
+                        + " matched=" + matched);
+                if (!matched) {
+                    throw new IllegalStateException("Required Minecraft BODY rule did not match: "
+                            + cls.getName() + "." + rule.getKey());
+                }
+            }
+        }
         boolean stubAll = STUB_CLASSES.contains(cls.getName());
         java.util.Set<MethodDescriptor> stubs = STUBS.get(cls.getName());
         boolean zeroNatives = ZERO_NATIVES.contains(cls.getName());
