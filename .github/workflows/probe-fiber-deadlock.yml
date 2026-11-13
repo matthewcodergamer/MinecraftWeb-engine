@@ -138,6 +138,7 @@ jobs:
         with:
           name: probe-fiber-diagnostics
           path: |
+            build/browser_console.log
             build/browser_error.txt
             build/mcport.Probe.wasm.log
           if-no-files-found: warn

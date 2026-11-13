@@ -99,7 +99,7 @@ public final class Fiber {
             } catch (Throwable ignored) {
             }
             sb.append(" \"").append(name != null ? name : "?").append('"');
-            sb.append(" state=").append(f.state);
+            sb.append(" state=").append(stateName(f.state));
             if (f.finished) {
                 sb.append(" FINISHED");
             }
@@ -114,6 +114,19 @@ public final class Fiber {
             }
         }
         return sb.toString();
+    }
+
+    private static String stateName(int state) {
+        switch (state) {
+            case STATE_RUNNING:
+                return "RUNNING";
+            case STATE_SUSPENDING:
+                return "SUSPENDED";
+            case STATE_RESUMING:
+                return "RESUMING";
+            default:
+                return Integer.toString(state);
+        }
     }
 
     public void push(int value) {
