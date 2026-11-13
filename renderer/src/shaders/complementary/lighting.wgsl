@@ -155,8 +155,9 @@ fn composite_water_reflection(
     return mix(base_color, reflection_color, reflection_weight);
 }
 
-// Independently authored WebGPU lighting primitives for the complementary
-// renderer path. Not a line-by-line translation of proprietary GLSL.
+// Remaining renderer infrastructure scaffold: shadow-map sampling and SSR
+// still require engine-specific pipeline integration and are not a port of
+// Complementary's full GetReflection() implementation.
 // See docs/COMPLEMENTARY_ASSETS.md.
 //
 // Bind group 1 is separate from the vanilla block pass in renderer/src/shader.wgsl.
@@ -217,33 +218,11 @@ fn directional_sun_shadow(world_position: vec3<f32>) -> f32 {
     return visibility / 9.0;
 }
 
-fn ambient_hemisphere(normal: vec3<f32>, ao: f32) -> vec3<f32> {
-    let up = max(normal.y * 0.5 + 0.5, 0.0);
-    let sky = mix(vec3<f32>(0.42, 0.46, 0.52), frame.sky_color_shadow_bias.rgb, up);
-    return sky * frame.sun_color_ambient.a * clamp(ao, 0.0, 1.0);
-}
-
-// Sky light, warm block light, direct sunlight, and self-illumination.
-fn evaluate_lighting(
-    albedo: vec3<f32>,
-    normal: vec3<f32>,
-    ambient_occlusion: f32,
-    sky_light: f32,
-    block_light: f32,
-    emissive: vec3<f32>,
-    world_position: vec3<f32>
-) -> vec3<f32> {
-    let n = normalize(normal);
-    let sun_dir = normalize(frame.sun_direction_intensity.xyz);
-    let ndotl = max(dot(n, sun_dir), 0.0);
-    let visibility = directional_sun_shadow(world_position);
-    let ambient = ambient_hemisphere(n, ambient_occlusion);
-    let sky = frame.sky_color_shadow_bias.rgb * sky_light * 0.28;
-    let block = vec3<f32>(1.0, 0.72, 0.48) * block_light * 0.85;
-    let direct = frame.sun_color_ambient.rgb *
-        ndotl * frame.sun_direction_intensity.w * visibility;
-    // Emissive is added after albedo modulation so lava/glowstone stay self-lit.
-    return albedo * (ambient + sky + block + direct) + emissive;
+// Source-driven evaluate_lighting entry point. The output preserves the
+// source's separate lightColor and ambientColor terms for downstream material
+// lighting rather than inventing a new Lambert/block-light combination.
+fn evaluate_lighting(input: ComplementaryLightInputs) -> ComplementaryLightColors {
+    return complementary_light_and_ambient_colors(input);
 }
 
 struct SsrResult {
@@ -303,19 +282,4 @@ fn screen_space_reflection(
         if (distance_along_ray > max_distance) { break; }
     }
     return result;
-}
-
-fn composite_reflection(
-    base_color: vec3<f32>,
-    reflection: SsrResult,
-    view_direction: vec3<f32>,
-    normal: vec3<f32>,
-    roughness: f32
-) -> vec3<f32> {
-    let ndotv = clamp(dot(normalize(normal), normalize(view_direction)), 0.0, 1.0);
-    let fresnel = pow(1.0 - ndotv, 5.0);
-    let smoothness = 1.0 - clamp(roughness, 0.0, 1.0);
-    let weight = clamp(reflection.confidence * mix(0.04, 0.96, fresnel) *
-                       smoothness, 0.0, 1.0);
-    return mix(base_color, reflection.color, weight);
 }
