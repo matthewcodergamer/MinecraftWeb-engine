@@ -32,8 +32,10 @@ class WebGpuFence implements GpuFence {
         if (timeoutNS == 0) {
             return false;
         }
+        traceAwait(id);
         // suspends this (green) thread until the GPU work is done; the browser keeps running meanwhile
         await(id);
+        traceResumed(id);
         return true;
     }
 
@@ -41,7 +43,13 @@ class WebGpuFence implements GpuFence {
     private static native void await(int id);
 
     private static void await(int id, AsyncCallback<Void> callback) {
-        whenDone(id, () -> callback.complete(null));
+        whenDone(id, () -> {
+            traceResolved(id);
+            callback.complete(null);
+        }, message -> {
+            traceRejected(id);
+            callback.error(new RuntimeException(message));
+        });
     }
 
     @JSFunctor
@@ -49,6 +57,23 @@ class WebGpuFence implements GpuFence {
         void run();
     }
 
-    @JSBody(params = {"id", "done"}, script = "__mcGPU.fencePromise(id).then(function() { done(); });")
-    private static native void whenDone(int id, Done done);
+    @JSFunctor
+    interface Failed extends JSObject {
+        void run(String message);
+    }
+
+    @JSBody(params = {"id"}, script = "console.log('[WEBGPU_FENCE] await-enter id=' + id);")
+    private static native void traceAwait(int id);
+
+    @JSBody(params = {"id"}, script = "console.log('[WEBGPU_FENCE] await-resumed id=' + id);")
+    private static native void traceResumed(int id);
+
+    @JSBody(params = {"id"}, script = "console.log('[WEBGPU_FENCE] promise-resolved id=' + id);")
+    private static native void traceResolved(int id);
+
+    @JSBody(params = {"id"}, script = "console.error('[WEBGPU_FENCE] promise-rejected id=' + id);")
+    private static native void traceRejected(int id);
+
+    @JSBody(params = {"id", "done", "failed"}, script = "var started = Date.now(); console.log('[WEBGPU_FENCE] promise-start id=' + id); var timer = setTimeout(function() { console.error('[WEBGPU_FENCE] promise-timeout id=' + id + ' elapsed=' + (Date.now() - started) + 'ms'); }, 30000); Promise.resolve().then(function() { return __mcGPU.fencePromise(id); }).then(function() { clearTimeout(timer); console.log('[WEBGPU_FENCE] promise-fulfilled id=' + id + ' elapsed=' + (Date.now() - started) + 'ms'); done(); }, function(error) { clearTimeout(timer); var message = String(error && (error.stack || error.message) || error); console.error('[WEBGPU_FENCE] promise-rejected id=' + id + ' elapsed=' + (Date.now() - started) + 'ms ' + message); failed(message); });")
+    private static native void whenDone(int id, Done done, Failed failed);
 }
