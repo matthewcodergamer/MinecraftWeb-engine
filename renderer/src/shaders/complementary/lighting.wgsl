@@ -1,3 +1,9 @@
+// Upstream source inspected from ComplementaryDevelopment/ComplementaryReimagined
+// commit 7c784f3a3bfe5a997f1393ea036e4e2d9789f1be (release-labelled r5.9).
+// The earlier r5.9.3 Actions ZIP was extracted only in an ephemeral runner;
+// its source files were not retained, so byte-for-byte r5.9.3 equivalence has
+// not yet been independently verified.
+
 // Source-driven Complementary Reimagined formula ports.
 // Reference files:
 // shaders/program/gbuffers_water.glsl
