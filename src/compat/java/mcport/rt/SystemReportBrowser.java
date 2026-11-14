@@ -106,4 +106,10 @@ public final class SystemReportBrowser {
         return report;
     }
 
+
+    /** Crash-report uptime detail: the browser has no JVM ManagementFactory. */
+    public static String uptime() {
+        return "N/A (browser runtime)";
+    }
+
 }
