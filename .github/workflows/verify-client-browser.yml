@@ -70,9 +70,13 @@ jobs:
           for class in \
             'net.minecraft.server.packs.repository.FolderRepositorySource$FolderPackDetector' \
             'net.minecraft.server.packs.FilePackResources$FileResourcesSupplier' \
+            'net.minecraft.server.packs.FilePackResources$SharedZipFileAccess' \
             net.minecraft.server.packs.FilePackResources \
             net.minecraft.server.packs.Pack \
-            net.minecraft.server.packs.linkfs.LinkFSPath; do
+            net.minecraft.server.packs.linkfs.LinkFSPath \
+            net.minecraft.server.packs.linkfs.LinkFileSystem \
+            net.minecraft.server.packs.linkfs.LinkFileSystemProvider \
+            net.minecraft.server.packs.linkfs.PathContents; do
             name="${class//./_}"
             out="build/diagnostics/resource-pack/$name.txt"
             echo "===== $class =====" | tee "$out"
