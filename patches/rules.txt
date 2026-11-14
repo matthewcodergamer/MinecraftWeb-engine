@@ -177,6 +177,10 @@ BODY_STATIC net.minecraft.util.filefix.FileFixerUpper supportsHardLinks(Ljava/ni
 # initializes large Vk* feature structs that cannot reflect on TeaVM. The browser never uses Vulkan.
 REDIRECT_STATIC com.mojang.renderpearl.backend.vulkan.VulkanFeatureSets bootstrap()V -> mcport.rt.patch.ClientPatches noop
 BODY net.minecraft.client.PreferredGraphicsApi getBackendsToTry()[Lcom/mojang/renderpearl/api/device/GpuBackend; -> mcport.gpu.GraphicsPatches backendsToTry
+# Minecraft.<init> probes Vulkan when the preferred API is DEFAULT (the default) before it tries
+# the backends above. A browser has no Vulkan loader, and renderpearl's probe loads the loader and
+# instantiates @NativeType feature structs, which TeaVM cannot run: answer "unavailable" instead.
+BODY_STATIC com.mojang.renderpearl.backend.vulkan.VulkanBackend checkBackendAvailable()Lcom/mojang/renderpearl/api/device/BackendCreationException; -> mcport.gpu.GraphicsPatches vulkanUnavailable
 # JOML's Unsafe-based implementations are never selected (createInstance is patched above); fast dependency
 # analysis still reaches them.
 STUB_CLASS org.joml.MemUtil$MemUtilUnsafe
@@ -260,3 +264,28 @@ BODY_STATIC io.netty.util.NetUtilInitializations networkInterfaces()Ljava/util/C
 BODY_STATIC io.netty.util.NetUtilInitializations createLocalhost4()Ljava/net/Inet4Address; -> io.netty.util.NetUtilInitializationsBrowser createLocalhost4
 BODY_STATIC io.netty.util.NetUtilInitializations createLocalhost6()Ljava/net/Inet6Address; -> io.netty.util.NetUtilInitializationsBrowser createLocalhost6
 BODY_STATIC io.netty.util.NetUtilInitializations determineLoopback(Ljava/util/Collection;Ljava/net/Inet4Address;Ljava/net/Inet6Address;)Lio/netty/util/NetUtilInitializations$NetworkIfaceAndInetAddress; -> io.netty.util.NetUtilInitializationsBrowser determineLoopback
+
+# --- Startup stage tracing (diagnostics only) -----------------------------------------------
+# TRACE rules insert mcport.rt.patch.Trace.mark(id) at method entry. Each call prints
+# "[JAVA_TRACE] port-stage-<id>" in the browser console/window.__mc, so a crash or hang between
+# two vanilla log lines can be attributed to exactly one client stage. They change no game state.
+# The ids are stable: keep the number when editing, append new stages at the end.
+TRACE 100 net.minecraft.client.Minecraft <init>(Lnet/minecraft/client/main/GameConfig;)V
+TRACE 101 com.mojang.blaze3d.systems.RenderSystem getBackendDescription()Ljava/lang/String;
+TRACE 102 com.mojang.blaze3d.systems.RenderSystem initBackendSystem()Lnet/minecraft/util/TimeSource$NanoTimeSource;
+TRACE 103 com.mojang.blaze3d.platform.SdlDebug init()V
+TRACE 104 net.minecraft.util.Util setTimeSource(Lnet/minecraft/util/TimeSource$NanoTimeSource;)V
+TRACE 105 com.mojang.blaze3d.platform.MonitorManager <init>()V
+TRACE 106 com.mojang.blaze3d.platform.Monitor tryCreate(I)Lcom/mojang/blaze3d/platform/Monitor;
+TRACE 107 com.mojang.blaze3d.platform.Monitor queryMonitorName(I)Ljava/lang/String;
+TRACE 108 com.mojang.blaze3d.platform.VideoMode <init>(Lorg/lwjgl/sdl/SDL_DisplayMode;)V
+TRACE 109 net.minecraft.client.PreferredGraphicsApi getBackendsToTry()[Lcom/mojang/renderpearl/api/device/GpuBackend;
+TRACE 110 com.mojang.renderpearl.backend.vulkan.VulkanBackend checkBackendAvailable()Lcom/mojang/renderpearl/api/device/BackendCreationException;
+TRACE 111 net.minecraft.client.Minecraft createTitle()Ljava/lang/String;
+TRACE 112 mcport.gpu.webgpu.WebGpuBackend loadLibrary()V
+TRACE 113 mcport.gpu.webgpu.WebGpuBackend createDevice(Lcom/mojang/renderpearl/api/device/GpuDebugOptions;)Lcom/mojang/renderpearl/api/device/GpuDevice;
+TRACE 114 mcport.gpu.webgpu.WebGpuDevice <init>()V
+TRACE 115 com.mojang.renderpearl.frontend.FrontendGpuDevice <init>(Lcom/mojang/renderpearl/backend/api/GpuDeviceBackend;)V
+TRACE 116 com.mojang.blaze3d.systems.RenderSystem initRenderer(Lcom/mojang/renderpearl/api/device/GpuDevice;)V
+TRACE 117 net.minecraft.client.Minecraft run()V
+TRACE 118 org.lwjgl.system.MemoryStack stackPush()Lorg/lwjgl/system/MemoryStack;

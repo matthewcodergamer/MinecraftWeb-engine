@@ -19,7 +19,9 @@ public class WebGpuBackend implements GpuBackend {
 
     @Override
     public void loadLibrary() throws BackendCreationException {
-        if (!WG.available()) {
+        boolean available = WG.available();
+        System.out.println("[MinecraftWeb WebGPU] loadLibrary: available=" + available);
+        if (!available) {
             throw new BackendCreationException("WebGPU is not available in this browser", BackendCreationException.Reason.PLATFORM_ERROR);
         }
     }
@@ -49,6 +51,15 @@ public class WebGpuBackend implements GpuBackend {
     public GpuDevice createDevice(GpuDebugOptions debugOptions) throws BackendCreationException {
         if (!WG.available()) {
             throw new BackendCreationException("WebGPU device was not created", BackendCreationException.Reason.PLATFORM_ERROR);
+        }
+        System.out.println("[MinecraftWeb WebGPU] createDevice: querying adapter info");
+        String adapterInfo = WG.info();
+        System.out.println("[MinecraftWeb WebGPU] adapter info: " + adapterInfo);
+        if (adapterInfo == null || adapterInfo.isEmpty()) {
+            // Fail as a backend error, not a NullPointerException: the client handles
+            // BackendCreationException and reports which backends were tried.
+            throw new BackendCreationException("WebGPU adapter info is unavailable",
+                    BackendCreationException.Reason.PLATFORM_ERROR);
         }
         return new FrontendGpuDevice(new WebGpuDevice());
     }

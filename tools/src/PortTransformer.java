@@ -30,6 +30,9 @@ import org.teavm.model.instructions.InvokeInstruction;
  * BODY owner name+desc -> newOwner newName
  *     Replaces one method body with a call to a static method (receiver first for instance methods).
  *     Used for code paths that need native facilities (Unsafe, OSHI, JNI) in the original.
+ * TRACE id owner name+desc
+ *     Inserts mcport.rt.patch.Trace.mark(id) at method entry. Pure diagnostics: it only prints a
+ *     line to the host page's log so a startup hang or crash can be narrowed to one stage.
  */
 public class PortTransformer implements ClassHolderTransformer {
     private static final Map<String, MethodReference> REDIRECTS = new HashMap<>();
@@ -38,6 +41,10 @@ public class PortTransformer implements ClassHolderTransformer {
     private static final java.util.Set<String> STUB_CLASSES = new java.util.HashSet<>();
     private static final Map<String, java.util.Set<MethodDescriptor>> STUBS = new HashMap<>();
     private static final java.util.Set<String> ZERO_NATIVES = new java.util.HashSet<>();
+    /** owner + "." + name+descriptor -> instrumentation id from a TRACE rule. */
+    private static final Map<String, Integer> TRACES = new HashMap<>();
+    private static final MethodReference TRACE_METHOD =
+            new MethodReference("mcport.rt.patch.Trace", "mark", ValueType.INTEGER, ValueType.VOID);
 
     static {
         String file = System.getProperty("port.rules");
@@ -59,6 +66,10 @@ public class PortTransformer implements ClassHolderTransformer {
                     }
                     if (p[0].equals("STUB") && p.length == 3) {
                         STUBS.computeIfAbsent(p[1], k -> new java.util.HashSet<>()).add(MethodDescriptor.parse(p[2]));
+                        continue;
+                    }
+                    if (p[0].equals("TRACE") && p.length == 4) {
+                        TRACES.put(p[2] + "." + MethodDescriptor.parse(p[3]), Integer.valueOf(p[1]));
                         continue;
                     }
                     if (p.length != 6 || !p[3].equals("->")) {
@@ -192,10 +203,73 @@ public class PortTransformer implements ClassHolderTransformer {
                 }
             }
         }
+        // Instrumentation pass: method-entry markers for TRACE rules. Independent of the passes
+        // above so a traced method can also be redirected/patched.
+        String tracePrefix = cls.getName() + ".";
+        java.util.Set<String> pendingTraces = new java.util.HashSet<>();
+        for (String key : TRACES.keySet()) {
+            if (key.startsWith(tracePrefix)) {
+                pendingTraces.add(key.substring(tracePrefix.length()));
+            }
+        }
+        for (MethodHolder method : cls.getMethods()) {
+            if (!pendingTraces.remove(method.getDescriptor().toString())) {
+                continue;
+            }
+            Integer traceId = TRACES.get(cls.getName() + "." + method.getDescriptor());
+            if (insertTrace(method, traceId.intValue())) {
+                count("TRACE " + cls.getName() + "." + method.getDescriptor());
+            } else {
+                System.out.println("TRACE_MISS " + cls.getName() + "." + method.getDescriptor());
+            }
+        }
+        // A typo in a TRACE rule would otherwise look exactly like "that stage was never reached".
+        for (String missing : pendingTraces) {
+            System.out.println("TRACE_MISS " + cls.getName() + "." + missing);
+        }
     }
 
-    /** Body becomes: throw new UnsupportedOperationException("<class>.<method> is unavailable in the browser"). */
-    private static void stubBody(MethodHolder method, String owner) {
+    /**
+     * Prepends mcport.rt.patch.Trace.mark(id) to a method body. Constructors get the call after
+     * the super() invocation so no instruction observes a partially initialised object.
+     */
+    private static boolean insertTrace(MethodHolder method, int id) {
+        Program program = method.getProgram();
+        if (program == null || method.hasModifier(ElementModifier.ABSTRACT)) {
+            return false;
+        }
+        java.util.Iterator<BasicBlock> blocks = program.getBasicBlocks().iterator();
+        if (!blocks.hasNext()) {
+            return false;
+        }
+        BasicBlock entry = blocks.next();
+        Variable value = program.createVariable();
+        org.teavm.model.instructions.IntegerConstantInstruction constant =
+                new org.teavm.model.instructions.IntegerConstantInstruction();
+        constant.setReceiver(value);
+        constant.setConstant(id);
+        InvokeInstruction invoke = new InvokeInstruction();
+        invoke.setType(InvocationType.SPECIAL);
+        invoke.setMethod(TRACE_METHOD);
+        invoke.setArguments(new Variable[] {value});
+
+        Instruction anchor = entry.getFirstInstruction();
+        if (anchor instanceof InvokeInstruction) {
+            InvokeInstruction first = (InvokeInstruction) anchor;
+            MethodReference target = first.getMethod();
+            if (first.getType() == InvocationType.SPECIAL && target != null
+                    && "<init>".equals(target.getName())) {
+                anchor.insertNext(constant);
+                constant.insertNext(invoke);
+                return true;
+            }
+        }
+        entry.addFirst(constant);
+        constant.insertNext(invoke);
+        return true;
+    }
+
+    /** Body becomes: throw new UnsupportedOperationException("<class>.<method> is unavailable in the browser"). */    private static void stubBody(MethodHolder method, String owner) {
         Program program = new Program();
         program.createVariable();
         for (int i = 0; i < method.parameterCount(); i++) {
