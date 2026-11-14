@@ -124,6 +124,24 @@ jobs:
           mkdir -p build/diagnostics
           mcjar="$MC_DIR/versions/$MC_VERSION/$MC_VERSION.jar"
           javap -classpath "$mcjar" -p -s -c -v net.minecraft.client.Minecraft > build/diagnostics/Minecraft-auth-bytecode.txt
+          # Locate any constructor-path ManagementFactory references without guessing a caller.
+          for class in \
+            net.minecraft.client.Options \
+            net.minecraft.client.gui.components.debug.DebugScreenEntryList \
+            net.minecraft.client.HotbarManager \
+            net.minecraft.client.tutorial.Tutorial \
+            com.mojang.blaze3d.systems.RenderSystem \
+            com.mojang.blaze3d.platform.MonitorManager; do
+            name="${class//./_}"
+            if javap -classpath "$mcjar" -p -s -c -v "$class" > "build/diagnostics/ManagementFactory-$name.txt" 2>&1; then
+              if grep -nE "ManagementFactory|java/lang/management" "build/diagnostics/ManagementFactory-$name.txt"; then
+                echo "MANAGEMENT_FACTORY_REFERENCE $class"
+              fi
+            else
+              echo "CLASS_NOT_FOUND $class" > "build/diagnostics/ManagementFactory-$name.txt"
+            fi
+          done
+          grep -nE "ManagementFactory|java/lang/management" build/diagnostics/ManagementFactory-*.txt || true
           authlib=""
           while IFS= read -r candidate; do
             if jar tf "$candidate" | grep -Fx "com/mojang/authlib/services/MinecraftServicesUserApiService.class" >/dev/null; then
