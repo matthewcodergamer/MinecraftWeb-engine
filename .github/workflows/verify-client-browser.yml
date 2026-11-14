@@ -59,6 +59,33 @@ jobs:
           MC_VERSION: "26.3"
         run: python3 scripts/fetch_minecraft.py --version "$MC_VERSION" --dest "$MC_DIR"
 
+      - name: Dump exact resource-pack ZIP loader bytecode for browser Path failure
+        env:
+          MC_DIR: ${{ runner.temp }}/minecraft
+          MC_VERSION: "26.3"
+        run: |
+          set -euo pipefail
+          jar="$MC_DIR/versions/$MC_VERSION/$MC_VERSION.jar"
+          mkdir -p build/diagnostics/resource-pack
+          for class in \
+            'net.minecraft.server.packs.repository.FolderRepositorySource$FolderPackDetector' \
+            'net.minecraft.server.packs.FilePackResources$FileResourcesSupplier' \
+            net.minecraft.server.packs.FilePackResources \
+            net.minecraft.server.packs.Pack \
+            net.minecraft.server.packs.linkfs.LinkFSPath; do
+            name="${class//./_}"
+            out="build/diagnostics/resource-pack/$name.txt"
+            echo "===== $class =====" | tee "$out"
+            entry="${class//.//}.class"
+            if jar tf "$jar" | grep -Fx "$entry" >/dev/null; then
+              javap -classpath "$jar" -p -s -c -v "$class" >> "$out"
+              echo "BYTECODE_CAPTURED $class"
+            else
+              echo "CLASS_NOT_FOUND_IN_CLIENT_JAR $class" | tee -a "$out"
+            fi
+          done
+          echo "Resource-pack loader bytecode diagnostics captured."
+          
       - name: Dump exact Netty NetUtil bytecode for WASM GC failure
         env:
           MC_DIR: ${{ runner.temp }}/minecraft
