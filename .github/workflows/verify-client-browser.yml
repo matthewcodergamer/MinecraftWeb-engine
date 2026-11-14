@@ -130,6 +130,14 @@ jobs:
             net.minecraft.client.gui.components.debug.DebugScreenEntryList \
             net.minecraft.client.HotbarManager \
             net.minecraft.client.tutorial.Tutorial \
+            net.minecraft.client.MouseHandler \
+            net.minecraft.client.KeyboardHandler \
+            net.minecraft.client.resources.language.LanguageManager \
+            net.minecraft.client.renderer.texture.TextureManager \
+            net.minecraft.client.renderer.ShaderManager \
+            net.minecraft.client.resources.SkinTextureDownloader \
+            net.minecraft.client.resources.SkinManager \
+            net.minecraft.client.sounds.MusicManager \
             com.mojang.blaze3d.systems.RenderSystem \
             com.mojang.blaze3d.platform.MonitorManager; do
             name="${class//./_}"
@@ -142,6 +150,43 @@ jobs:
             fi
           done
           grep -nE "ManagementFactory|java/lang/management" build/diagnostics/ManagementFactory-*.txt || true
+
+      - name: Exhaustively scan every Minecraft client class for JMX references
+        env:
+          MC_DIR: ${{ runner.temp }}/minecraft
+          MC_VERSION: "26.3"
+        run: |
+          set -euo pipefail
+          mkdir -p build/diagnostics/management-full
+          python3 - <<'PY'
+          import os, subprocess, zipfile
+          from pathlib import Path
+
+          jar = Path(os.environ["MC_DIR"]) / "versions" / os.environ["MC_VERSION"] / (os.environ["MC_VERSION"] + ".jar")
+          needles = (b"java/lang/management", b"java.lang.management", b"ManagementFactory", b"RuntimeMXBean")
+          hits = []
+          with zipfile.ZipFile(jar) as archive:
+              for entry in archive.infolist():
+                  if not entry.filename.endswith(".class"):
+                      continue
+                  data = archive.read(entry)
+                  if any(needle in data for needle in needles):
+                      hits.append(entry.filename[:-6].replace("/", "."))
+          hits.sort()
+          print(f"JMX_CLASS_SCAN total_classes={sum(1 for n in zipfile.ZipFile(jar).namelist() if n.endswith('.class'))} hits={len(hits)}")
+          for name in hits:
+              print(f"JMX_CLASS_HIT {name}")
+              target = Path("build/diagnostics/management-full") / (name.replace(".", "_") + ".txt")
+              target.parent.mkdir(parents=True, exist_ok=True)
+              with target.open("w") as out:
+                  out.write(f"===== {name} =====\\n")
+                  subprocess.run(["javap", "-classpath", str(jar), "-p", "-s", "-c", "-v", name],
+                                 stdout=out, stderr=subprocess.STDOUT, check=False)
+          Path("build/diagnostics/management-full/class-hits.txt").write_text(
+              "\\n".join(hits) + ("\\n" if hits else ""))
+          if not hits:
+              print("JMX_CLASS_SCAN_RESULT no Minecraft client class contains a JMX reference")
+          PY
           authlib=""
           while IFS= read -r candidate; do
             if jar tf "$candidate" | grep -Fx "com/mojang/authlib/services/MinecraftServicesUserApiService.class" >/dev/null; then
