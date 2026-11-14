@@ -154,6 +154,16 @@ jobs:
           javap -classpath "$authlib" -p -s -c -v com.mojang.authlib.services.MinecraftServicesUserApiService >> build/diagnostics/Authlib-fetchProperties.txt
           echo "Wrote exact Minecraft and Authlib bytecode diagnostics."
 
+      - name: Exhaustively scan Minecraft 26.3 JAR for java.lang.management references
+        env:
+          MC_DIR: ${{ runner.temp }}/minecraft
+          MC_VERSION: "26.3"
+        run: |
+          set -euo pipefail
+          mcjar="$MC_DIR/versions/$MC_VERSION/$MC_VERSION.jar"
+          python3 scripts/scan_management_refs.py "$mcjar" build/diagnostics/ManagementFactory-full-jar.txt
+          cat build/diagnostics/ManagementFactory-full-jar.txt
+
       - name: Preserve Minecraft bytecode diagnostics
         if: always()
         uses: actions/upload-artifact@v4
