@@ -31,6 +31,7 @@ BODY_STATIC org.joml.MemUtil createInstance()Lorg/joml/MemUtil; -> org.joml.Brow
 # --- net.minecraft.SystemReport: JMX/OSHI system probing -> browser equivalents ------------
 BODY_STATIC net.minecraft.client.Minecraft fillSystemReport(Lnet/minecraft/SystemReport;Lnet/minecraft/client/Minecraft;Lnet/minecraft/client/resources/language/LanguageManager;Ljava/lang/String;Lnet/minecraft/client/Options;)Lnet/minecraft/SystemReport; -> mcport.rt.SystemReportBrowser fillMinecraft
 BODY_STATIC net.minecraft.client.Minecraft lambda$fillUptime$0()Ljava/lang/String; -> mcport.rt.SystemReportBrowser uptime
+BODY net.minecraft.client.Minecraft fillUptime(Lnet/minecraft/CrashReportCategory;)V -> mcport.rt.SystemReportBrowser fillUptimeSafe
 BODY_STATIC net.minecraft.client.Minecraft saveReportAndShutdownSoundManager(Lnet/minecraft/client/Minecraft;Ljava/io/File;Lnet/minecraft/CrashReport;I)I -> mcport.rt.CrashReportBrowser saveReportAndShutdownSoundManager
 BODY_STATIC net.minecraft.SystemReport lambda$new$3()Ljava/lang/Object; -> mcport.rt.SystemReportBrowser heap
 BODY_STATIC net.minecraft.SystemReport lambda$new$4()Ljava/lang/Object; -> mcport.rt.SystemReportBrowser nonHeap
