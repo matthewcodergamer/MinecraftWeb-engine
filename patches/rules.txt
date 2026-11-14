@@ -194,8 +194,11 @@ BODY_STATIC org.lwjgl.stb.STBImageResize nstbir_resize_uint8_linear(JIIIJIIII)J 
 BODY_STATIC org.lwjgl.stb.STBImageWrite nstbi_write_png_to_func(JJIIIJI)I -> mcport.lwjgl.StbNatives writePng
 ZERO_NATIVES org.lwjgl.stb.LibSTB
 # libffi: callback descriptors only (the browser bridge needs no CIFs); Vulkan memory allocator and Tracy are
-# never loaded in the browser.
+# never loaded in the browser. LibFFI.<clinit> wraps the ffi_type_* natives in FFIType objects, but those
+# natives return 0 here, and FFIType(0) is a checked null pointer. The callback path (LwjglPatches.upcallCreate
+# + apiCreateCIF) ignores the CIF and FFI types entirely, so leave the type table empty instead of building it.
 ZERO_NATIVES org.lwjgl.system.libffi.LibFFI
+BODY_STATIC org.lwjgl.system.libffi.LibFFI <clinit>()V -> mcport.lwjgl.LwjglPatches noop
 ZERO_NATIVES org.lwjgl.util.vma.Vma
 ZERO_NATIVES org.lwjgl.util.vma.LibVma
 ZERO_NATIVES com.mojang.jtracy.TracyBindings
