@@ -49,3 +49,4 @@ The browser runtime does not provide the full desktop JVM or all native services
 ## Scope of This Status
 
 This document records verified repository and CI progress as of the timestamp above. A successful compile is not the same as a successful browser boot; a successful browser boot is not the same as a playable, fully compatible game. Roadmap items are plans, not completed features.
+
