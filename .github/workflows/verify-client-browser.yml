@@ -115,6 +115,27 @@ jobs:
           cat build/diagnostics/CuboidItemModel.txt
           cat build/diagnostics/CuboidItemModelWrapper.txt
 
+      - name: Dump Minecraft constructor and Authlib property-fetch bytecode
+        env:
+          MC_DIR: ${{ runner.temp }}/minecraft
+          MC_VERSION: "26.3"
+        run: |
+          set -euo pipefail
+          mkdir -p build/diagnostics
+          mcjar="$MC_DIR/versions/$MC_VERSION/$MC_VERSION.jar"
+          javap -classpath "$mcjar" -p -s -c -v net.minecraft.client.Minecraft > build/diagnostics/Minecraft-auth-bytecode.txt
+          authlib=""
+          while IFS= read -r candidate; do
+            if jar tf "$candidate" | grep -Fx "com/mojang/authlib/services/MinecraftServicesUserApiService.class" >/dev/null; then
+              authlib="$candidate"
+              break
+            fi
+          done < <(find "$MC_DIR/libraries" -type f -name 'authlib-*.jar' | sort)
+          test -n "$authlib"
+          echo "Authlib jar: $authlib" > build/diagnostics/Authlib-fetchProperties.txt
+          javap -classpath "$authlib" -p -s -c -v com.mojang.authlib.services.MinecraftServicesUserApiService >> build/diagnostics/Authlib-fetchProperties.txt
+          echo "Wrote exact Minecraft and Authlib bytecode diagnostics."
+
       - name: Preserve Minecraft bytecode diagnostics
         if: always()
         uses: actions/upload-artifact@v4
