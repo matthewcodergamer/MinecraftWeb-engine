@@ -292,3 +292,4 @@ TRACE 115 com.mojang.renderpearl.frontend.FrontendGpuDevice <init>(Lcom/mojang/r
 TRACE 116 com.mojang.blaze3d.systems.RenderSystem initRenderer(Lcom/mojang/renderpearl/api/device/GpuDevice;)V
 TRACE 117 net.minecraft.client.Minecraft run()V
 TRACE 118 org.lwjgl.system.MemoryStack stackPush()Lorg/lwjgl/system/MemoryStack;
+BODY com.mojang.blaze3d.platform.Window setIcon(Lnet/minecraft/server/packs/PackMetadataResources;Lcom/mojang/blaze3d/platform/IconSet;)V -> mcport.rt.WindowBrowser noopIcon
