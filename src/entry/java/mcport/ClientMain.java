@@ -30,6 +30,8 @@ public final class ClientMain {
                     "--versionType", "release"
             });
             BrowserRuntime.report("trace", "after-mojang-main-main");
+            // Main.main() returning is a critical lifecycle boundary in the browser port.
+            // Record it explicitly so smoke tests can distinguish a normal return from a stuck call.
             BrowserRuntime.report("stage", "mojang-main-returned");
         } catch (Throwable t) {
             BrowserRuntime.report("stage", "client-main-caught-throwable");
