@@ -4,6 +4,8 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
+import java.nio.ByteBuffer;
+import java.nio.channels.ClosedChannelException;
 import java.nio.channels.SeekableByteChannel;
 import java.nio.file.AccessDeniedException;
 import java.nio.file.AccessMode;
@@ -17,6 +19,7 @@ import java.nio.file.NotDirectoryException;
 import java.nio.file.OpenOption;
 import java.nio.file.Path;
 import java.nio.file.ReadOnlyFileSystemException;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileAttribute;
 import java.nio.file.attribute.FileAttributeView;
@@ -94,8 +97,45 @@ public class JarFileSystemProvider extends FileSystemProvider {
     }
 
     @Override
-    public SeekableByteChannel newByteChannel(Path path, Set<? extends OpenOption> options, FileAttribute<?>... attrs) {
-        throw new UnsupportedOperationException("use Files.newInputStream on archive paths");
+    public SeekableByteChannel newByteChannel(Path path, Set<? extends OpenOption> options, FileAttribute<?>... attrs) throws IOException {
+        // LinkFSProvider delegates reads to the target Path with Files.newByteChannel().
+        // Support that operation for archive-backed targets so inherited
+        // FileSystemProvider.newInputStream() can read LinkFS metadata.
+        if (options.contains(StandardOpenOption.WRITE) || options.contains(StandardOpenOption.APPEND)
+                || options.contains(StandardOpenOption.CREATE) || options.contains(StandardOpenOption.CREATE_NEW)
+                || options.contains(StandardOpenOption.TRUNCATE_EXISTING)) {
+            throw new ReadOnlyFileSystemException();
+        }
+        String key = archive(path).toAbsolutePath().normalize().toString().substring(1);
+        byte[] data = ClasspathResources.bytes(key);
+        if (data == null) throw new NoSuchFileException(path.toString());
+        return new SeekableByteChannel() {
+            private int position;
+            private boolean open = true;
+            private void ensureOpen() throws ClosedChannelException {
+                if (!open) throw new ClosedChannelException();
+            }
+            @Override public int read(ByteBuffer dst) throws IOException {
+                ensureOpen();
+                if (position >= data.length) return -1;
+                int count = Math.min(dst.remaining(), data.length - position);
+                dst.put(data, position, count);
+                position += count;
+                return count;
+            }
+            @Override public int write(ByteBuffer src) { throw new ReadOnlyFileSystemException(); }
+            @Override public long position() throws IOException { ensureOpen(); return position; }
+            @Override public SeekableByteChannel position(long value) throws IOException {
+                ensureOpen();
+                if (value < 0) throw new IllegalArgumentException("negative position");
+                position = (int) Math.min(value, data.length);
+                return this;
+            }
+            @Override public long size() throws IOException { ensureOpen(); return data.length; }
+            @Override public SeekableByteChannel truncate(long size) { throw new ReadOnlyFileSystemException(); }
+            @Override public boolean isOpen() { return open; }
+            @Override public void close() { open = false; }
+        };
     }
 
     @Override
