@@ -112,4 +112,21 @@ public final class SystemReportBrowser {
         return "N/A (browser runtime)";
     }
 
+
+    /**
+     * Crash-report uptime section: replace vanilla's invokedynamic suppliers so TeaVM
+     * never needs to resolve java.lang.management.ManagementFactory on this path.
+     * BODY instance replacements receive the original Minecraft receiver first.
+     */
+    public static void fillUptimeSafe(
+            net.minecraft.client.Minecraft minecraft,
+            net.minecraft.CrashReportCategory category) {
+        if (category != null) {
+            category.setDetail("JVM uptime", "N/A (browser runtime)");
+            category.setDetail("Wall uptime", "N/A (browser runtime)");
+            category.setDetail("High-res time", "N/A (browser runtime)");
+            category.setDetail("Client ticks", "N/A (browser runtime)");
+        }
+    }
+
 }
