@@ -1394,34 +1394,6 @@
       errorActions.appendChild(copy);
     }
 
-    // Java-only failures are survivable: the Rust body still draws its arena.
-    function enableRendererOnly() {
-      // Explicit preview escape hatch; this is not a successful Java world.
-      state.failed = false;
-      state.rendererOnly = true;
-      loading.classList.remove('error');
-      errorBox.style.display = 'none';
-      errorBox.textContent = '';
-      errorActions.innerHTML = '';
-      loading.classList.add('gone');
-      toast('Renderer-only preview — no Java world sections were received.');
-    }
-
-    function offerRendererOnly(note, auto) {
-      if (!state.bodyReady || state.done) return;
-      if (auto) { enableRendererOnly(); return; }
-      if ($('renderer-only')) return;
-      if (note) { errorBox.style.display = 'block'; errorBox.textContent = note; }
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'mc-button sprite-widget-button';
-      button.style.width = '240px';
-      button.textContent = 'Continue with renderer only';
-      button.onclick = enableRendererOnly;
-      button.id = 'renderer-only';
-      errorActions.appendChild(button);
-    }
-
     /* ------------------------------------------------------------ asset load */
     function parseArchive(buffer) {
       const view = new DataView(buffer);
@@ -1484,7 +1456,6 @@
       if (!state.bodyReady || !state.javaReady || sectionCount <= 0 || !state.firstChunk) return;
       if (now < state.minUntil || now < state.firstChunkAt + 150) return;
       state.done = true;
-      if (state.javaFallbackTimer) { clearInterval(state.javaFallbackTimer); state.javaFallbackTimer = 0; }
       window.__mcLoadingFinished = true;
       progress();
       loading.classList.add('done');
@@ -2526,20 +2497,7 @@
           // The brain's reported progress reaches 1.0 when its JavaScript has
           // been extracted, not when Java has generated a world. Boot from
           // there takes another minute or two, so do not treat 100% download
-          // as a stall. Java errors surface through mcBridge.onError; this is
-          // only the last-resort net for a brain that goes silent forever.
-          if (state.javaFallbackTimer) clearInterval(state.javaFallbackTimer);
-          let fallbackSince = 0;
-          state.javaFallbackTimer = setInterval(() => {
-            if (state.done || state.failed || state.javaReady) {
-              clearInterval(state.javaFallbackTimer); state.javaFallbackTimer = 0; return;
-            }
-            if (mcBridge.state.progress < 0.98) { fallbackSince = 0; return; }
-            if (!fallbackSince) { fallbackSince = performance.now(); return; }
-            if (performance.now() - fallbackSince < 240000) return;
-            clearInterval(state.javaFallbackTimer); state.javaFallbackTimer = 0;
-            offerRendererOnly('The Java client stopped before producing a world. You can explicitly open a renderer-only preview.', false);
-          }, 4000);
+          // as a stall. Java errors surface through mcBridge.onError.
         }, 80);
       }, 280);
     }
@@ -2952,18 +2910,16 @@
     };
     mcBridge.state.onJavaReady = () => { state.javaReady = true; state.java = 1; progress(); };
     mcBridge.state.onError = (text) => {
-      // A late crash after the renderer fallback must not yank a playing
-      // session back to the error screen.
-      if (state.done) { console.warn('Java after fallback: ' + text); return; }
-      fail(new Error('Java: ' + text), 'The Rust renderer is running. You can continue without the Java client.');
-      offerRendererOnly(null);
+      // A late crash must not yank an already-playing session back to the
+      // error screen.
+      if (state.done) { console.warn('Java after boot: ' + text); return; }
+      fail(new Error('Java: ' + text));
     };
 
     setInterval(() => {
       if (window.__mcBodyReady) state.bodyReady = true;
       if (mcBridge.state.javaReady) state.javaReady = true;
       if (window.__mcBodyError) fail(new Error(window.__mcBodyError));
-      if (state.failed && state.bodyReady) offerRendererOnly(null);
       if (!state.firstChunk && rustSectionCount() > 0) {
         state.firstChunk = true;
         state.firstChunkAt = performance.now();

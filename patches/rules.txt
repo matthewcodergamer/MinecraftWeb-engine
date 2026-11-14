@@ -140,6 +140,13 @@ REDIRECT java.nio.file.Path resolve(Ljava/lang/String;[Ljava/lang/String;)Ljava/
 REDIRECT_STATIC com.mojang.authlib.services.MinecraftServicesDiscoveryService create(Ljava/net/Proxy;)Lcom/mojang/authlib/services/MinecraftServicesDiscoveryService; -> mcport.rt.patch.AuthPatches createOffline
 REDIRECT_STATIC com.mojang.authlib.services.MinecraftServicesDiscoveryService create(Ljava/net/Proxy;Z)Lcom/mojang/authlib/services/MinecraftServicesDiscoveryService; -> mcport.rt.patch.AuthPatches createOffline
 REDIRECT_STATIC com.mojang.authlib.services.MinecraftServicesDiscoveryService create(Ljava/net/Proxy;ZLcom/mojang/authlib/Environment;)Lcom/mojang/authlib/services/MinecraftServicesDiscoveryService; -> mcport.rt.patch.AuthPatches createOfflineWithEnv
+# Minecraft.createUserApiService always asks the discovery service for a live user API, whose
+# constructor schedules getAttributes over HTTPS. The browser has no session: hand the client
+# authlib's OFFLINE implementation instead (the same one offlineDeveloperMode uses).
+BODY com.mojang.authlib.services.MinecraftServicesDiscoveryService createUserApiService(Ljava/lang/String;)Lcom/mojang/authlib/minecraft/UserApiService; -> mcport.rt.patch.AuthPatches createOfflineUserApiService
+# And if a live user API is ever constructed anyway, its property fetch returns the offline set
+# instead of throwing AuthenticationUnavailableException on a worker thread.
+BODY com.mojang.authlib.services.MinecraftServicesUserApiService fetchProperties()Lcom/mojang/authlib/minecraft/UserApiService$UserProperties; -> mcport.rt.patch.AuthPatches offlineProperties
 
 # --- Client code that probes the OS / loads native libraries ---------------------------------
 BODY_STATIC com.mojang.blaze3d.platform.NativeLibrariesBootstrap loadLibraries()V -> mcport.rt.patch.ClientPatches loadNativeLibraries
