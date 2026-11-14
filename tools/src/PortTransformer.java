@@ -291,7 +291,7 @@ public class PortTransformer implements ClassHolderTransformer {
         }
         BasicBlock block = program.createBasicBlock();
         InvokeInstruction invoke = new InvokeInstruction();
-        invoke.setType(InvocationType.SPECIAL);
+        invoke.setType(InvocationType.STATIC);
         invoke.setMethod(to);
         invoke.setArguments(args.toArray(new Variable[0]));
         ExitInstruction exit = new ExitInstruction();
