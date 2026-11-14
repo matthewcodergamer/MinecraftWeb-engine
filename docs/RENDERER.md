@@ -412,5 +412,25 @@ startup, confirming the raw-sRGB path. Screenshots above are CDP captures of the
 - **M3** — wire to the Java Brain (TeaVM build; transport v0), first real chunks and the
   camera pose supplied by Java.
 - **M4** — entities, sky/fog/lightmap, cutout + translucent sorting.
+
+### Entity & Hand Animation Bridge
+
+The Java Brain remains authoritative for entity simulation and animation pose calculation. M4 must connect those results to the Rust WebGPU Body; Java-side calculations alone do not make animated models visible.
+
+Investigation targets in the Minecraft client:
+
+- `net.minecraft.client.model.geom.ModelPart` — capture the evaluated per-part pose (translation, rotation, and scale) after animation setup.
+- `net.minecraft.client.renderer.entity.EntityRenderDispatcher` — identify the entity render boundary and collect entity model instances and render state.
+- `net.minecraft.client.renderer.FirstPersonHandsAndItemsRenderer` — capture first-person arm and held-item pose transforms, including swing/use progress.
+
+Implementation requirements:
+
+- Export evaluated transforms (prefer compact typed arrays; use 4×4 matrices only where needed) together with stable entity/model/part identifiers.
+- Include render-tick and partial-tick timing so Rust interpolates presentation only; never feed interpolated values back into Java physics.
+- Add a Rust entity/model pipeline that consumes dynamic geometry or reusable model meshes plus per-part transforms. Chunk buffers alone are insufficient.
+- Treat first-person hands/items as a distinct render pass with the correct depth, lighting, and ordering relative to the HUD.
+- Verify with a walking zombie (opposing arm/leg swing), head tracking, player arm movement, and sword swing before claiming parity.
+
+Status: planned for M4; no complete Java-to-Rust bone-transform or first-person item-pose bridge has been verified yet.
 - **M5** — mods (logic stays Java; Body only honours block/entity state).
 - **M6** — Iris subset (GLSL→WGSL via naga, shadow/gbuffer/composite passes).
