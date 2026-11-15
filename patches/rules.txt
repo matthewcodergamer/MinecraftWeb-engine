@@ -299,3 +299,7 @@ TRACE 117 net.minecraft.client.Minecraft run()V
 TRACE 118 org.lwjgl.system.MemoryStack stackPush()Lorg/lwjgl/system/MemoryStack;
 # BODY replacement targets are static helpers; PortTransformer emits INVOKESTATIC and prepends the instance receiver.
 BODY com.mojang.blaze3d.platform.Window setIcon(Lnet/minecraft/server/packs/PackMetadataResources;Lcom/mojang/blaze3d/platform/IconSet;)V -> mcport.rt.WindowBrowser noopIcon
+
+# Browser ZIP resource packs: replace the desktop ZipFile-backed supplier with the in-memory NIO/ZipInputStream implementation.
+# BODY_OBJECT preserves the private FolderPackDetector receiver as Object for the static compatibility helper.
+BODY_OBJECT net.minecraft.server.packs.repository.FolderRepositorySource$FolderPackDetector createZipPack(Ljava/nio/file/Path;)Lnet/minecraft/server/packs/repository/Pack$ResourcesSupplier; -> mcport.rt.patch.BrowserZipPackResources create
