@@ -11,7 +11,6 @@ import java.nio.file.attribute.FileAttribute;
 import java.nio.file.spi.FileSystemProvider;
 import java.util.HashSet;
 import java.util.Set;
-import net.minecraft.server.packs.linkfs.LinkFSProvider;
 
 /**
  * TeaVM-safe NIO stream/channel dispatch for browser-backed LinkFS paths.
@@ -58,11 +57,7 @@ public final class BrowserFileStreams {
     private static SeekableByteChannel openChannel(
             FileSystemProvider provider, Path path, Set<OpenOption> options,
             FileAttribute<?>... attrs) throws IOException {
-        if (provider instanceof LinkFSProvider) {
-            return ((LinkFSProvider) provider).newByteChannel(path, options, attrs);
-        }
-        System.err.println("[mcport.fs] newByteChannel fallback provider="
-                + provider.getClass().getName() + " path=" + path);
-        return provider.newByteChannel(path, options, attrs);
+        return net.minecraft.server.packs.linkfs.BrowserLinkFSAccess.newByteChannel(
+                provider, path, options, attrs);
     }
 }
