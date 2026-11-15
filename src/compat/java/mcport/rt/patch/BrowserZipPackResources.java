@@ -89,7 +89,7 @@ public final class BrowserZipPackResources {
 
     /** Reject absolute paths, traversal, backslashes and empty/ambiguous components. */
     private static String safeEntryName(String name) {
-        if (name == null || name.isEmpty() || name.startsWith("/") || name.indexOf('\\\\') >= 0) {
+        if (name == null || name.isEmpty() || name.startsWith("/") || name.indexOf('\\') >= 0) {
             return null;
         }
         String[] parts = name.split("/");
