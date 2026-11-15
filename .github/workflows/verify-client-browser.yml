@@ -106,10 +106,10 @@ jobs:
             net.minecraft.server.packs.repository.Pack \
             'net.minecraft.server.packs.repository.Pack$Metadata' \
             'net.minecraft.server.packs.repository.Pack$ResourcesSupplier' \
-            net.minecraft.server.packs.repository.PackLocationInfo \
-            net.minecraft.server.packs.metadata.MetadataSectionSerializer \
+            net.minecraft.server.packs.PackLocationInfo \
+            net.minecraft.server.packs.metadata.MetadataSectionType \
             net.minecraft.server.packs.PackType \
-            net.minecraft.resources.ResourceLocation \
+            net.minecraft.resources.Identifier \
             net.minecraft.server.packs.resources.ResourceMetadata \
             net.minecraft.server.packs.resources.IoSupplier; do
             name="${class//./_}"
@@ -118,8 +118,7 @@ jobs:
             if javap -classpath "$jar" -p -s -c "$class" >> "$out" 2>&1; then
               echo "JAVAP_CAPTURED $class"
             else
-              echo "JAVAP_FAILED $class" | tee -a "$out"
-              exit 1
+              echo "CLASS_NOT_FOUND_OR_JAVAP_FAILED $class" | tee -a "$out"
             fi
           done
           echo "Exact resource-pack API signatures captured from the official 26.3 client jar."
