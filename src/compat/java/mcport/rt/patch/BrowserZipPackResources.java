@@ -42,6 +42,10 @@ public final class BrowserZipPackResources {
     /** BODY_OBJECT target: the receiver is the private FolderPackDetector type, so accept Object. */
     public static Pack.ResourcesSupplier create(Object detector, Path archivePath) {
         try {
+            long archiveSize = Files.size(archivePath);
+            if (archiveSize > MAX_ARCHIVE_BYTES) {
+                throw new IOException("Resource pack archive exceeds browser limit: " + archiveSize);
+            }
             byte[] archive = Files.readAllBytes(archivePath);
             if (archive.length > MAX_ARCHIVE_BYTES) {
                 throw new IOException("Resource pack archive exceeds browser limit: " + archive.length);
