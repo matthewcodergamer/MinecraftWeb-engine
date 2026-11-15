@@ -44,6 +44,8 @@ public final class BrowserFileStreams {
 
     /**
      * Redirect target for Files.newByteChannel(Path, Set, FileAttribute...).
+     * The path's own filesystem determines the provider, not the provider of
+     * the LinkFS path that initiated the delegation.
      * Resolve the provider from the actual target path: LinkFS may delegate to
      * a different provider when it follows a link.
      */
