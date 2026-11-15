@@ -125,7 +125,7 @@ public final class BrowserZipPackResources {
         }
     }
 
-    private static final class Metadata implements net.minecraft.server.packs.PackMetadataResources {
+    private static class Metadata implements net.minecraft.server.packs.PackMetadataResources {
         private final PackLocationInfo location;
         private final Map<String, byte[]> entries;
         private final String prefix;
