@@ -5,6 +5,11 @@
 #   BODY / BODY_STATIC  replace a method body with a call to the target
 # Every rule must preserve the original method's documented behaviour (see docs/MIGRATION_MATRIX.md).
 
+# --- Browser resource-pack ZIP loading ------------------------------------------------------
+# FolderPackDetector is private; BODY_OBJECT erases only the helper receiver type, not the
+# actual runtime receiver. ZIP bytes are read through NIO and served from memory.
+BODY_OBJECT net.minecraft.server.packs.repository.FolderRepositorySource$FolderPackDetector createZipPack(Ljava/nio/file/Path;)Lnet/minecraft/server/packs/repository/Pack$ResourcesSupplier; -> mcport.rt.patch.BrowserZipPackResources create
+
 # --- JDK methods missing from TeaVM's class library ---------------------------------------
 # --- file system / assets ---------------------------------------------------------------
 # The browser has no launcher asset store; read the index from the client jar archive and

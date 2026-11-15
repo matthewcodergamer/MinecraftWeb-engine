@@ -77,12 +77,13 @@ public class PortTransformer implements ClassHolderTransformer {
                     }
                     MethodDescriptor desc = MethodDescriptor.parse(p[2]);
                     boolean isStatic = p[0].endsWith("_STATIC");
-                    String kind = p[0].replace("_STATIC", "");
+                    boolean objectReceiver = p[0].endsWith("_OBJECT");
+                    String kind = p[0].replace("_STATIC", "").replace("_OBJECT", "");
                     ValueType[] sig = desc.getSignature();
                     ValueType[] target = sig;
                     if (!isStatic) {
                         target = new ValueType[sig.length + 1];
-                        target[0] = ValueType.object(p[1]);
+                        target[0] = ValueType.object(objectReceiver ? "java.lang.Object" : p[1]);
                         System.arraycopy(sig, 0, target, 1, sig.length);
                     }
                     MethodReference to = new MethodReference(p[4], p[5], target);
