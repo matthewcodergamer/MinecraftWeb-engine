@@ -13,6 +13,7 @@ BODY_OBJECT net.minecraft.server.packs.repository.FolderRepositorySource$FolderP
 # Route provider stream reads through newByteChannel directly. This avoids TeaVM's inherited
 # FileSystemProvider.newInputStream dispatch while retaining LinkFSProvider delegation.
 REDIRECT java.nio.file.spi.FileSystemProvider newInputStream(Ljava/nio/file/Path;[Ljava/nio/file/OpenOption;)Ljava/io/InputStream; -> mcport.rt.fs.BrowserFileStreams newInputStream
+REDIRECT java.nio.file.Files newByteChannel(Ljava/nio/file/Path;Ljava/util/Set;[Ljava/nio/file/attribute/FileAttribute;)Ljava/nio/channels/SeekableByteChannel; -> mcport.rt.fs.BrowserFileStreams newByteChannel
 
 # --- JDK methods missing from TeaVM's class library ---------------------------------------
 # --- file system / assets ---------------------------------------------------------------

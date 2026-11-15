@@ -3,22 +3,22 @@ package mcport.rt.fs;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.channels.Channels;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.file.OpenOption;
-import java.nio.file.StandardOpenOption;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.FileAttribute;
 import java.nio.file.spi.FileSystemProvider;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
+import net.minecraft.server.packs.linkfs.LinkFSProvider;
 
 /**
- * TeaVM-safe implementation of FileSystemProvider.newInputStream.
+ * TeaVM-safe NIO stream/channel dispatch for browser-backed LinkFS paths.
  *
- * Some TeaVM-translated provider dispatch paths enter the JDK default
- * FileSystemProvider.newInputStream implementation and fail before reaching
- * the provider's newByteChannel implementation. Calling newByteChannel
- * directly on the provider preserves provider-specific LinkFS delegation
- * while avoiding the default newInputStream route.
+ * TeaVM does not reliably emit abstract FileSystemProvider dispatch for these
+ * methods. Call the concrete LinkFSProvider implementation directly, and log
+ * any other provider before falling back to normal provider dispatch.
  */
 public final class BrowserFileStreams {
     private BrowserFileStreams() {
@@ -39,6 +39,28 @@ public final class BrowserFileStreams {
         }
         System.out.println("[mcport.fs] newInputStream provider=" + provider.getClass().getName()
                 + " path=" + path);
-        return Channels.newInputStream(provider.newByteChannel(path, openOptions));
+        return Channels.newInputStream(openChannel(provider, path, openOptions));
+    }
+
+    /**
+     * Redirect target for Files.newByteChannel(Path, Set, FileAttribute...).
+     * Resolve the provider from the actual target path: LinkFS may delegate to
+     * a different provider when it follows a link.
+     */
+    public static SeekableByteChannel newByteChannel(
+            Path path, Set<OpenOption> options, FileAttribute<?>... attrs) throws IOException {
+        FileSystemProvider provider = path.getFileSystem().provider();
+        return openChannel(provider, path, options, attrs);
+    }
+
+    private static SeekableByteChannel openChannel(
+            FileSystemProvider provider, Path path, Set<OpenOption> options,
+            FileAttribute<?>... attrs) throws IOException {
+        if (provider instanceof LinkFSProvider) {
+            return ((LinkFSProvider) provider).newByteChannel(path, options, attrs);
+        }
+        System.err.println("[mcport.fs] newByteChannel fallback provider="
+                + provider.getClass().getName() + " path=" + path);
+        return provider.newByteChannel(path, options, attrs);
     }
 }
