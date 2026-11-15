@@ -51,6 +51,8 @@ public final class BrowserZipPackResources {
                 throw new IOException("Resource pack archive exceeds browser limit: " + archive.length);
             }
             Map<String, byte[]> entries = unzip(archive);
+            System.out.println("[mcport.zip] indexed entries=" + entries.size()
+                    + " archiveBytes=" + archive.length + " path=" + archivePath);
             return new Supplier(entries);
         } catch (IOException e) {
             throw new IllegalArgumentException("Unable to read browser resource-pack ZIP " + archivePath, e);
