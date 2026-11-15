@@ -10,6 +10,10 @@
 # actual runtime receiver. ZIP bytes are read through NIO and served from memory.
 BODY_OBJECT net.minecraft.server.packs.repository.FolderRepositorySource$FolderPackDetector createZipPack(Ljava/nio/file/Path;)Lnet/minecraft/server/packs/repository/Pack$ResourcesSupplier; -> mcport.rt.patch.BrowserZipPackResources create
 
+# Route provider stream reads through newByteChannel directly. This avoids TeaVM's inherited
+# FileSystemProvider.newInputStream dispatch while retaining LinkFSProvider delegation.
+REDIRECT java.nio.file.spi.FileSystemProvider newInputStream(Ljava/nio/file/Path;[Ljava/nio/file/OpenOption;)Ljava/io/InputStream; -> mcport.rt.fs.BrowserFileStreams newInputStream
+
 # --- JDK methods missing from TeaVM's class library ---------------------------------------
 # --- file system / assets ---------------------------------------------------------------
 # The browser has no launcher asset store; read the index from the client jar archive and
