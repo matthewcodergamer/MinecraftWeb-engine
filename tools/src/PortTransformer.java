@@ -195,7 +195,7 @@ public class PortTransformer implements ClassHolderTransformer {
                             }
                             args.addAll(invoke.getArguments());
                             invoke.setInstance(null);
-                            invoke.setType(InvocationType.STATIC);
+                            invoke.setType(InvocationType.SPECIAL);
                             invoke.setMethod(to);
                             invoke.setArguments(args.toArray(new Variable[0]));
                             count("REDIRECT " + ref);
@@ -250,7 +250,7 @@ public class PortTransformer implements ClassHolderTransformer {
         constant.setReceiver(value);
         constant.setConstant(id);
         InvokeInstruction invoke = new InvokeInstruction();
-        invoke.setType(InvocationType.STATIC);
+        invoke.setType(InvocationType.SPECIAL);
         invoke.setMethod(TRACE_METHOD);
         invoke.setArguments(new Variable[] {value});
 
@@ -366,7 +366,7 @@ public class PortTransformer implements ClassHolderTransformer {
         }
         BasicBlock block = program.createBasicBlock();
         InvokeInstruction invoke = new InvokeInstruction();
-        invoke.setType(InvocationType.STATIC);
+        invoke.setType(InvocationType.SPECIAL);
         invoke.setMethod(to);
         invoke.setArguments(args.toArray(new Variable[0]));
         ExitInstruction exit = new ExitInstruction();
