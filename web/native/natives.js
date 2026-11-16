@@ -112,6 +112,38 @@
   };
   globalThis.__mcNative = N;
 
+  // ---- OpenAL: report ALC capabilities without creating an audio device -------------------
+  // Minecraft queries the global ALC version while enumerating devices. Browsers in this
+  // headless port have no OpenAL device; answering this query must not imply that one exists.
+  // ALC 1.1 is sufficient for LWJGL's capability discovery, while zero-valued optional
+  // attributes advertise no hardware sources, frequency, or refresh capability.
+  N.define('alcGetIntegerv', (device, param, size, values) => {
+    const count = Math.max(0, Math.min(Number(size) | 0, 64));
+    if (!values || count === 0) return;
+
+    let value = 0;
+    switch (Number(param) | 0) {
+      case 0x1000: // ALC_MAJOR_VERSION
+        value = 1;
+        break;
+      case 0x1001: // ALC_MINOR_VERSION
+        value = 1;
+        break;
+      case 0x1002: // ALC_ATTRIBUTES_SIZE: no device attributes
+        value = 0;
+        break;
+      default:
+        // No audio device or hardware sources are exposed by this backend.
+        value = 0;
+        break;
+    }
+
+    const heap = H();
+    for (let i = 0; i < count; i++) {
+      heap.dv.setInt32(Number(values) + i * 4, i === 0 ? value : 0, true);
+    }
+  });
+
   // ---- libc (MemoryUtil's allocator functions, string helpers) ----
   N.defineAll({
     malloc: (n) => H().malloc(n, 16),
