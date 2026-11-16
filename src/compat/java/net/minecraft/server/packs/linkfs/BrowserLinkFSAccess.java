@@ -23,6 +23,9 @@ public final class BrowserLinkFSAccess {
         if (provider instanceof LinkFSProvider) {
             return ((LinkFSProvider) provider).newByteChannel(path, options, attrs);
         }
+        if (provider instanceof mcport.rt.fs.JarFileSystemProvider) {
+            return ((mcport.rt.fs.JarFileSystemProvider) provider).newByteChannel(path, options, attrs);
+        }
         System.err.println("[mcport.fs] newByteChannel fallback provider="
                 + provider.getClass().getName() + " path=" + path);
         return provider.newByteChannel(path, options, attrs);
