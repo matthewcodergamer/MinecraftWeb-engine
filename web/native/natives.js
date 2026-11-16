@@ -144,6 +144,32 @@
     }
   });
 
+  // ---- OpenAL: stable empty strings for the browser's no-device backend -----------------
+  // ALC string-returning APIs expose native pointers, not JS strings. Keep these allocations
+  // alive for the lifetime of the module because LWJGL may retain/read the pointers later.
+  let alcEmptyString = 0;
+  let alcEmptyDeviceList = 0;
+  N.define('alcGetString', (device, param) => {
+    const heap = H();
+    const p = Number(param) | 0;
+
+    // Device enumeration returns a double-NUL-terminated list. With no browser audio
+    // device, the list is empty; default-device and extension strings are empty C strings.
+    if (p === 0x1005 || p === 0x1013) { // ALC_DEVICE_SPECIFIER / ALC_ALL_DEVICES_SPECIFIER
+      if (!alcEmptyDeviceList) {
+        alcEmptyDeviceList = heap.malloc(2, 16);
+        heap.u8[alcEmptyDeviceList] = 0;
+        heap.u8[alcEmptyDeviceList + 1] = 0;
+      }
+      return alcEmptyDeviceList;
+    }
+
+    // ALC_DEFAULT_DEVICE_SPECIFIER, ALC_DEFAULT_ALL_DEVICES_SPECIFIER,
+    // ALC_EXTENSIONS, and unknown string queries all resolve to a valid empty C string.
+    if (!alcEmptyString) alcEmptyString = heap.newCString('');
+    return alcEmptyString;
+  });
+
   // ---- libc (MemoryUtil's allocator functions, string helpers) ----
   N.defineAll({
     malloc: (n) => H().malloc(n, 16),
