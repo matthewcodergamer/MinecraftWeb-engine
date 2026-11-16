@@ -201,6 +201,10 @@ BODY_STATIC org.lwjgl.stb.STBImage nstbi_load_from_memory(JIJJJI)J -> mcport.lwj
 BODY_STATIC org.lwjgl.stb.STBImage nstbi_failure_reason()J -> mcport.lwjgl.StbNatives failureReason
 BODY_STATIC org.lwjgl.stb.STBImage nstbi_image_free(J)V -> mcport.lwjgl.StbNatives imageFree
 BODY_STATIC org.lwjgl.stb.STBImageResize nstbir_resize_uint8_linear(JIIIJIIII)J -> mcport.lwjgl.StbNatives resizeLinear
+BODY_STATIC org.lwjgl.stb.STBImageWrite nstbi_write_png_compression_level()J -> mcport.lwjgl.StbNatives pngCompressionLevel
+BODY_STATIC org.lwjgl.stb.STBImageWrite nstbi_write_force_png_filter()J -> mcport.lwjgl.StbNatives pngForceFilter
+BODY_STATIC org.lwjgl.stb.STBImageWrite nstbi_zlib_compress()J -> mcport.lwjgl.StbNatives zlibCompress
+BODY_STATIC org.lwjgl.stb.STBImageWrite nstbi_write_tga_with_rle()J -> mcport.lwjgl.StbNatives tgaWithRle
 BODY_STATIC org.lwjgl.stb.STBImageWrite nstbi_write_png_to_func(JJIIIJI)I -> mcport.lwjgl.StbNatives writePng
 ZERO_NATIVES org.lwjgl.stb.LibSTB
 # libffi: callback descriptors only (the browser bridge needs no CIFs); Vulkan memory allocator and Tracy are

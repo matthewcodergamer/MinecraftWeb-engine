@@ -4,6 +4,26 @@ import org.teavm.jso.JSBody;
 
 /** LWJGL's STB bindings declare their own JNI natives; they are routed to web/native/stb.js. */
 public final class StbNatives {
+    // STBImageWrite exposes native addresses for three mutable C globals and one callback
+    // pointer. Its class initializer eagerly wraps these addresses in NIO buffers, even though
+    // Minecraft only calls the PNG callback writer. Back them with the browser's native heap.
+    // Values match stb_image_write.h defaults: compression=8, forced filter=-1, TGA RLE=1,
+    // and no custom zlib compressor (NULL).
+    private static final long PNG_COMPRESSION_LEVEL = allocateInt(8);
+    private static final long PNG_FORCE_FILTER = allocateInt(-1);
+    private static final long TGA_WITH_RLE = allocateInt(1);
+    private static final long ZLIB_COMPRESS = BrowserAllocator.INSTANCE.calloc(1, Long.BYTES);
+
+    private static long allocateInt(int value) {
+        long address = BrowserAllocator.INSTANCE.malloc(Integer.BYTES);
+        BrowserMemoryBackend.INSTANCE.putInt(address, value);
+        return address;
+    }
+
+    public static long pngCompressionLevel() { return PNG_COMPRESSION_LEVEL; }
+    public static long pngForceFilter() { return PNG_FORCE_FILTER; }
+    public static long tgaWithRle() { return TGA_WITH_RLE; }
+    public static long zlibCompress() { return ZLIB_COMPRESS; }
     private StbNatives() {
     }
 
