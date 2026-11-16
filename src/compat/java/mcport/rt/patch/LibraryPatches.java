@@ -11,6 +11,11 @@ public final class LibraryPatches {
     private LibraryPatches() {
     }
 
+    /** Browser-only no-op target for diagnostic static initializers that require JVM reflection. */
+    public static void noop() {
+        // Intentionally empty: debug memory tracking is not available in the browser runtime.
+    }
+
     /**
      * Gson UnsafeAllocator.create(): with no sun.misc.Unsafe/ObjectStreamClass, Gson's own
      * last-resort allocator is one that refuses to allocate. Same message shape as Gson's.
