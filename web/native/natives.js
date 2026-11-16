@@ -170,6 +170,37 @@
     return alcEmptyString;
   });
 
+  // ---- OpenAL ALC function discovery and headless device -------------------------------
+  // LWJGL treats these values as indices into __mcNative.fn, not linear-memory addresses.
+  // Keep every supported ALC entry point registered before returning it from alcGetProcAddress.
+  const alcFunctionNames = new Set([
+    'alcCreateContext', 'alcMakeContextCurrent', 'alcProcessContext', 'alcSuspendContext',
+    'alcDestroyContext', 'alcGetCurrentContext', 'alcGetContextsDevice', 'alcOpenDevice',
+    'alcCloseDevice', 'alcGetError', 'alcIsExtensionPresent', 'alcGetProcAddress',
+    'alcGetEnumValue', 'alcGetString', 'alcGetIntegerv'
+  ]);
+
+  // A virtual device/context lets LWJGL complete capability discovery. All audio remains silent.
+  N.defineAll({
+    alcOpenDevice: () => 1,
+    alcCloseDevice: (device) => !!device,
+    alcCreateContext: (device, attrs) => device ? 1 : 0,
+    alcMakeContextCurrent: (context) => true,
+    alcProcessContext: (context) => {},
+    alcSuspendContext: (context) => {},
+    alcDestroyContext: (context) => {},
+    alcGetCurrentContext: () => 1,
+    alcGetContextsDevice: (context) => 1,
+    alcGetError: (device) => 0,
+    alcIsExtensionPresent: (device, name) => false,
+    alcGetEnumValue: (device, name) => 0,
+    alcGetProcAddress: (device, namePtr) => {
+      const name = H().cstr(Number(namePtr));
+      if (!name || !alcFunctionNames.has(name)) return 0;
+      return N.address(name);
+    }
+  });
+
   // ---- libc (MemoryUtil's allocator functions, string helpers) ----
   N.defineAll({
     malloc: (n) => H().malloc(n, 16),
