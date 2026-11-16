@@ -51,6 +51,10 @@ BODY_STATIC net.minecraft.SystemReport printJvmFlags(Ljava/util/function/Predica
 REDIRECT java.lang.Class getGenericInterfaces()[Ljava/lang/reflect/Type; -> mcport.rt.jdk.JdkExt classGetGenericInterfaces
 REDIRECT java.lang.Class isAnonymousClass()Z -> mcport.rt.jdk.JdkExt classIsAnonymousClass
 
+# --- Browser debug memory tracking: native reflection metadata is not available in TeaVM --------
+# Memory untracking is diagnostic-only; disable its reflective static bootstrap in the browser.
+BODY_STATIC com.mojang.blaze3d.platform.DebugMemoryUntracker <clinit>()V -> mcport.rt.patch.LibraryPatches noop
+
 # --- Libraries: take the same fallback paths they use on JVMs without sun.misc.Unsafe ---------
 # Guava catches the failure (Exception|Error) and falls back to AtomicReferenceFieldUpdaterAtomicHelper.
 STUB_CLASS com.google.common.util.concurrent.AbstractFutureState$UnsafeAtomicHelper
