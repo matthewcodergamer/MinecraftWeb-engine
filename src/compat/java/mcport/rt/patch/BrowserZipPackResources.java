@@ -40,7 +40,7 @@ public final class BrowserZipPackResources {
     }
 
     /** BODY_OBJECT target: the receiver is the private FolderPackDetector type, so accept Object. */
-    public static Pack.ResourcesSupplier create(Object detector, Path archivePath) {
+    public static Pack.ResourcesSupplier create(Object detector, Path archivePath) throws IOException {
         try {
             long archiveSize = Files.size(archivePath);
             if (archiveSize > MAX_ARCHIVE_BYTES) {
@@ -55,7 +55,7 @@ public final class BrowserZipPackResources {
                     + " archiveBytes=" + archive.length + " path=" + archivePath);
             return new Supplier(entries);
         } catch (IOException e) {
-            throw new IllegalArgumentException("Unable to read browser resource-pack ZIP " + archivePath, e);
+            throw new IOException("Unable to read browser resource-pack ZIP " + archivePath, e);
         }
     }
 
