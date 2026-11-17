@@ -13,9 +13,6 @@ import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.FileAttribute;
 import java.nio.file.spi.FileSystemProvider;
 import java.util.Set;
-import org.teavm.classlib.java.nio.file.TStandardOpenOption;
-import org.teavm.classlib.java.nio.file.impl.TDefaultFileSystem;
-import org.teavm.classlib.java.nio.file.impl.TDefaultFileSystemProvider;
 
 /**
  * Public compatibility bridge for TeaVM's missing abstract provider dispatch.
@@ -41,7 +38,7 @@ public final class BrowserLinkFSAccess {
         // FileSystemProvider method here produces NoSuchMethodError. Adapt the
         // default VFS provider's stream into a read-only seekable channel instead.
         if (path.getFileSystem().provider() == provider) {
-            return defaultFileChannel(path, options, attrs);
+            return defaultFileChannel(provider, path, options, attrs);
         }
 
         throw new UnsupportedOperationException("No browser byte-channel adapter for "
@@ -49,7 +46,8 @@ public final class BrowserLinkFSAccess {
     }
 
     private static SeekableByteChannel defaultFileChannel(
-            Path path, Set<OpenOption> options, FileAttribute<?>... attrs) throws IOException {
+            FileSystemProvider provider, Path path, Set<OpenOption> options,
+            FileAttribute<?>... attrs) throws IOException {
         if (attrs.length != 0) {
             throw new UnsupportedOperationException("File attributes are not supported by the browser VFS");
         }
@@ -60,8 +58,11 @@ public final class BrowserLinkFSAccess {
         }
 
         byte[] bytes;
-        try (InputStream input = TDefaultFileSystemProvider.INSTANCE.newInputStream(
-                TDefaultFileSystem.INSTANCE.getPath(path.toString()), TStandardOpenOption.READ);
+        // Use the provider that owns this exact Path. Reconstructing the path
+        // through TeaVM's TDefaultFileSystem can produce a different provider
+        // instance, and the resulting dispatch fails for browser default-VFS
+        // paths (e.g. Realms persistence) with UnsupportedOperationException.
+        try (InputStream input = provider.newInputStream(path, StandardOpenOption.READ);
              ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[8192];
             int count;
