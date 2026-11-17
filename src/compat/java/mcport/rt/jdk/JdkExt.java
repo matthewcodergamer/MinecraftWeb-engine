@@ -240,6 +240,10 @@ public final class JdkExt {
         new Exception("Stack trace").printStackTrace();
     }
 
+    /** No hardware spin hint in Wasm GC; the callers only use it as a yield hint. */
+    public static void threadOnSpinWait() {
+    }
+
     /** Shutdown hooks never run: a browser tab is torn down without notice (state is saved explicitly). */
     public static void runtimeAddShutdownHook(Runtime runtime, Thread hook) {
     }
@@ -274,6 +278,15 @@ public final class JdkExt {
     }
 
     // java.util
+    /**
+     * {@code TimeUnit.convert(Duration)} is a Java 9 addition absent from TeaVM's class library.
+     * Same semantics as the JDK: total nanoseconds, then let the unit's own conversion truncate.
+     */
+    public static long timeUnitConvert(java.util.concurrent.TimeUnit unit, java.time.Duration duration) {
+        long nanos = duration.getSeconds() * 1_000_000_000L + duration.getNano();
+        return unit.convert(nanos, java.util.concurrent.TimeUnit.NANOSECONDS);
+    }
+
     public static <T> java.util.Iterator<T> spliteratorsIterator(Spliterator<? extends T> spliterator) {
         java.util.Objects.requireNonNull(spliterator);
         return new java.util.Iterator<T>() {
@@ -368,5 +381,13 @@ public final class JdkExt {
             p = p.resolve(m);
         }
         return p;
+    }
+
+    /** {@code ByteBuffer.slice(int, int)} is a Java 13 addition absent from TeaVM's library. */
+    public static java.nio.ByteBuffer byteBufferSlice(java.nio.ByteBuffer buffer, int index, int length) {
+        java.nio.ByteBuffer duplicate = buffer.duplicate();
+        duplicate.position(index);
+        duplicate.limit(index + length);
+        return duplicate.slice();
     }
 }

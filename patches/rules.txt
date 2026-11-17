@@ -30,6 +30,9 @@ REDIRECT_STATIC java.lang.Math fma(FFF)F -> mcport.rt.jdk.JdkExt fma
 REDIRECT_STATIC java.lang.Math fma(DDD)D -> mcport.rt.jdk.JdkExt fma
 REDIRECT_STATIC java.util.Date from(Ljava/time/Instant;)Ljava/util/Date; -> mcport.rt.jdk.JdkExt dateFrom
 REDIRECT java.util.Date toInstant()Ljava/time/Instant; -> mcport.rt.jdk.JdkExt dateToInstant
+REDIRECT java.util.concurrent.TimeUnit convert(Ljava/time/Duration;)J -> mcport.rt.jdk.JdkExt timeUnitConvert
+REDIRECT_STATIC java.lang.Thread onSpinWait()V -> mcport.rt.jdk.JdkExt threadOnSpinWait
+REDIRECT java.nio.ByteBuffer slice(II)Ljava/nio/ByteBuffer; -> mcport.rt.jdk.JdkExt byteBufferSlice
 REDIRECT_STATIC java.util.stream.StreamSupport intStream(Ljava/util/Spliterator$OfInt;Z)Ljava/util/stream/IntStream; -> mcport.rt.jdk.JdkExt intStream
 REDIRECT_STATIC java.util.stream.StreamSupport longStream(Ljava/util/Spliterator$OfLong;Z)Ljava/util/stream/LongStream; -> mcport.rt.jdk.JdkExt longStream
 REDIRECT java.lang.Runtime maxMemory()J -> mcport.rt.jdk.JdkExt runtimeMaxMemory
@@ -249,6 +252,8 @@ BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setLongLE([BIJ)V -> mcport
 
 # --- Java 25 Reader convenience method absent from TeaVM 0.16 ----------------------------
 REDIRECT java.io.Reader readAllAsString()Ljava/lang/String; -> mcport.rt.patch.ReaderPatches readAllAsString
+REDIRECT java.io.Reader transferTo(Ljava/io/Writer;)J -> mcport.rt.patch.ReaderPatches transferTo
+REDIRECT java.io.BufferedReader transferTo(Ljava/io/Writer;)J -> mcport.rt.patch.ReaderPatches transferTo
 
 REDIRECT java.util.zip.Inflater setInput(Ljava/nio/ByteBuffer;)V -> mcport.rt.patch.InflaterPatches setInput
 REDIRECT java.util.zip.Inflater inflate(Ljava/nio/ByteBuffer;)I -> mcport.rt.patch.InflaterPatches inflate

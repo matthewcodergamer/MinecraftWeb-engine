@@ -28,4 +28,31 @@ public final class ReaderPatches {
             }
         }
     }
+
+    /** {@code Reader.transferTo(Writer)} is a Java 10 addition absent from TeaVM's library. */
+    public static long transferTo(java.io.BufferedReader reader, java.io.Writer writer) throws IOException {
+        return transferTo((Reader) reader, writer);
+    }
+
+    public static long transferTo(Reader reader, java.io.Writer writer) throws IOException {
+        char[] buffer = new char[8192];
+        long total = 0;
+        while (true) {
+            int count = reader.read(buffer, 0, buffer.length);
+            if (count < 0) {
+                return total;
+            }
+            if (count == 0) {
+                int one = reader.read();
+                if (one < 0) {
+                    return total;
+                }
+                writer.write(one);
+                total++;
+            } else {
+                writer.write(buffer, 0, count);
+                total += count;
+            }
+        }
+    }
 }
