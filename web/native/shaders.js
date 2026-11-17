@@ -354,8 +354,11 @@
       let p = r.lists[type];
       const vars = r.classes[type] || [];
       if (p === undefined) {
-        p = vars.length ? h.calloc(o.SIZEOF * vars.length) : 0;
-        if (p) ctx.allocs.push(p);
+        // LWJGL's SpvcReflectedResource.create(pointer, count) constructs a Pointer that
+        // rejects address 0 when Checks are enabled, even for an empty list. SPIRV-Cross
+        // callers only dereference entries below count, so hand back a valid dummy block.
+        p = h.calloc(o.SIZEOF * Math.max(1, vars.length));
+        ctx.allocs.push(p);
         vars.forEach((v, i) => {
           const e = p + i * o.SIZEOF;
           const ptrType = c.m.types[v.type];

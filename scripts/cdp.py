@@ -236,6 +236,19 @@ def main():
                 ok = True
                 break
         print(f"{time.time() - t0:7.2f}s condition {'met' if ok else 'NOT met (timeout)'}", flush=True)
+        # Capture the visible page as soon as the wait condition is met: this is the
+        # only direct evidence that the real client (not just its logs) rendered.
+        if a.screenshot and ok:
+            try:
+                r = ws.call("Page.captureScreenshot", {"format": "png"}, pump=pump, timeout_sec=10)
+                data = r.get("result", {}).get("data")
+                if not data:
+                    raise RuntimeError("CDP returned no screenshot data")
+                with open(a.screenshot, "wb") as f:
+                    f.write(base64.b64decode(data))
+                print(f"screenshot -> {a.screenshot}")
+            except Exception as exc:
+                print(f"screenshot unavailable: {type(exc).__name__}: {exc}", flush=True)
         if not ok:
             try:
                 state_expr = "JSON.stringify({url:location.href,readyState:document.readyState,title:document.title,body:(document.body&&document.body.innerText||'').slice(0,4000),mc:window.__mc||null,bodyReady:window.__mcBodyReady,bodyError:window.__mcBodyError,bridge:window.mcBridge&&window.mcBridge.state?{error:window.mcBridge.state.error,sections:window.mcBridge.state.sections}:null,iframe:(()=>{const f=document.getElementById('mc-brain');return f?{src:f.src,readyState:f.contentDocument&&f.contentDocument.readyState,mc:f.contentWindow&&f.contentWindow.__mc}:null})()})"
@@ -278,18 +291,7 @@ def main():
         else:
             print("skipping post-timeout assertions/evaluations: page did not become responsive", flush=True)
             assert_ok = False
-        if a.screenshot and ok and assert_ok:
-            try:
-                r = ws.call("Page.captureScreenshot", {"format": "png"}, pump=pump, timeout_sec=10)
-                data = r.get("result", {}).get("data")
-                if not data:
-                    raise RuntimeError("CDP returned no screenshot data")
-                with open(a.screenshot, "wb") as f:
-                    f.write(base64.b64decode(data))
-                print(f"screenshot -> {a.screenshot}")
-            except Exception as exc:
-                print(f"screenshot unavailable: {type(exc).__name__}: {exc}", flush=True)
-        elif a.screenshot and not ok:
+        if a.screenshot and not ok:
             print("skipping requested screenshot: page did not become responsive", flush=True)
     finally:
         os.makedirs("build", exist_ok=True)
