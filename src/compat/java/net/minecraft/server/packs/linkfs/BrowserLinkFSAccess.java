@@ -13,6 +13,9 @@ import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.FileAttribute;
 import java.nio.file.spi.FileSystemProvider;
 import java.util.Set;
+import org.teavm.classlib.java.nio.file.TStandardOpenOption;
+import org.teavm.classlib.java.nio.file.impl.TDefaultFileSystem;
+import org.teavm.classlib.java.nio.file.impl.TDefaultFileSystemProvider;
 
 /**
  * Public compatibility bridge for TeaVM's missing abstract provider dispatch.
@@ -58,11 +61,12 @@ public final class BrowserLinkFSAccess {
         }
 
         byte[] bytes;
-        // Use the provider that owns this exact Path. Reconstructing the path
-        // through TeaVM's TDefaultFileSystem can produce a different provider
-        // instance, and the resulting dispatch fails for browser default-VFS
-        // paths (e.g. Realms persistence) with UnsupportedOperationException.
-        try (InputStream input = provider.newInputStream(path, StandardOpenOption.READ);
+        // Call TeaVM's concrete default-VFS provider directly. Calling the
+        // abstract FileSystemProvider method is redirected by our browser
+        // compatibility shim back into BrowserFileStreams.newInputStream,
+        // recursively reopening this same channel until the JS stack overflows.
+        try (InputStream input = TDefaultFileSystemProvider.INSTANCE.newInputStream(
+                TDefaultFileSystem.INSTANCE.getPath(path.toString()), TStandardOpenOption.READ);
              ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[8192];
             int count;
