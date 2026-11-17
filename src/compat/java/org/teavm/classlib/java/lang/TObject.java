@@ -73,7 +73,7 @@ public class TObject {
         }
         monitor.traceBudget--;
         try {
-            BrowserRuntime.report("monitor", message);
+            BrowserRuntime.report("trace", "[MONITOR] " + message);
         } catch (Throwable ignored) {
         }
     }
