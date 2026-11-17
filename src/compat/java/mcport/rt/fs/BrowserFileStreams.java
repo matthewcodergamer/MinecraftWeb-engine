@@ -35,8 +35,8 @@ public final class BrowserFileStreams {
                 openOptions.add(option);
             }
         }
-        System.out.println("[mcport.fs] newInputStream provider=" + provider.getClass().getName()
-                + " path=" + path);
+        // Do not log from this low-level stream shim: stdout is routed back
+        // through Minecraft's logger and can recurse while a resource is opened.
         return asInputStream(openChannel(provider, path, openOptions));
     }
 
