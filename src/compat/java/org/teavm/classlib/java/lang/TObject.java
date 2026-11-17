@@ -144,6 +144,7 @@ public class TObject {
             o.monitor = new Monitor();
             o.monitor.id = hashCode;
             o.monitor.traceId = ++nextMonitorTraceId;
+            o.monitor.traceBudget = 200;
         } else if (PlatformDetector.isLowLevel()) {
             int hashCode = hashCodeLowLevel(o);
             o.monitor = new Monitor();
@@ -175,9 +176,6 @@ public class TObject {
         }
 
         Monitor monitor = o.monitor;
-        if (monitor.traceBudget <= 0 && monitor.traceId != 0) {
-            monitor.traceBudget = 200;
-        }
         traceMonitor(monitor, "WAIT m" + monitor.traceId + " owner=" + monitorThreadName(monitor.owner)
                 + " count=" + monitor.count + " by=" + monitorThreadName(thread)
                 + " stack=" + BrowserRuntime.captureStack());
