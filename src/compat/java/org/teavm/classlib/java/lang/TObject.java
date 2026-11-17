@@ -79,7 +79,12 @@ public class TObject {
      * in the ordinary class so the class library statics cannot hide it.
      */
     private static void traceMonitor(Monitor monitor, String message) {
-        if (monitor == null || !PlatformDetector.isWebAssemblyGC()) {
+        if (monitor == null) {
+            return;
+        }
+        boolean webAssemblyGC = PlatformDetector.isWebAssemblyGC();
+        MonitorRegistry.platform(webAssemblyGC);
+        if (!webAssemblyGC) {
             return;
         }
         MonitorRegistry.trace(message);
@@ -152,6 +157,7 @@ public class TObject {
     }
 
     static void monitorEnterSync(TObject o) {
+        MonitorRegistry.syncEnterCall();
         if (Thread.currentThread() == null) {
             return;
         }
@@ -184,22 +190,24 @@ public class TObject {
     }
 
     static void monitorEnter(TObject o, int count) {
+        MonitorRegistry.enterCall();
         if (o.monitor == null) {
            createMonitor(o);
         }
         if (o.monitor.owner == null) {
-            o.monitor.count = 0;
+            o.monitor.count = count;
             setOwner(o.monitor, TThread.currentThread());
             traceMonitor(o.monitor, "ACQUIRE m" + o.monitor.traceId + " obj=" + o.monitor.entry.objectClass
                     + " by=" + monitorThreadName(o.monitor.owner));
-        }
-        if (o.monitor.owner != TThread.currentThread()) {
+        } else if (o.monitor.owner != TThread.currentThread()) {
             if (adoptAbandonedMonitor(o.monitor, count)) {
                 return;
             }
             monitorEnterWait(o, count);
         } else {
             o.monitor.count += count;
+            MonitorRegistry.owner(o.monitor.entry, monitorThreadName(o.monitor.owner),
+                    o.monitor.ownerFiberId, o.monitor.count, waiterCount(o.monitor));
         }
     }
 
@@ -246,6 +254,7 @@ public class TObject {
                 + " count=" + monitor.count + " by=" + monitorThreadName(TThread.currentThread()));
         monitor.count += count;
         setOwner(monitor, TThread.currentThread());
+        MonitorRegistry.adoptedCall();
         return true;
     }
 
@@ -254,6 +263,7 @@ public class TObject {
     }
 
     static void monitorEnterWait(TObject o, int count, AsyncCallback<Void> callback) {
+        MonitorRegistry.asyncEnterCall();
         TThread thread = TThread.currentThread();
         if (o.monitor == null) {
             createMonitor(o);
@@ -267,11 +277,13 @@ public class TObject {
             setOwner(o.monitor, thread);
             traceMonitor(o.monitor, "ACQUIRE m" + o.monitor.traceId + " obj=" + o.monitor.entry.objectClass
                     + " by=" + monitorThreadName(thread));
+            MonitorRegistry.immediateAcquire();
             callback.complete(null);
             return;
         }
 
         Monitor monitor = o.monitor;
+        MonitorRegistry.asyncWaitCall();
         diag("enter-wait m" + monitor.traceId + " obj=" + monitor.entry.objectClass
                 + " owner=" + monitorThreadName(monitor.owner) + " count=" + monitor.count
                 + " by=" + monitorThreadName(thread));
@@ -293,6 +305,7 @@ public class TObject {
             TThread.setCurrentThread(thread);
             o.monitor.count += count;
             setOwner(o.monitor, thread);
+            MonitorRegistry.grantCall();
             traceMonitor(monitor, "GRANT m" + monitor.traceId + " to=" + monitorThreadName(thread));
             callback.complete(null);
         });
@@ -303,11 +316,27 @@ public class TObject {
     }
 
     static void monitorExit(TObject o, int count) {
-        if (o.isEmptyMonitor() || o.monitor.owner != TThread.currentThread()) {
+        if (o.isEmptyMonitor()) {
             throw new TIllegalMonitorStateException();
         }
 
         Monitor monitor = o.monitor;
+        if (monitor.owner != TThread.currentThread()) {
+            // A fiber's Java thread instance can differ after a suspension. If the
+            // same cooperative fiber owns the lock, releasing it is correct; only a
+            // genuinely foreign thread is an error. Without this, a lock acquired
+            // before an await would never be released and every later contender
+            // would hang forever.
+            if (monitor.ownerFiber == null || monitor.ownerFiber != currentFiber()) {
+                throw new TIllegalMonitorStateException();
+            }
+            traceMonitor(monitor, "RELEASE-THREAD-DRIFT m" + monitor.traceId + " owner="
+                    + monitorThreadName(monitor.owner) + " by=" + monitorThreadName(TThread.currentThread()));
+            monitor.owner = TThread.currentThread();
+            monitor.ownerFiberId = currentFiberId();
+        }
+
+        MonitorRegistry.exitCall();
         monitor.count -= count;
         if (monitor.count > 0) {
             MonitorRegistry.owner(monitor.entry, monitorThreadName(monitor.owner), monitor.ownerFiberId,

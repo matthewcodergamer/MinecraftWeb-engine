@@ -23,6 +23,20 @@ public final class MonitorRegistry {
     private static int diagCount;
     private static String lastDiag;
 
+    // Path counters: which monitor entry point the client actually executes.
+    // Needed because the class library can be reached through several lowered
+    // forms (sync enter, async enter, async wait re-acquire).
+    private static int enterCalls;
+    private static int syncEnterCalls;
+    private static int asyncEnterCalls;
+    private static int asyncWaitCalls;
+    private static int immediateAcquires;
+    private static int grantCalls;
+    private static int exitCalls;
+    private static int adoptedCalls;
+    private static int platformSkips;
+    private static boolean gcPlatform;
+
     /** One lock we have seen; all fields are plain copies of monitor state. */
     public static final class Entry {
         public int traceId;
@@ -33,6 +47,46 @@ public final class MonitorRegistry {
         public int waiters;
         public boolean ownerAlive;
         public boolean owned;
+    }
+
+    public static void enterCall() {
+        enterCalls++;
+    }
+
+    public static void syncEnterCall() {
+        syncEnterCalls++;
+    }
+
+    public static void asyncEnterCall() {
+        asyncEnterCalls++;
+    }
+
+    public static void asyncWaitCall() {
+        asyncWaitCalls++;
+    }
+
+    public static void immediateAcquire() {
+        immediateAcquires++;
+    }
+
+    public static void grantCall() {
+        grantCalls++;
+    }
+
+    public static void exitCall() {
+        exitCalls++;
+    }
+
+    public static void adoptedCall() {
+        adoptedCalls++;
+    }
+
+    /** Records the platform detector's answer from inside the class library. */
+    public static void platform(boolean webAssemblyGC) {
+        gcPlatform = webAssemblyGC;
+        if (!webAssemblyGC) {
+            platformSkips++;
+        }
     }
 
     public static int nextTraceId() {
@@ -117,6 +171,11 @@ public final class MonitorRegistry {
     public static String describe() {
         StringBuilder sb = new StringBuilder();
         sb.append("locks=").append(entryCount).append(" traced=").append(traceTotal)
+                .append(" enter=").append(enterCalls).append(" sync=").append(syncEnterCalls)
+                .append(" async=").append(asyncEnterCalls).append(" rewait=").append(asyncWaitCalls)
+                .append(" imm=").append(immediateAcquires).append(" grant=").append(grantCalls)
+                .append(" exit=").append(exitCalls).append(" adopt=").append(adoptedCalls)
+                .append(" gc=").append(gcPlatform).append(" gcSkip=").append(platformSkips)
                 .append(" last=").append(lastDiag);
         Entry[] snapshot = entries;
         int count = entryCount;

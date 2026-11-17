@@ -24,6 +24,7 @@ public final class MonitorProbe {
                 } catch (InterruptedException ignored) {
                 }
                 BrowserRuntime.report("worker-inside-name", Thread.currentThread().getName());
+                BrowserRuntime.report("fiber.worker.id", String.valueOf(org.teavm.runtime.Fiber.currentId()));
                 BrowserRuntime.report("monitors-while-held",
                         org.teavm.classlib.java.lang.TObject.describeMonitors());
             }
@@ -36,6 +37,8 @@ public final class MonitorProbe {
             // Force full class-info emission; TeaVM 0.16 crashes on tiny programs otherwise.
             BrowserRuntime.report("probe-id", Identifier.withDefaultNamespace("monitor_probe").toString());
             final Thread mainThread = Thread.currentThread();
+            BrowserRuntime.report("fiber.main.id", String.valueOf(org.teavm.runtime.Fiber.currentId()));
+            BrowserRuntime.report("fiber.main.present", String.valueOf(org.teavm.runtime.Fiber.current() != null));
             BrowserRuntime.report("stage", "monitor-probe-start");
 
             synchronized (LOCK) {
