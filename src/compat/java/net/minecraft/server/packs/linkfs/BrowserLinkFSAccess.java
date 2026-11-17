@@ -40,12 +40,11 @@ public final class BrowserLinkFSAccess {
         // but no newByteChannel method. Calling the Java facade's abstract
         // FileSystemProvider method here produces NoSuchMethodError. Adapt the
         // default VFS provider's stream into a read-only seekable channel instead.
-        if (path.getFileSystem().provider() == provider) {
-            return defaultFileChannel(provider, path, options, attrs);
-        }
-
-        throw new UnsupportedOperationException("No browser byte-channel adapter for "
-                + provider.getClass().getName() + " path=" + path);
+        // LinkFS can delegate a linked target whose Path wrapper does not retain
+        // the original provider identity under TeaVM. The non-LinkFS/non-jar case
+        // is the browser's default VFS: adapt its stream directly instead of
+        // rejecting an otherwise readable config/resource path.
+        return defaultFileChannel(provider, path, options, attrs);
     }
 
     private static SeekableByteChannel defaultFileChannel(
