@@ -64,6 +64,10 @@ public final class ClientMain {
                         return;
                     }
                     BrowserRuntime.report("fibers", org.teavm.runtime.Fiber.dump());
+                    try {
+                        BrowserRuntime.report("monitors", org.teavm.classlib.java.lang.TObject.describeMonitors());
+                    } catch (Throwable ignored) {
+                    }
                 }
             }, "mc-fiber-watchdog");
             watchdog.setDaemon(true);

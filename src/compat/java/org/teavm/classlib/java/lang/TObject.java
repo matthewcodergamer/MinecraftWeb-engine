@@ -35,6 +35,7 @@ import org.teavm.platform.PlatformObject;
 import org.teavm.platform.PlatformRunnable;
 import org.teavm.runtime.Allocator;
 import org.teavm.runtime.EventQueue;
+import org.teavm.runtime.Fiber;
 import org.teavm.runtime.RuntimeArray;
 import org.teavm.runtime.RuntimeClass;
 import org.teavm.runtime.RuntimeObject;
@@ -54,6 +55,8 @@ public class TObject {
         int id;
         int traceId;
         int traceBudget;
+        String objectClass;
+        Object ownerFiber;
 
         Monitor() {
             this.owner = TThread.currentThread();
@@ -62,19 +65,94 @@ public class TObject {
 
     private static int nextMonitorTraceId;
 
+    private static int monitorTraceTotal;
+
+    private static final int MONITOR_TRACE_LIMIT = 4000;
+
+    /**
+     * Every monitor ever created, so a stalled client can report exactly which lock
+     * the blocked fiber wants and which fiber currently owns it. Diagnostic only.
+     */
+    private static Monitor[] allMonitors;
+
+    private static int allMonitorCount;
+
+    private static void registerMonitor(Monitor monitor) {
+        if (allMonitors == null) {
+            allMonitors = new Monitor[256];
+        }
+        if (allMonitorCount < allMonitors.length) {
+            allMonitors[allMonitorCount++] = monitor;
+        }
+    }
+
+    /** One line per live (owned or contended) monitor, for the boot watchdog. */
+    public static String describeMonitors() {
+        if (allMonitors == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < allMonitorCount; ++i) {
+            Monitor m = allMonitors[i];
+            if (m == null || (m.owner == null && (m.enteringThreads == null || m.enteringThreads.isEmpty()))) {
+                continue;
+            }
+            if (sb.length() > 0) {
+                sb.append(" | ");
+            }
+            sb.append('m').append(m.traceId);
+            sb.append(" obj=").append(m.objectClass != null ? m.objectClass : "?");
+            sb.append(" owner=").append(monitorThreadName(m.owner));
+            sb.append(" count=").append(m.count);
+            sb.append(" waiters=").append(m.enteringThreads != null ? m.enteringThreads.size() : 0);
+            if (m.owner != null) {
+                boolean alive = true;
+                try {
+                    alive = m.owner.isAlive();
+                } catch (Throwable ignored) {
+                }
+                sb.append(" ownerAlive=").append(alive);
+                sb.append(" ownerIsCurrent=").append(m.owner == TThread.currentThread());
+            }
+        }
+        return sb.toString();
+    }
+
+
     /**
      * Emits one line of monitor lifecycle diagnostics for a monitor that has actually
      * contended. Only the Wasm-GC browser target is instrumented, and each monitor gets
      * a small budget so a hot lock cannot flood the CI console.
      */
     private static void traceMonitor(Monitor monitor, String message) {
-        if (monitor == null || monitor.traceBudget <= 0 || !PlatformDetector.isWebAssemblyGC()) {
+        if (monitor == null || monitor.traceBudget <= 0 || monitorTraceTotal >= MONITOR_TRACE_LIMIT
+                || !PlatformDetector.isWebAssemblyGC()) {
             return;
         }
         monitor.traceBudget--;
+        monitorTraceTotal++;
         try {
             BrowserRuntime.report("trace", "[MONITOR] " + message);
         } catch (Throwable ignored) {
+        }
+    }
+
+    private static Object currentFiber() {
+        try {
+            return Fiber.current();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static boolean ownerIsDead(TThread owner) {
+        if (owner == null) {
+            return false;
+        }
+        try {
+            return !owner.isAlive();
+        } catch (Throwable ignored) {
+            return false;
         }
     }
 
@@ -99,6 +177,7 @@ public class TObject {
         }
         if (o.monitor.owner == null) {
             o.monitor.owner = TThread.currentThread();
+            o.monitor.ownerFiber = currentFiber();
         } else if (o.monitor.owner != TThread.currentThread()) {
             throw new IllegalStateException("Can't enter monitor from another thread synchronously");
         }
@@ -114,6 +193,7 @@ public class TObject {
         }
         if (--o.monitor.count == 0) {
             o.monitor.owner = null;
+            o.monitor.ownerFiber = null;
         }
         o.isEmptyMonitor();
     }
@@ -128,10 +208,14 @@ public class TObject {
         }
         if (o.monitor.owner == null) {
             o.monitor.owner = TThread.currentThread();
-            traceMonitor(o.monitor, "ACQUIRE m" + o.monitor.traceId + " by="
-                    + monitorThreadName(o.monitor.owner));
+            o.monitor.ownerFiber = currentFiber();
+            traceMonitor(o.monitor, "ACQUIRE m" + o.monitor.traceId + " obj=" + o.monitor.objectClass
+                    + " by=" + monitorThreadName(o.monitor.owner));
         }
         if (o.monitor.owner != TThread.currentThread()) {
+            if (adoptAbandonedMonitor(o.monitor, count)) {
+                return;
+            }
             monitorEnterWait(o, count);
         } else {
             o.monitor.count += count;
@@ -144,7 +228,13 @@ public class TObject {
             o.monitor = new Monitor();
             o.monitor.id = hashCode;
             o.monitor.traceId = ++nextMonitorTraceId;
-            o.monitor.traceBudget = 200;
+            o.monitor.traceBudget = 2000;
+            o.monitor.ownerFiber = o.monitor.owner != null ? currentFiber() : null;
+            try {
+                o.monitor.objectClass = o.getClass().getName();
+            } catch (Throwable ignored) {
+            }
+            registerMonitor(o.monitor);
         } else if (PlatformDetector.isLowLevel()) {
             int hashCode = hashCodeLowLevel(o);
             o.monitor = new Monitor();
@@ -152,6 +242,29 @@ public class TObject {
         } else {
             o.monitor = new Monitor();
         }
+    }
+
+    /**
+     * Recovers a monitor whose recorded owner can never release it:
+     *  - the same cooperative fiber already owns it but the recorded Java thread
+     *    instance changed identity across a suspension point (self-deadlock), or
+     *  - the owning thread has terminated without running its monitorExit.
+     * In both cases the lock is effectively free for the calling fiber.
+     */
+    private static boolean adoptAbandonedMonitor(Monitor monitor, int count) {
+        Object fiber = currentFiber();
+        boolean sameFiber = fiber != null && monitor.ownerFiber == fiber;
+        boolean deadOwner = ownerIsDead(monitor.owner);
+        if (!sameFiber && !deadOwner) {
+            return false;
+        }
+        traceMonitor(monitor, (sameFiber ? "STALE-OWNER m" : "DEAD-OWNER m") + monitor.traceId
+                + " obj=" + monitor.objectClass + " recorded=" + monitorThreadName(monitor.owner)
+                + " count=" + monitor.count + " by=" + monitorThreadName(TThread.currentThread()));
+        monitor.owner = TThread.currentThread();
+        monitor.ownerFiber = fiber;
+        monitor.count += count;
+        return true;
     }
 
     static void monitorEnterWait(TObject o, int count) {
@@ -168,23 +281,33 @@ public class TObject {
             return;
         } else if (o.monitor.owner == null) {
             o.monitor.owner = thread;
+            o.monitor.ownerFiber = currentFiber();
             TThread.setCurrentThread(thread);
             o.monitor.count += count;
-            traceMonitor(o.monitor, "ACQUIRE m" + o.monitor.traceId + " by=" + monitorThreadName(thread));
+            traceMonitor(o.monitor, "ACQUIRE m" + o.monitor.traceId + " obj=" + o.monitor.objectClass
+                    + " by=" + monitorThreadName(thread));
             callback.complete(null);
             return;
         }
 
         Monitor monitor = o.monitor;
-        traceMonitor(monitor, "WAIT m" + monitor.traceId + " owner=" + monitorThreadName(monitor.owner)
+        if (adoptAbandonedMonitor(monitor, count)) {
+            TThread.setCurrentThread(thread);
+            callback.complete(null);
+            return;
+        }
+        traceMonitor(monitor, "WAIT m" + monitor.traceId + " obj=" + monitor.objectClass
+                + " owner=" + monitorThreadName(monitor.owner)
                 + " count=" + monitor.count + " by=" + monitorThreadName(thread)
                 + " stack=" + BrowserRuntime.captureStack());
         if (monitor.enteringThreads == null) {
             monitor.enteringThreads = new ArrayDeque<>();
         }
+        final Object waiterFiber = currentFiber();
         monitor.enteringThreads.add(() -> {
             TThread.setCurrentThread(thread);
             o.monitor.owner = thread;
+            o.monitor.ownerFiber = waiterFiber;
             o.monitor.count += count;
             traceMonitor(monitor, "GRANT m" + monitor.traceId + " to=" + monitorThreadName(thread));
             callback.complete(null);
@@ -207,8 +330,9 @@ public class TObject {
         }
 
         monitor.owner = null;
+        monitor.ownerFiber = null;
         if (monitor.enteringThreads != null && !monitor.enteringThreads.isEmpty()) {
-            traceMonitor(monitor, "RELEASE m" + monitor.traceId + " by="
+            traceMonitor(monitor, "RELEASE m" + monitor.traceId + " obj=" + monitor.objectClass + " by="
                     + monitorThreadName(TThread.currentThread()) + " waiters=" + monitor.enteringThreads.size());
             if (PlatformDetector.isLowLevel() || PlatformDetector.isWebAssemblyGC()) {
                 EventQueue.offer(() -> waitForOtherThreads(o));
