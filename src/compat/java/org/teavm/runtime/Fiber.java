@@ -269,6 +269,12 @@ public final class Fiber {
         return current;
     }
 
+    /** Fiber id as printed by {@link #dump()}, or -1 outside a fiber. */
+    @Unmanaged
+    public static int currentId() {
+        return current != null ? current.id : -1;
+    }
+
     @Unmanaged
     public boolean isSuspending() {
         return state == STATE_SUSPENDING;

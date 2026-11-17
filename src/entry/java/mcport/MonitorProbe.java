@@ -24,6 +24,8 @@ public final class MonitorProbe {
                 } catch (InterruptedException ignored) {
                 }
                 BrowserRuntime.report("worker-inside-name", Thread.currentThread().getName());
+                BrowserRuntime.report("monitors-while-held",
+                        org.teavm.classlib.java.lang.TObject.describeMonitors());
             }
             BrowserRuntime.report("worker-released-lock", "ok");
         }
@@ -64,6 +66,10 @@ public final class MonitorProbe {
             }
             BrowserRuntime.report("stage", "monitor-probe-contention-ok");
             BrowserRuntime.report("monitors", org.teavm.classlib.java.lang.TObject.describeMonitors());
+            BrowserRuntime.report("class.tobject", org.teavm.classlib.java.lang.TObject.class.getName()
+                    + " id=" + System.identityHashCode(org.teavm.classlib.java.lang.TObject.class));
+            BrowserRuntime.report("class.object", Object.class.getName()
+                    + " id=" + System.identityHashCode(Object.class));
 
             worker.join(2000);
             BrowserRuntime.report("main-name-late", Thread.currentThread().getName());
