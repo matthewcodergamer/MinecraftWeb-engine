@@ -2,7 +2,6 @@ package mcport.rt.fs;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.channels.Channels;
 import java.nio.channels.SeekableByteChannel;
 import java.nio.file.OpenOption;
 import java.nio.file.Path;
@@ -38,7 +37,60 @@ public final class BrowserFileStreams {
         }
         System.out.println("[mcport.fs] newInputStream provider=" + provider.getClass().getName()
                 + " path=" + path);
-        return Channels.newInputStream(openChannel(provider, path, openOptions));
+        return asInputStream(openChannel(provider, path, openOptions));
+    }
+
+    /**
+     * Avoid java.nio.channels.Channels: TeaVM 0.16 does not provide that JDK
+     * utility class. This adapter implements the only operation required by
+     * the browser VFS here, converting the already-open channel to an input
+     * stream without introducing another class-library dependency.
+     */
+    private static InputStream asInputStream(SeekableByteChannel channel) {
+        return new InputStream() {
+            private boolean closed;
+
+            @Override
+            public int read() throws IOException {
+                byte[] one = new byte[1];
+                int count = read(one, 0, 1);
+                return count < 0 ? -1 : one[0] & 0xff;
+            }
+
+            @Override
+            public int read(byte[] bytes, int offset, int length) throws IOException {
+                if (closed) {
+                    throw new IOException("Stream is closed");
+                }
+                if (bytes == null) {
+                    throw new NullPointerException("bytes");
+                }
+                if (offset < 0 || length < 0 || length > bytes.length - offset) {
+                    throw new IndexOutOfBoundsException();
+                }
+                if (length == 0) {
+                    return 0;
+                }
+                return channel.read(java.nio.ByteBuffer.wrap(bytes, offset, length));
+            }
+
+            @Override
+            public int available() throws IOException {
+                if (closed) {
+                    throw new IOException("Stream is closed");
+                }
+                long remaining = Math.max(0L, channel.size() - channel.position());
+                return (int) Math.min(Integer.MAX_VALUE, remaining);
+            }
+
+            @Override
+            public void close() throws IOException {
+                if (!closed) {
+                    closed = true;
+                    channel.close();
+                }
+            }
+        };
     }
 
     /**
