@@ -228,7 +228,13 @@ public class TObject {
         if (monitor.enteringThreads != null && !monitor.enteringThreads.isEmpty()) {
             var enteringThreads = monitor.enteringThreads;
             PlatformRunnable r = enteringThreads.remove();
-            monitor.enteringThreads = null;
+            // Keep the remaining contenders queued. Clearing this queue after
+            // granting only one waiter silently strands every other fiber that
+            // was waiting for the same monitor; the next owner release is
+            // responsible for granting the next waiter.
+            if (enteringThreads.isEmpty()) {
+                monitor.enteringThreads = null;
+            }
             r.run();
         }
     }
