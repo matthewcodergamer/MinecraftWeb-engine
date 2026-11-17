@@ -27,6 +27,10 @@ public final class BrowserRuntime {
     @JSBody(params = "text", script = "console.log(text);")
     public static native void log(String text);
 
+    /** Captures the live JS/Wasm call chain for deadlock diagnostics (the Java frames are synthetic). */
+    @JSBody(script = "try { return String(new Error().stack || ''); } catch (e) { return ''; }")
+    public static native String captureStack();
+
     /** Captures tab visibility and focus at the exact Java fiber suspension point. */
     @JSBody(script = "return 'visibilityState=' + document.visibilityState + ' hasFocus=' + document.hasFocus();")
     public static native String suspendDocumentState();

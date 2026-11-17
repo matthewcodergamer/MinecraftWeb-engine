@@ -17,6 +17,7 @@ package org.teavm.classlib.java.lang;
 
 import java.util.ArrayDeque;
 import java.util.Queue;
+import mcport.rt.BrowserRuntime;
 import org.teavm.backend.wasm.runtime.WasmGCSupport;
 import org.teavm.classlib.PlatformDetector;
 import org.teavm.dependency.PluggableDependency;
@@ -51,9 +52,37 @@ public class TObject {
         TThread owner;
         int count;
         int id;
+        int traceId;
+        int traceBudget;
 
         Monitor() {
             this.owner = TThread.currentThread();
+        }
+    }
+
+    private static int nextMonitorTraceId;
+
+    /**
+     * Emits one line of monitor lifecycle diagnostics for a monitor that has actually
+     * contended. Only the Wasm-GC browser target is instrumented, and each monitor gets
+     * a small budget so a hot lock cannot flood the CI console.
+     */
+    private static void traceMonitor(Monitor monitor, String message) {
+        if (monitor == null || monitor.traceBudget <= 0 || !PlatformDetector.isWebAssemblyGC()) {
+            return;
+        }
+        monitor.traceBudget--;
+        try {
+            BrowserRuntime.report("monitor", message);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static String monitorThreadName(TThread thread) {
+        try {
+            return thread != null ? thread.getName() : "null";
+        } catch (Throwable t) {
+            return "?";
         }
     }
 
@@ -99,6 +128,8 @@ public class TObject {
         }
         if (o.monitor.owner == null) {
             o.monitor.owner = TThread.currentThread();
+            traceMonitor(o.monitor, "ACQUIRE m" + o.monitor.traceId + " by="
+                    + monitorThreadName(o.monitor.owner));
         }
         if (o.monitor.owner != TThread.currentThread()) {
             monitorEnterWait(o, count);
@@ -112,6 +143,7 @@ public class TObject {
             int hashCode = o.wasmGCIdentity();
             o.monitor = new Monitor();
             o.monitor.id = hashCode;
+            o.monitor.traceId = ++nextMonitorTraceId;
         } else if (PlatformDetector.isLowLevel()) {
             int hashCode = hashCodeLowLevel(o);
             o.monitor = new Monitor();
@@ -137,11 +169,18 @@ public class TObject {
             o.monitor.owner = thread;
             TThread.setCurrentThread(thread);
             o.monitor.count += count;
+            traceMonitor(o.monitor, "ACQUIRE m" + o.monitor.traceId + " by=" + monitorThreadName(thread));
             callback.complete(null);
             return;
         }
 
         Monitor monitor = o.monitor;
+        if (monitor.traceBudget <= 0 && monitor.traceId != 0) {
+            monitor.traceBudget = 200;
+        }
+        traceMonitor(monitor, "WAIT m" + monitor.traceId + " owner=" + monitorThreadName(monitor.owner)
+                + " count=" + monitor.count + " by=" + monitorThreadName(thread)
+                + " stack=" + BrowserRuntime.captureStack());
         if (monitor.enteringThreads == null) {
             monitor.enteringThreads = new ArrayDeque<>();
         }
@@ -149,6 +188,7 @@ public class TObject {
             TThread.setCurrentThread(thread);
             o.monitor.owner = thread;
             o.monitor.count += count;
+            traceMonitor(monitor, "GRANT m" + monitor.traceId + " to=" + monitorThreadName(thread));
             callback.complete(null);
         });
     }
@@ -170,6 +210,8 @@ public class TObject {
 
         monitor.owner = null;
         if (monitor.enteringThreads != null && !monitor.enteringThreads.isEmpty()) {
+            traceMonitor(monitor, "RELEASE m" + monitor.traceId + " by="
+                    + monitorThreadName(TThread.currentThread()) + " waiters=" + monitor.enteringThreads.size());
             if (PlatformDetector.isLowLevel() || PlatformDetector.isWebAssemblyGC()) {
                 EventQueue.offer(() -> waitForOtherThreads(o));
             } else {

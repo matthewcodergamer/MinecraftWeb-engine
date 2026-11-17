@@ -45,6 +45,7 @@ public final class Fiber {
     private boolean daemon;
 
     private Thread owner;
+    private String threadName;
     private String lastSuspend;
     private String lastResume;
     private boolean finished;
@@ -91,9 +92,9 @@ public final class Fiber {
             }
             sb.append('#').append(f.id);
             sb.append(f.daemon ? "(daemon)" : "(user)");
-            String name = null;
+            String name = f.threadName;
             try {
-                if (f.owner != null) {
+                if (name == null && f.owner != null) {
                     name = f.owner.getName();
                 }
             } catch (Throwable ignored) {
@@ -336,6 +337,10 @@ public final class Fiber {
                     + "('Interaction with JavaScript' section)");
         }
         Thread javaThread = Thread.currentThread();
+        try {
+            fiber.threadName = javaThread != null ? javaThread.getName() : null;
+        } catch (Throwable ignored) {
+        }
         if (fiber.isResuming()) {
             fiber.state = STATE_RUNNING;
             if (fiber.exception != null) {
