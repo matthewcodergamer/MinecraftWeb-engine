@@ -13,8 +13,8 @@ import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.FileAttribute;
 import java.nio.file.spi.FileSystemProvider;
 import java.util.Set;
-import org.teavm.classlib.java.nio.file.TPath;
 import org.teavm.classlib.java.nio.file.TStandardOpenOption;
+import org.teavm.classlib.java.nio.file.impl.TDefaultFileSystem;
 import org.teavm.classlib.java.nio.file.impl.TDefaultFileSystemProvider;
 
 /**
@@ -61,7 +61,7 @@ public final class BrowserLinkFSAccess {
 
         byte[] bytes;
         try (InputStream input = TDefaultFileSystemProvider.INSTANCE.newInputStream(
-                (TPath) path, TStandardOpenOption.READ);
+                TDefaultFileSystem.INSTANCE.getPath(path.toString()), TStandardOpenOption.READ);
              ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[8192];
             int count;
