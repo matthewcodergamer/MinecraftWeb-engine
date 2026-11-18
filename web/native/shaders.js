@@ -207,7 +207,6 @@
 
     function inferIntegerType(expression) {
       let expr = expression.trim();
-      // Remove balanced outer parentheses without changing nested expressions.
       while (expr.startsWith('(') && expr.endsWith(')')) {
         let depth = 0, closesAtEnd = false;
         for (let i = 0; i < expr.length; i++) {
@@ -221,21 +220,20 @@
         expr = expr.slice(1, -1).trim();
       }
 
-      const constructor = /^(int|uint|ivec[234]|uvec[234])\\s*\\(/.exec(expr);
+      const constructor = /^(int|uint|ivec[234]|uvec[234])\s*\(/.exec(expr);
       if (constructor) return scalarIntegerType(constructor[1]);
-      if (/^[+-]?\\d+[uU]$/.test(expr)) return 'uint';
-      if (/^[+-]?\\d+$/.test(expr)) return 'int';
+      if (/^[+-]?\d+[uU]$/.test(expr)) return 'uint';
+      if (/^[+-]?\d+$/.test(expr)) return 'int';
 
       const declarationType = (name) => {
         if (/^(gl_VertexID|gl_InstanceID|gl_PrimitiveID|gl_Layer|gl_SampleID)$/.test(name)) return 'int';
-        const escaped = name.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
-        const variable = new RegExp('\\\\b(u?int|[iu]vec[234])\\\\s+' + escaped + '\\\\b').exec(source);
+        const variable = new RegExp('\\b(u?int|[iu]vec[234])\\s+' + name + '\\b').exec(source);
         if (variable) return scalarIntegerType(variable[1]);
-        const fn = new RegExp('\\\\b(u?int|[iu]vec[234])\\\\s+' + escaped + '\\\\s*\\\\(').exec(source);
+        const fn = new RegExp('\\b(u?int|[iu]vec[234])\\s+' + name + '\\s*\\(').exec(source);
         return fn ? scalarIntegerType(fn[1]) : null;
       };
 
-      const simple = /^([A-Za-z_]\\w*)$/.exec(expr);
+      const simple = /^([A-Za-z_]\w*)$/.exec(expr);
       if (simple) return declarationType(simple[1]);
 
       const ignoredFunctions = new Set([
@@ -243,8 +241,9 @@
         'bitfieldInsert', 'bitfieldReverse', 'findLSB', 'findMSB', 'mod',
         'textureSize', 'imageSize'
       ]);
-      const names = (expr.match(/[A-Za-z_]\\w*/g) || [])
-        .filter(name => !ignoredFunctions.has(name) && !/^[xyzwrgba stpq]$/.test(name));
+      const swizzles = new Set(['x', 'y', 'z', 'w', 'r', 'g', 'b', 'a', 's', 't', 'p', 'q']);
+      const names = (expr.match(/[A-Za-z_]\w*/g) || [])
+        .filter(name => !ignoredFunctions.has(name) && !swizzles.has(name));
       if (!names.length) return null;
       const types = names.map(declarationType);
       if (types.some(type => !type) || types.some(type => type !== types[0])) return null;
@@ -252,7 +251,7 @@
     }
 
     let out = '', cursor = 0;
-    const re = /\\bclamp\\s*\\(/g;
+    const re = /\bclamp\s*\(/g;
     let match;
     while ((match = re.exec(source))) {
       const open = source.indexOf('(', match.index);
@@ -276,7 +275,7 @@
       if (type) {
         const castBound = (value) => {
           const trimmed = value.trim();
-          const existing = /^(int|uint)\\s*\\(/.exec(trimmed);
+          const existing = /^(int|uint)\s*\(/.exec(trimmed);
           return existing && existing[1] === type ? trimmed : type + '(' + trimmed + ')';
         };
         out += source.slice(cursor, open + 1) + args[0] + ', ' +
