@@ -15,8 +15,6 @@
  */
 package org.teavm.classlib.java.lang;
 
-import java.util.ArrayDeque;
-import java.util.Queue;
 import mcport.rt.BrowserRuntime;
 import mcport.rt.MonitorRegistry;
 import org.teavm.backend.wasm.runtime.WasmGCSupport;
@@ -49,8 +47,8 @@ public class TObject {
     static class Monitor {
         static final int MASK = 0x80000000;
 
-        Queue<PlatformRunnable> enteringThreads;
-        Queue<NotifyListener> notifyListeners;
+        WaitQueue<PlatformRunnable> enteringThreads;
+        WaitQueue<NotifyListener> notifyListeners;
         TThread owner;
         int count;
         int id;
@@ -64,6 +62,42 @@ public class TObject {
         }
     }
 
+    /**
+     * Small, synchronous FIFO for monitor waiters. It deliberately avoids
+     * java.util collections so enqueue/dequeue never enter collection code
+     * that may be transformed into an async monitor operation by TeaVM.
+     */
+    private static final class WaitQueue<E> {
+        private Object[] elements = new Object[4];
+        private int head;
+        private int size;
+
+        int size() { return size; }
+        boolean isEmpty() { return size == 0; }
+
+        void add(E element) {
+            if (size == elements.length) {
+                Object[] expanded = new Object[elements.length << 1];
+                for (int i = 0; i < size; ++i) {
+                    expanded[i] = elements[(head + i) % elements.length];
+                }
+                elements = expanded;
+                head = 0;
+            }
+            elements[(head + size) % elements.length] = element;
+            ++size;
+        }
+
+        @SuppressWarnings("unchecked")
+        E remove() {
+            if (size == 0) throw new IllegalStateException("Queue is empty");
+            E result = (E) elements[head];
+            elements[head] = null;
+            head = (head + 1) % elements.length;
+            --size;
+            return result;
+        }
+    }
     private static int nextTraceId() {
         return MonitorRegistry.nextTraceId();
     }
@@ -299,7 +333,7 @@ public class TObject {
         MonitorRegistry.step("before-enqueue");
         try {
             if (monitor.enteringThreads == null) {
-                monitor.enteringThreads = new ArrayDeque<>();
+                monitor.enteringThreads = new WaitQueue<>();
             }
             monitor.enteringThreads.add(() -> {
                 TThread.setCurrentThread(thread);
@@ -716,7 +750,7 @@ public class TObject {
         Monitor monitor = this.monitor;
         var listener = new NotifyListenerImpl(this, callback, monitor.count);
         if (monitor.notifyListeners == null) {
-            monitor.notifyListeners = new ArrayDeque<>();
+            monitor.notifyListeners = new WaitQueue<>();
         }
         monitor.notifyListeners.add(listener);
         TThread.currentThread().interruptHandler = listener;
