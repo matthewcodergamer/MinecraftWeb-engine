@@ -533,8 +533,8 @@
   G.destroyPipeline = (id) => release(id);
 
   /** Pipeline variant for the bound texture sample types (depth / unfilterable textures need other layouts). */
-  function pipelineVariant(p, sampleKinds, indexFormat) {
-    const key = sampleKinds.join(',') + '|' + (indexFormat || '');
+  function pipelineVariant(p, sampleKinds, indexFormat, passDepthFormat) {
+    const key = sampleKinds.join(',') + '|' + (indexFormat || '') + '|' + (passDepthFormat || '');
     let v = p.variants.get(key);
     if (v) return v;
     const d = p.desc;
@@ -579,13 +579,18 @@
         stripIndexFormat: topology.endsWith('strip') ? (indexFormat || undefined) : undefined },
     };
     if (p.modules.fragment) desc.fragment = { module: p.modules.fragment.module, entryPoint: 'main', targets };
-    if (d.depth) {
+    // A pipeline used in a pass with a depth attachment must declare the
+    // same depth format, even when it does not test or write depth. The Java
+    // descriptor does not always carry a depthFormat, so use the active pass.
+    const depthFormat = passDepthFormat || (Number.isInteger(d.depthFormat) && d.depthFormat >= 0
+      ? texFormat(d.depthFormat) : null);
+    if (d.depth && depthFormat) {
       desc.depthStencil = {
-        format: texFormat(d.depthFormat), depthWriteEnabled: !!d.depth.write, depthCompare: COMPARE[d.depth.compare],
+        format: depthFormat, depthWriteEnabled: !!d.depth.write, depthCompare: COMPARE[d.depth.compare],
         depthBias: Math.round(d.depth.biasConst), depthBiasSlopeScale: d.depth.biasScale,
       };
-    } else if (d.depthFormat >= 0) {
-      desc.depthStencil = { format: texFormat(d.depthFormat), depthWriteEnabled: false, depthCompare: 'always' };
+    } else if (depthFormat) {
+      desc.depthStencil = { format: depthFormat, depthWriteEnabled: false, depthCompare: 'always' };
     }
     v = { pipeline: G.device.createRenderPipeline(desc), layouts };
     p.variants.set(key, v);
@@ -698,7 +703,7 @@
     const indexed = s.drawIndexed ? s.indexFormat : '';
     let v;
     try {
-      v = pipelineVariant(p, kinds, indexed);
+      v = pipelineVariant(p, kinds, indexed, s.depthFormat);
     } catch (e) {
       p.error = String(e.message || e);
       console.warn('pipeline ' + d.name + ': ' + p.error);
