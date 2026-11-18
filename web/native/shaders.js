@@ -236,9 +236,17 @@
       const simple = /^([A-Za-z_]\w*)$/.exec(expr);
       if (simple) return declarationType(simple[1]);
 
+      // Type constructors are syntax, not variable names. Keep them out of
+      // identifier-based inference: expressions such as int(gl_VertexID) + 1
+      // otherwise look like they reference an undeclared variable named "int"
+      // and the clamp call is left ambiguous for glslang.
       const ignoredFunctions = new Set([
-        'min', 'max', 'abs', 'sign', 'clamp', 'bitCount', 'bitfieldExtract',
-        'bitfieldInsert', 'bitfieldReverse', 'findLSB', 'findMSB', 'mod',
+        'int', 'uint', 'float', 'double', 'bool',
+        'ivec2', 'ivec3', 'ivec4', 'uvec2', 'uvec3', 'uvec4',
+        'vec2', 'vec3', 'vec4', 'dvec2', 'dvec3', 'dvec4',
+        'bvec2', 'bvec3', 'bvec4', 'min', 'max', 'abs', 'sign',
+        'clamp', 'bitCount', 'bitfieldExtract', 'bitfieldInsert',
+        'bitfieldReverse', 'findLSB', 'findMSB', 'mod',
         'textureSize', 'imageSize'
       ]);
       const swizzles = new Set(['x', 'y', 'z', 'w', 'r', 'g', 'b', 'a', 's', 't', 'p', 'q']);
