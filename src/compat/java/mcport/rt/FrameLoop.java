@@ -58,9 +58,15 @@ public final class FrameLoop {
     }
 
     @JSBody(params = {"vsync", "resume"}, script = ""
-            + "if (vsync || document.hidden) { requestAnimationFrame(function() { console.log('[FRAME_LOOP] raf-fired'); resume(); }); return; }"
+            + "var done = false; var finish = function(source) { if (done) return; done = true;"
+            + " if (source === 'raf-fallback') console.warn('[FRAME_LOOP] RAF stalled; resumed via fallback');"
+            + " resume(); };"
+            + "if (vsync || document.hidden) {"
+            + " try { requestAnimationFrame(function() { console.log('[FRAME_LOOP] raf-fired'); finish('raf'); }); }"
+            + " catch (e) { console.warn('[FRAME_LOOP] RAF unavailable', e); }"
+            + " setTimeout(function() { finish('raf-fallback'); }, 250); return; }"
             + "var ch = window.__mcFrameChannel || (window.__mcFrameChannel = new MessageChannel());"
-            + "ch.port1.onmessage = function() { resume(); }; ch.port2.postMessage(0);")
+            + "ch.port1.onmessage = function() { finish('message-channel'); }; ch.port2.postMessage(0);")
     private static native void schedule(boolean vsync, Resume resume);
 
     @JSBody(script = ""
