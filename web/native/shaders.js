@@ -195,18 +195,21 @@
   }
 
   function normalizeIntegerClampCalls(source) {
-    // glslang sees overloads for signed/unsigned integer and floating-point
-    // clamp. Integer shader expressions with untyped numeric bounds can match
-    // more than one overload, so infer the first argument's declared scalar
-    // type and make both bounds explicit before glslang parses the source.
-    function integerType(type) {
-      // Preserve vector width: GLSL integer-vector clamp overloads require
-      // vector bounds (ivecN/uvecN), not scalar int/uint bounds.
-      if (/^(?:u?int|[iu]vec[234])$/.test(type)) return type;
-      return null;
-    }
+    // glslang's overload resolver can treat integer literals as candidates for
+    // both integer and floating clamp overloads. Resolve the bounds to the
+    // first argument's exact scalar/vector type before GLSL parsing.
+    const supportedTypes = new Set([
+      'int', 'uint', 'float', 'double',
+      'ivec2', 'ivec3', 'ivec4', 'uvec2', 'uvec3', 'uvec4',
+      'vec2', 'vec3', 'vec4', 'dvec2', 'dvec3', 'dvec4'
+    ]);
+    const vectorTypes = new Set([
+      'ivec2', 'ivec3', 'ivec4', 'uvec2', 'uvec3', 'uvec4',
+      'vec2', 'vec3', 'vec4', 'dvec2', 'dvec3', 'dvec4'
+    ]);
+    const typeOf = (type) => supportedTypes.has(type) ? type : null;
 
-    function inferIntegerType(expression) {
+    function inferClampType(expression) {
       let expr = expression.trim();
       while (expr.startsWith('(') && expr.endsWith(')')) {
         let depth = 0, closesAtEnd = false;
@@ -221,47 +224,41 @@
         expr = expr.slice(1, -1).trim();
       }
 
-      // The first clamp argument is often wrapped in another GLSL call, e.g.
-      // mix(..., int(floor(...)), ...) or a helper returning an integer. Looking
-      // only at the beginning of the expression misses casts nested inside calls.
-      // Prefer an explicit integer constructor anywhere in the expression when
-      // there is exactly one integer signedness; conflicting int/uint casts are
-      // deliberately left alone rather than guessed.
-      const constructors = [...expr.matchAll(/\b(int|uint|ivec[234]|uvec[234])\s*\(/g)]
-        .map(match => integerType(match[1]));
-      if (constructors.length && constructors.every(type => type === constructors[0])) {
-        return constructors[0];
-      }
-      if (constructors.length) return null;
-      if (/^[+-]?\d+[uU]$/.test(expr)) return 'uint';
-      if (/^[+-]?\d+$/.test(expr)) return 'int';
+      // A vector constructor determines the complete overload even when its
+      // components contain scalar casts. Otherwise use a consistent scalar type.
+      const constructors = [...expr.matchAll(/\\b(int|uint|float|double|[iu]vec[234]|vec[234]|dvec[234])\\s*\\(/g)]
+        .map(match => typeOf(match[1]));
+      const vectors = constructors.filter(type => vectorTypes.has(type));
+      if (vectors.length) return vectors.every(type => type === vectors[0]) ? vectors[0] : null;
+      if (constructors.length) return constructors.every(type => type === constructors[0]) ? constructors[0] : null;
+
+      if (/^[+-]?\\d+[uU]$/.test(expr)) return 'uint';
+      if (/^[+-]?\\d+$/.test(expr)) return 'int';
+      if (/^[+-]?(?:\\d+\\.\\d*|\\d*\\.\\d+|\\d+)(?:[eE][+-]?\\d+)?[fF]?$/.test(expr)) return 'float';
+      if (/^[+-]?(?:\\d+\\.\\d*|\\d*\\.\\d+|\\d+)(?:[eE][+-]?\\d+)?[lL][fF]?$/.test(expr)) return 'double';
 
       const declarationType = (name) => {
-        if (/^(gl_VertexID|gl_InstanceID|gl_PrimitiveID|gl_Layer|gl_SampleID)$/.test(name)) return 'int';
-        const variable = new RegExp('\\b(u?int|[iu]vec[234])\\s+' + name + '\\b').exec(source);
-        if (variable) return integerType(variable[1]);
-        const fn = new RegExp('\\b(u?int|[iu]vec[234])\\s+' + name + '\\s*\\(').exec(source);
-        return fn ? integerType(fn[1]) : null;
+        const variable = new RegExp('\\\\b(int|uint|float|double|[iu]vec[234]|vec[234]|dvec[234])\\\\s+' + name + '\\\\b').exec(source);
+        if (variable) return typeOf(variable[1]);
+        const fn = new RegExp('\\\\b(int|uint|float|double|[iu]vec[234]|vec[234]|dvec[234])\\\\s+' + name + '\\\\s*\\\\(').exec(source);
+        return fn ? typeOf(fn[1]) : null;
       };
 
-      const simple = /^([A-Za-z_]\w*)$/.exec(expr);
+      const simple = /^([A-Za-z_]\\w*)$/.exec(expr);
       if (simple) return declarationType(simple[1]);
 
-      // Type constructors are syntax, not variable names. Keep them out of
-      // identifier-based inference: expressions such as int(gl_VertexID) + 1
-      // otherwise look like they reference an undeclared variable named "int"
-      // and the clamp call is left ambiguous for glslang.
       const ignoredFunctions = new Set([
         'int', 'uint', 'float', 'double', 'bool',
         'ivec2', 'ivec3', 'ivec4', 'uvec2', 'uvec3', 'uvec4',
         'vec2', 'vec3', 'vec4', 'dvec2', 'dvec3', 'dvec4',
         'bvec2', 'bvec3', 'bvec4', 'min', 'max', 'abs', 'sign',
         'clamp', 'bitCount', 'bitfieldExtract', 'bitfieldInsert',
-        'bitfieldReverse', 'findLSB', 'findMSB', 'mod',
+        'bitfieldReverse', 'findLSB', 'findMSB', 'mod', 'floor', 'ceil',
+        'round', 'trunc', 'fract', 'sqrt', 'inversesqrt', 'pow',
         'textureSize', 'imageSize'
       ]);
       const swizzles = new Set(['x', 'y', 'z', 'w', 'r', 'g', 'b', 'a', 's', 't', 'p', 'q']);
-      const names = (expr.match(/[A-Za-z_]\w*/g) || [])
+      const names = (expr.match(/[A-Za-z_]\\w*/g) || [])
         .filter(name => !ignoredFunctions.has(name) && !swizzles.has(name));
       if (!names.length) return null;
       const types = names.map(declarationType);
@@ -270,7 +267,7 @@
     }
 
     let out = '', cursor = 0;
-    const re = /\bclamp\s*\(/g;
+    const re = /\\bclamp\\s*\\(/g;
     let match;
     while ((match = re.exec(source))) {
       const open = source.indexOf('(', match.index);
@@ -290,11 +287,11 @@
       }
       args.push(body.slice(start));
 
-      const type = args.length === 3 ? inferIntegerType(args[0]) : null;
+      const type = args.length === 3 ? inferClampType(args[0]) : null;
       if (type) {
         const castBound = (value) => {
           const trimmed = value.trim();
-          const existing = /^(?:int|uint|ivec[234]|uvec[234])\s*\(/.exec(trimmed);
+          const existing = /^(int|uint|float|double|ivec[234]|uvec[234]|vec[234]|dvec[234])\\s*\\(/.exec(trimmed);
           return existing && existing[1] === type ? trimmed : type + '(' + trimmed + ')';
         };
         out += source.slice(cursor, open + 1) + args[0] + ', ' +
