@@ -368,8 +368,27 @@ public final class Fiber {
         lastPendingCall = pendingCall;
 
         fiber.state = STATE_SUSPENDING;
-        pendingCall.callback = new AsyncCallbackImpl(pendingCall, javaThread, fiber);
-        call.run(pendingCall.callback);
+        AsyncCallbackImpl callback = new AsyncCallbackImpl(pendingCall, javaThread, fiber);
+        pendingCall.callback = callback;
+        try {
+            call.run(callback);
+        } catch (Throwable t) {
+            // An async body that throws used to escape here, leaving the fiber in
+            // STATE_SUSPENDING forever with no callback and no resume: the boot then
+            // stalls with zero evidence of the real failure. Convert the throw into
+            // a normal callback error so the fiber resumes and the exception surfaces
+            // at the suspension point.
+            fiber.lastSuspend = fiber.lastSuspend + " threw " + t.getClass().getName();
+            try {
+                BrowserRuntime.report("error", "fiber-" + fiber.id + "-suspend-call-threw "
+                        + t.getClass().getName() + (t.getMessage() != null ? ": " + t.getMessage() : ""));
+            } catch (Throwable ignored) {
+            }
+            if (callback.pendingCall != null) {
+                callback.error(t);
+            }
+            return null;
+        }
         if (suspendId <= 100) {
             BrowserRuntime.report("trace", "fiber-suspend-call-return");
         }
@@ -389,6 +408,9 @@ public final class Fiber {
 
         @Override
         public void complete(Object result) {
+            if (fiber == null && pendingCall == null) {
+                return; // already settled (e.g. errored after a failed park)
+            }
             int callbackId = ++asyncCompleteCount;
             if (callbackId <= 100) {
                 BrowserRuntime.report("trace", "fiber-async-callback-complete");
@@ -410,6 +432,9 @@ public final class Fiber {
 
         @Override
         public void error(Throwable e) {
+            if (fiber == null && pendingCall == null) {
+                return; // already settled
+            }
             int callbackId = ++asyncErrorCount;
             if (callbackId <= 100) {
                 BrowserRuntime.report("error", "fiber-async-callback-error");
@@ -432,6 +457,9 @@ public final class Fiber {
         }
 
         private void removePendingCall() {
+            if (pendingCall == null) {
+                return;
+            }
             if (pendingCall.previous != null) {
                 pendingCall.previous.next = pendingCall.next;
             }

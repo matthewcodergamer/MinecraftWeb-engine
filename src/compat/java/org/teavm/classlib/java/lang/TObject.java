@@ -57,6 +57,14 @@ public class TObject {
         Object ownerFiber;
         int ownerFiberId = -1;
 
+        // Staged enter context. Set only while this fiber is inside the enqueue
+        // block, so the watchdog can finish an enter that never reached the queue.
+        TThread pendingThread;
+        Object pendingFiber;
+        int pendingFiberId = -1;
+        int pendingCount;
+        AsyncCallback<Void> pendingCallback;
+
         Monitor() {
             this.owner = TThread.currentThread();
         }
@@ -96,6 +104,22 @@ public class TObject {
             head = (head + 1) % elements.length;
             --size;
             return result;
+        }
+
+        /** Removes one specific element, if present. */
+        void remove(E element) {
+            for (int i = 0; i < size; ++i) {
+                int index = (head + i) % elements.length;
+                if (elements[index] == element) {
+                    for (int j = i; j < size - 1; ++j) {
+                        elements[(head + j) % elements.length]
+                                = elements[(head + j + 1) % elements.length];
+                    }
+                    elements[(head + size - 1) % elements.length] = null;
+                    --size;
+                    return;
+                }
+            }
         }
     }
     private static int nextTraceId() {
@@ -292,6 +316,15 @@ public class TObject {
         int waiterFiberId = currentFiberId();
         MonitorRegistry.step("captured");
         Monitor monitor = o.monitor;
+        try {
+            String className = null;
+            try {
+                className = o.getClass().getName();
+            } catch (Throwable ignored) {
+            }
+            MonitorRegistry.enterSite(className, BrowserRuntime.captureStack());
+        } catch (Throwable ignored) {
+        }
         if (monitor == null) {
             createMonitor(o);
             TThread.setCurrentThread(thread);
@@ -330,12 +363,21 @@ public class TObject {
 
         // Queue the waiter before any bookkeeping or string building. Whatever the
         // diagnostics below do, a release now has a fiber to grant.
+        monitor.pendingThread = thread;
+        monitor.pendingFiber = waiterFiber;
+        monitor.pendingFiberId = waiterFiberId;
+        monitor.pendingCount = count;
+        monitor.pendingCallback = callback;
+        MonitorRegistry.watchEnter(monitor, o, count, thread, waiterFiber, waiterFiberId, callback);
         MonitorRegistry.step("before-enqueue");
         try {
             if (monitor.enteringThreads == null) {
+                MonitorRegistry.step("queue-init");
                 monitor.enteringThreads = new WaitQueue<>();
             }
-            monitor.enteringThreads.add(() -> {
+            MonitorRegistry.step("queue-ready");
+            PlatformRunnable grant = () -> {
+                monitor.pendingCallback = null;
                 TThread.setCurrentThread(thread);
                 o.monitor.count += count;
                 setOwner(o.monitor, thread, waiterFiber, waiterFiberId);
@@ -346,10 +388,14 @@ public class TObject {
                 }
                 traceMonitor(monitor, "GRANT m" + monitor.traceId + " to=" + monitorThreadName(thread));
                 callback.complete(null);
-            });
+            };
+            MonitorRegistry.step("grant-ready");
+            monitor.enteringThreads.add(grant);
             MonitorRegistry.step("queued");
+            MonitorRegistry.clearWatchedEnter(monitor);
         } catch (Throwable t) {
             MonitorRegistry.step("enqueue-error");
+            MonitorRegistry.clearWatchedEnter(monitor);
             try {
                 MonitorRegistry.callbackError("enqueue " + errorText(t));
             } catch (Throwable ignored) {
@@ -394,6 +440,47 @@ public class TObject {
             } catch (Throwable ignored) {
             }
         }
+    }
+
+    /**
+     * Finishes a contended monitor enter that vanished inside its enqueue block.
+     * Called by the boot watchdog, never from the monitor path: the fiber recorded
+     * the pre-enqueue checkpoint, so no waiter slot and no callback completion ever
+     * happened. Granting the lock and completing the callback resumes it.
+     */
+    public static boolean recoverStalledEnter(Object monitorObject) {
+        if (!(monitorObject instanceof Monitor)) {
+            return false;
+        }
+        Monitor monitor = (Monitor) monitorObject;
+        AsyncCallback<Void> callback = monitor.pendingCallback;
+        if (callback == null) {
+            return false;
+        }
+        TThread thread = monitor.pendingThread;
+        Object fiber = monitor.pendingFiber;
+        int fiberId = monitor.pendingFiberId;
+        int count = monitor.pendingCount > 0 ? monitor.pendingCount : 1;
+        monitor.pendingCallback = null;
+        monitor.pendingThread = null;
+        monitor.pendingFiber = null;
+        monitor.pendingFiberId = -1;
+        monitor.count += count;
+        TThread owner = thread != null ? thread : TThread.currentThread();
+        setOwner(monitor, owner, fiber, fiberId);
+        MonitorRegistry.forcedGrant(monitor.traceId, monitor.ownerFiberId, monitor.count);
+        traceMonitor(monitor, "FORCE-GRANT m" + monitor.traceId + " obj=" + safeObjectClass(monitor)
+                + " to=" + monitorThreadName(owner) + " count=" + monitor.count);
+        try {
+            callback.complete(null);
+        } catch (Throwable t) {
+            try {
+                MonitorRegistry.callbackError("force-grant " + errorText(t));
+            } catch (Throwable ignored) {
+            }
+            callback.error(t);
+        }
+        return true;
     }
 
     private static String errorText(Throwable t) {
@@ -749,18 +836,70 @@ public class TObject {
     final void waitImpl(long timeout, int nanos, AsyncCallback<Void> callback) {
         Monitor monitor = this.monitor;
         var listener = new NotifyListenerImpl(this, callback, monitor.count);
-        if (monitor.notifyListeners == null) {
-            monitor.notifyListeners = new WaitQueue<>();
+        try {
+            if (monitor.notifyListeners == null) {
+                monitor.notifyListeners = new WaitQueue<>();
+            }
+            monitor.notifyListeners.add(listener);
+            TThread.currentThread().interruptHandler = listener;
+            if (timeout > 0 || nanos > 0) {
+                int timeoutToSchedule = timeout >= Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) timeout;
+                listener.timerId = PlatformDetector.isLowLevel() || PlatformDetector.isWebAssemblyGC()
+                        ? EventQueue.offer(listener, timeoutToSchedule + System.currentTimeMillis())
+                        : Platform.schedule(listener, timeoutToSchedule);
+            }
+            monitorExit(this, monitor.count);
+        } catch (Throwable t) {
+            // A failure while parking must never leave the monitor owned: every other
+            // fiber that needs this lock would wait for a release that can no longer
+            // happen (the parked fiber is already dead by the time the exception
+            // unwinds the async body).
+            try {
+                listener.performed = true;
+                if (listener.timerId >= 0) {
+                    if (PlatformDetector.isLowLevel() || PlatformDetector.isWebAssemblyGC()) {
+                        EventQueue.kill(listener.timerId);
+                    } else {
+                        Platform.killSchedule(listener.timerId);
+                    }
+                    listener.timerId = -1;
+                }
+            } catch (Throwable ignored) {
+            }
+            try {
+                if (monitor.notifyListeners != null) {
+                    monitor.notifyListeners.remove(listener);
+                }
+            } catch (Throwable ignored) {
+            }
+            abandonMonitor(this);
+            try {
+                MonitorRegistry.callbackError("wait " + errorText(t));
+            } catch (Throwable ignored) {
+            }
+            callback.error(t);
         }
-        monitor.notifyListeners.add(listener);
-        TThread.currentThread().interruptHandler = listener;
-        if (timeout > 0 || nanos > 0) {
-            int timeoutToSchedule = timeout >= Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) timeout;
-            listener.timerId = PlatformDetector.isLowLevel() || PlatformDetector.isWebAssemblyGC()
-                    ? EventQueue.offer(listener, timeoutToSchedule + System.currentTimeMillis())
-                    : Platform.schedule(listener, timeoutToSchedule);
+    }
+
+    /** Drops ownership of a monitor whose waiter failed before parking cleanly. */
+    private static void abandonMonitor(TObject o) {
+        try {
+            Monitor monitor = o.monitor;
+            if (monitor == null || monitor.owner == null) {
+                return;
+            }
+            monitor.owner = TThread.currentThread();
+            monitor.ownerFiber = currentFiber();
+            monitor.ownerFiberId = currentFiberId();
+            monitor.count = 0;
+            clearOwner(monitor);
+            if (monitor.enteringThreads != null && !monitor.enteringThreads.isEmpty()) {
+                EventQueue.offer(() -> waitForOtherThreads(o));
+            } else {
+                o.isEmptyMonitor();
+            }
+        } catch (Throwable ignored) {
         }
-        monitorExit(this, monitor.count);
     }
 
     static class NotifyListenerImpl implements NotifyListener, TimerHandler, PlatformRunnable,

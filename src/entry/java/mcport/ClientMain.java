@@ -69,6 +69,16 @@ public final class ClientMain {
                     } catch (Throwable t) {
                         BrowserRuntime.report("monitors", "unavailable: " + BrowserRuntime.describe(t));
                     }
+                    try {
+                        // A contended enter that never reached the waiter queue can
+                        // never be granted by a release. Finish it explicitly after a
+                        // grace period so one lost continuation cannot wedge boot.
+                        if (mcport.rt.MonitorRegistry.recoverStalled(12000)) {
+                            BrowserRuntime.report("monitor-recovery", mcport.rt.MonitorRegistry.describe());
+                        }
+                    } catch (Throwable t) {
+                        BrowserRuntime.report("monitor-recovery", "failed: " + BrowserRuntime.describe(t));
+                    }
                 }
             }, "mc-fiber-watchdog");
             watchdog.setDaemon(true);

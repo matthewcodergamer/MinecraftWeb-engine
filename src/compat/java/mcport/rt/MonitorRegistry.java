@@ -120,6 +120,88 @@ public final class MonitorRegistry {
         lastStep = name;
     }
 
+    private static int enterSites;
+
+    // Pre-enqueue watchdog: the contended path records the monitor here before it
+    // touches the waiter queue and clears it once the waiter is queued. If the
+    // entry is still set after a generous grace period, the fiber parked without
+    // ever reaching the queue and no release can ever wake it.
+    private static Object watchedMonitor;
+    private static long watchedAt;
+    private static int watchedEnters;
+    private static int forcedGrants;
+    private static String lastForced;
+
+    public static void watchEnter(Object monitor, Object object, int count, Object thread,
+            Object fiber, int fiberId, Object callback) {
+        watchedMonitor = monitor;
+        watchedAt = System.currentTimeMillis();
+        watchedEnters++;
+    }
+
+    public static void clearWatchedEnter(Object monitor) {
+        if (watchedMonitor == monitor) {
+            watchedMonitor = null;
+        }
+    }
+
+    public static void forcedGrant(int traceId, int fiberId, int count) {
+        forcedGrants++;
+        lastForced = "m" + traceId + " fiber=#" + fiberId + " count=" + count;
+        try {
+            BrowserRuntime.log("[TOBJ] FORCE-GRANT " + lastForced);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * Finishes a contended monitor enter that stopped inside its enqueue block.
+     * Grants the lock to the parked fiber and completes its callback, so the boot
+     * continues instead of waiting forever for a release that cannot happen.
+     * Returns true when a stalled enter was recovered.
+     */
+    public static boolean recoverStalled(long ageMillis) {
+        Object monitor = watchedMonitor;
+        if (monitor == null) {
+            return false;
+        }
+        if (System.currentTimeMillis() - watchedAt < ageMillis) {
+            return false;
+        }
+        watchedMonitor = null;
+        try {
+            boolean recovered = org.teavm.classlib.java.lang.TObject.recoverStalledEnter(monitor);
+            if (!recovered) {
+                lastForced = "skipped (context already cleared)";
+            }
+            return recovered;
+        } catch (Throwable t) {
+            callbackError("recover " + t.getClass().getName()
+                    + (t.getMessage() != null ? ": " + t.getMessage() : ""));
+            return false;
+        }
+    }
+
+    /**
+     * Reports the calling site of a contended monitor enter. Async enters are rare
+     * during boot, so the first few stacks identify exactly which lock the client
+     * blocks on without flooding the log.
+     */
+    public static void enterSite(String objectClass, String stack) {
+        enterSites++;
+        if (enterSites > 4) {
+            return;
+        }
+        try {
+            String text = "obj=" + objectClass + " gc=" + gcPlatform + " " + stack;
+            if (text.length() > 1600) {
+                text = text.substring(0, 1600);
+            }
+            BrowserRuntime.report("enter-site", text);
+        } catch (Throwable ignored) {
+        }
+    }
+
     /** Snapshot of the monitor a fiber is about to wait on, captured pre-enqueue. */
     public static void contended(int traceId, boolean entryNull, int monitorId, int ownerFiberId,
             int count, int waiters) {
@@ -260,6 +342,8 @@ public final class MonitorRegistry {
                 .append(" repairs=").append(entryRepairs).append(" granted=").append(handoffGrants)
                 .append(" self=").append(selfReentries).append(" enq=").append(enqueueCount)
                 .append(" steps=").append(stepCount).append(" step=").append(lastStep)
+                .append(" watched=").append(watchedEnters).append(" forced=").append(forcedGrants)
+                .append(" forcedLast=").append(lastForced)
                 .append(" enqueued=").append(lastEnqueue)
                 .append(" error=").append(lastError)
                 .append(" contended=").append(lastContended)
