@@ -213,7 +213,10 @@ def icu_resource_entries(mc_dir: Path, meta: dict, already: set[str], temp_dir: 
                     already.add(name)
         except zipfile.BadZipFile:
             print(f"warning: skipping invalid library archive {archive_path}", file=sys.stderr)
-    print(f"packed {len(out)} ICU4J resource file(s) from Minecraft libraries")
+    zoneinfo = [entry.name for entry in out if entry.name.endswith("/zoneinfo64.res")]
+    if not zoneinfo:
+        raise SystemExit("ICU4J zoneinfo64.res was not found in the downloaded Minecraft libraries")
+    print(f"packed {len(out)} ICU4J resource file(s); timezone data: {zoneinfo[0]}")
     return out
 
 
