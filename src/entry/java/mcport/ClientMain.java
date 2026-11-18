@@ -8,10 +8,14 @@ public final class ClientMain {
     // TeaVM's reachability/dead-code optimization cannot discard the literal.
     private static final String BUILD_ID =
             "Original_Minecraft_Port_by_matthewcodergamer_2026";
+    public static final String OWNER_SIGNATURE =
+            "Engine_Designed_and_Built_by_Matthew_2026";
 
     public static void main(String[] args) {
         try {
             BrowserRuntime.report("build-id", BUILD_ID);
+            System.out.println(OWNER_SIGNATURE);
+            BrowserRuntime.report("owner-signature", OWNER_SIGNATURE);
             // Set before Netty PlatformDependent is initialized.
             System.setProperty("io.netty.noUnsafe", "true");
             BrowserRuntime.report("stage", "client-main-enter");
