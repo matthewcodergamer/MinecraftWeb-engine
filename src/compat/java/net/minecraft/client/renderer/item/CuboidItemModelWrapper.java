@@ -117,6 +117,34 @@ public class CuboidItemModelWrapper implements ItemModel {
         }
     }
 
+    /**
+     * Original Minecraft 26.3 validation retained for the precompiled nested
+     * Unbaked class. The compatibility overlay replaces this class at compile
+     * time, so it must also provide methods referenced by that nested class.
+     */
+    private static void validateAtlasUsage(List<BakedQuad> quads) {
+        java.util.Iterator<BakedQuad> iterator = quads.iterator();
+        if (!iterator.hasNext()) {
+            return;
+        }
+
+        net.minecraft.resources.Identifier atlas =
+                iterator.next().materialInfo().sprite().atlasLocation();
+        while (iterator.hasNext()) {
+            net.minecraft.resources.Identifier nextAtlas =
+                    iterator.next().materialInfo().sprite().atlasLocation();
+            if (!nextAtlas.equals(atlas)) {
+                throw new IllegalStateException(
+                        "Quads use more than one texture atlas: " + atlas + " and " + nextAtlas);
+            }
+        }
+
+        if (!atlas.equals(net.minecraft.client.renderer.texture.TextureAtlas.LOCATION_ITEMS)
+                && !atlas.equals(net.minecraft.client.renderer.texture.TextureAtlas.LOCATION_BLOCKS)) {
+            throw new IllegalArgumentException("Unsupported item model texture atlas: " + atlas);
+        }
+    }
+
     private static boolean hasSpecialAnimatedTexture(ItemStack stack) {
         return stack.is(ItemTags.COMPASSES) || stack.is(Items.CLOCK);
     }
