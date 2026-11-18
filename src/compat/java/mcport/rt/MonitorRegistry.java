@@ -37,6 +37,14 @@ public final class MonitorRegistry {
     private static int platformSkips;
     private static boolean gcPlatform;
 
+    // Handoff evidence: every value primitive so a report can never throw while
+    // walking monitor state (String concatenation of a monitor field used to be
+    // the only step between a contender and its queue slot).
+    private static int entryRepairs;
+    private static int handoffGrants;
+    private static String lastContended;
+    private static String lastHandoff;
+
     /** One lock we have seen; all fields are plain copies of monitor state. */
     public static final class Entry {
         public int traceId;
@@ -79,6 +87,40 @@ public final class MonitorRegistry {
 
     public static void adoptedCall() {
         adoptedCalls++;
+    }
+
+    /**
+     * True while a missing monitor entry may still be re-registered. Capped so a
+     * monitor whose entry field cannot be written at all cannot grow the entry
+     * table without bound on every contention.
+     */
+    public static boolean allowRepair() {
+        return entryRepairs < 1024;
+    }
+
+    /** A monitor reached the contended path without a registry entry. */
+    public static void entryRepaired() {
+        entryRepairs++;
+    }
+
+    /** Snapshot of the monitor a fiber is about to wait on, captured pre-enqueue. */
+    public static void contended(int traceId, boolean entryNull, int monitorId, int ownerFiberId,
+            int count, int waiters) {
+        lastContended = "m" + traceId + " entryNull=" + entryNull + " monitorId=" + monitorId
+                + " ownerFiber=#" + ownerFiberId + " count=" + count + " waiters=" + waiters;
+    }
+
+    /** Snapshot of the waiter queue at the instant a release granted the next fiber. */
+    public static void handoff(int traceId, int waiters, boolean granted) {
+        if (granted) {
+            handoffGrants++;
+        }
+        lastHandoff = "m" + traceId + " granted=" + granted + " remaining=" + waiters;
+    }
+
+    /** Snapshot of the waiter queue at the instant the queued runnable ran. */
+    public static void granted(int traceId, int remaining) {
+        lastHandoff = "m" + traceId + " ran remaining=" + remaining;
     }
 
     /** Records the platform detector's answer from inside the class library. */
@@ -177,6 +219,9 @@ public final class MonitorRegistry {
                 .append(" async=").append(asyncEnterCalls).append(" rewait=").append(asyncWaitCalls)
                 .append(" imm=").append(immediateAcquires).append(" grant=").append(grantCalls)
                 .append(" exit=").append(exitCalls).append(" adopt=").append(adoptedCalls)
+                .append(" repairs=").append(entryRepairs).append(" granted=").append(handoffGrants)
+                .append(" contended=").append(lastContended)
+                .append(" handoff=").append(lastHandoff)
                 .append(" gc=").append(gcPlatform).append(" gcSkip=").append(platformSkips)
                 .append(" last=").append(lastDiag);
         Entry[] snapshot = entries;

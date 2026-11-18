@@ -82,12 +82,36 @@ public class TObject {
         if (monitor == null) {
             return;
         }
-        MonitorRegistry.platform(PlatformDetector.isWebAssemblyGC());
-        MonitorRegistry.trace(message);
+        try {
+            MonitorRegistry.platform(PlatformDetector.isWebAssemblyGC());
+            MonitorRegistry.trace(message);
+        } catch (Throwable ignored) {
+            // Diagnostics must never abort a monitor handoff.
+        }
     }
 
     private static void diag(String message) {
-        MonitorRegistry.diag(message);
+        try {
+            MonitorRegistry.diag(message);
+        } catch (Throwable ignored) {
+            // Diagnostics must never abort a monitor handoff.
+        }
+    }
+
+    /**
+     * Class name of a monitor, or {@code "?"} when its registry entry has not been
+     * created. Building diagnostics must never dereference a missing entry: doing so
+     * aborts the contended enter path before the waiter is queued and strands every
+     * later contender.
+     */
+    private static String safeObjectClass(Monitor monitor) {
+        try {
+            return monitor != null && monitor.entry != null && monitor.entry.objectClass != null
+                    ? monitor.entry.objectClass
+                    : "?";
+        } catch (Throwable ignored) {
+            return "?";
+        }
     }
 
     private static Object currentFiber() {
@@ -186,7 +210,7 @@ public class TObject {
         if (o.monitor.owner == null) {
             o.monitor.count = count;
             setOwner(o.monitor, TThread.currentThread());
-            traceMonitor(o.monitor, "ACQUIRE m" + o.monitor.traceId + " obj=" + o.monitor.entry.objectClass
+            traceMonitor(o.monitor, "ACQUIRE m" + o.monitor.traceId + " obj=" + safeObjectClass(o.monitor)
                     + " by=" + monitorThreadName(o.monitor.owner));
         } else if (o.monitor.owner != TThread.currentThread()) {
             monitorEnterWait(o, count);
@@ -240,7 +264,7 @@ public class TObject {
             TThread.setCurrentThread(thread);
             o.monitor.count = count;
             setOwner(o.monitor, thread);
-            traceMonitor(o.monitor, "ACQUIRE m" + o.monitor.traceId + " obj=" + o.monitor.entry.objectClass
+            traceMonitor(o.monitor, "ACQUIRE m" + o.monitor.traceId + " obj=" + safeObjectClass(o.monitor)
                     + " by=" + monitorThreadName(thread));
             MonitorRegistry.immediateAcquire();
             callback.complete(null);
@@ -249,26 +273,45 @@ public class TObject {
 
         Monitor monitor = o.monitor;
         MonitorRegistry.asyncWaitCall();
-        diag("enter-wait m" + monitor.traceId + " obj=" + monitor.entry.objectClass
-                + " owner=" + monitorThreadName(monitor.owner) + " count=" + monitor.count
-                + " by=" + monitorThreadName(thread));
-        traceMonitor(monitor, "WAIT m" + monitor.traceId + " obj=" + monitor.entry.objectClass
-                + " owner=" + monitorThreadName(monitor.owner)
-                + " count=" + monitor.count + " by=" + monitorThreadName(thread)
-                + " stack=" + BrowserRuntime.captureStack());
+        // A monitor whose registry entry was never created previously made the
+        // diagnostic argument below throw while evaluating `entry.objectClass`, which
+        // aborted the contended enter before the waiter was queued. Repair the entry
+        // first, then never let bookkeeping stand between the waiter and its grant.
+        if (monitor.entry == null && MonitorRegistry.allowRepair()) {
+            String className = null;
+            try {
+                className = o.getClass().getName();
+            } catch (Throwable ignored) {
+            }
+            monitor.entry = MonitorRegistry.register(monitor.traceId, className);
+            MonitorRegistry.entryRepaired();
+        }
+        int waiters = waiterCount(monitor) + 1;
+        MonitorRegistry.contended(monitor.traceId, monitor.entry == null, monitor.id,
+                monitor.ownerFiberId, monitor.count, waiters);
         if (monitor.enteringThreads == null) {
             monitor.enteringThreads = new ArrayDeque<>();
         }
         MonitorRegistry.owner(monitor.entry, monitorThreadName(monitor.owner), monitor.ownerFiberId,
-                monitor.count, waiterCount(monitor) + 1);
+                monitor.count, waiters);
+        // Queue the waiter before emitting diagnostics: a diagnostic must never leave
+        // a suspended fiber with no path to being granted the lock.
         monitor.enteringThreads.add(() -> {
             TThread.setCurrentThread(thread);
             o.monitor.count += count;
             setOwner(o.monitor, thread, waiterFiber, waiterFiberId);
             MonitorRegistry.grantCall();
+            MonitorRegistry.granted(monitor.traceId, waiterCount(monitor));
             traceMonitor(monitor, "GRANT m" + monitor.traceId + " to=" + monitorThreadName(thread));
             callback.complete(null);
         });
+        diag("enter-wait m" + monitor.traceId + " obj=" + safeObjectClass(monitor)
+                + " owner=" + monitorThreadName(monitor.owner) + " count=" + monitor.count
+                + " by=" + monitorThreadName(thread));
+        traceMonitor(monitor, "WAIT m" + monitor.traceId + " obj=" + safeObjectClass(monitor)
+                + " owner=" + monitorThreadName(monitor.owner)
+                + " count=" + monitor.count + " by=" + monitorThreadName(thread)
+                + " stack=" + BrowserRuntime.captureStack());
     }
 
     static void monitorExit(TObject o) {
@@ -306,7 +349,7 @@ public class TObject {
 
         clearOwner(monitor);
         if (monitor.enteringThreads != null && !monitor.enteringThreads.isEmpty()) {
-            traceMonitor(monitor, "RELEASE m" + monitor.traceId + " obj=" + monitor.entry.objectClass + " by="
+            traceMonitor(monitor, "RELEASE m" + monitor.traceId + " obj=" + safeObjectClass(monitor) + " by="
                     + monitorThreadName(TThread.currentThread()) + " waiters=" + monitor.enteringThreads.size());
             if (PlatformDetector.isLowLevel() || PlatformDetector.isWebAssemblyGC()) {
                 EventQueue.offer(() -> waitForOtherThreads(o));
@@ -325,6 +368,7 @@ public class TObject {
         Monitor monitor = o.monitor;
         if (monitor.enteringThreads != null && !monitor.enteringThreads.isEmpty()) {
             var enteringThreads = monitor.enteringThreads;
+            int remaining = enteringThreads.size();
             PlatformRunnable r = enteringThreads.remove();
             // Keep the remaining contenders queued. Clearing this queue after
             // granting only one waiter silently strands every other fiber that
@@ -332,6 +376,10 @@ public class TObject {
             // responsible for granting the next waiter.
             if (enteringThreads.isEmpty()) {
                 monitor.enteringThreads = null;
+            }
+            try {
+                MonitorRegistry.handoff(monitor.traceId, remaining, true);
+            } catch (Throwable ignored) {
             }
             r.run();
         }
