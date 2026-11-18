@@ -254,64 +254,103 @@ public class TObject {
         TThread thread = TThread.currentThread();
         Object waiterFiber = currentFiber();
         int waiterFiberId = currentFiberId();
-        if (o.monitor == null) {
+        Monitor monitor = o.monitor;
+        if (monitor == null) {
             createMonitor(o);
             TThread.setCurrentThread(thread);
             o.monitor.count += count;
             callback.complete(null);
             return;
-        } else if (o.monitor.owner == null) {
+        } else if (monitor.owner == null) {
             TThread.setCurrentThread(thread);
-            o.monitor.count = count;
-            setOwner(o.monitor, thread);
-            traceMonitor(o.monitor, "ACQUIRE m" + o.monitor.traceId + " obj=" + safeObjectClass(o.monitor)
+            monitor.count = count;
+            setOwner(monitor, thread);
+            traceMonitor(monitor, "ACQUIRE m" + monitor.traceId + " obj=" + safeObjectClass(monitor)
                     + " by=" + monitorThreadName(thread));
             MonitorRegistry.immediateAcquire();
             callback.complete(null);
             return;
         }
 
-        Monitor monitor = o.monitor;
-        MonitorRegistry.asyncWaitCall();
-        // A monitor whose registry entry was never created previously made the
-        // diagnostic argument below throw while evaluating `entry.objectClass`, which
-        // aborted the contended enter before the waiter was queued. Repair the entry
-        // first, then never let bookkeeping stand between the waiter and its grant.
-        if (monitor.entry == null && MonitorRegistry.allowRepair()) {
-            String className = null;
+        // Re-entering a monitor owned by the same cooperative fiber. After a
+        // suspension the Java Thread instance can differ, so owner != currentThread()
+        // while no other fiber can ever release the lock; waiting would deadlock.
+        boolean sameFiber = (waiterFiber != null && monitor.ownerFiber == waiterFiber)
+                || (waiterFiberId >= 0 && monitor.ownerFiberId == waiterFiberId);
+        if (sameFiber) {
+            monitor.count += count;
+            setOwner(monitor, thread, waiterFiber, waiterFiberId);
+            MonitorRegistry.selfReentry();
+            callback.complete(null);
+            return;
+        }
+
+        // Queue the waiter before any bookkeeping or string building. Whatever the
+        // diagnostics below do, a release now has a fiber to grant.
+        try {
+            if (monitor.enteringThreads == null) {
+                monitor.enteringThreads = new ArrayDeque<>();
+            }
+            monitor.enteringThreads.add(() -> {
+                TThread.setCurrentThread(thread);
+                o.monitor.count += count;
+                setOwner(o.monitor, thread, waiterFiber, waiterFiberId);
+                MonitorRegistry.grantCall();
+                try {
+                    MonitorRegistry.granted(monitor.traceId, waiterCount(monitor));
+                } catch (Throwable ignored) {
+                }
+                traceMonitor(monitor, "GRANT m" + monitor.traceId + " to=" + monitorThreadName(thread));
+                callback.complete(null);
+            });
+        } catch (Throwable t) {
             try {
-                className = o.getClass().getName();
+                MonitorRegistry.callbackError("enqueue " + errorText(t));
             } catch (Throwable ignored) {
             }
-            monitor.entry = MonitorRegistry.register(monitor.traceId, className);
-            MonitorRegistry.entryRepaired();
+            return;
         }
-        int waiters = waiterCount(monitor) + 1;
-        MonitorRegistry.contended(monitor.traceId, monitor.entry == null, monitor.id,
-                monitor.ownerFiberId, monitor.count, waiters);
-        if (monitor.enteringThreads == null) {
-            monitor.enteringThreads = new ArrayDeque<>();
+
+        try {
+            MonitorRegistry.asyncWaitCall();
+            MonitorRegistry.enqueued(monitor.traceId, monitor.ownerFiberId, waiterFiberId,
+                    monitor.enteringThreads.size());
+            if (monitor.entry == null && MonitorRegistry.allowRepair()) {
+                String className = null;
+                try {
+                    className = o.getClass().getName();
+                } catch (Throwable ignored) {
+                }
+                monitor.entry = MonitorRegistry.register(monitor.traceId, className);
+                MonitorRegistry.entryRepaired();
+            }
+            int waiters = waiterCount(monitor);
+            MonitorRegistry.contended(monitor.traceId, monitor.entry == null, monitor.id,
+                    monitor.ownerFiberId, monitor.count, waiters);
+            MonitorRegistry.owner(monitor.entry, monitorThreadName(monitor.owner),
+                    monitor.ownerFiberId, monitor.count, waiters);
+            diag("enter-wait m" + monitor.traceId + " obj=" + safeObjectClass(monitor)
+                    + " owner=" + monitorThreadName(monitor.owner) + " count=" + monitor.count
+                    + " by=" + monitorThreadName(thread));
+            traceMonitor(monitor, "WAIT m" + monitor.traceId + " obj=" + safeObjectClass(monitor)
+                    + " owner=" + monitorThreadName(monitor.owner)
+                    + " count=" + monitor.count + " by=" + monitorThreadName(thread)
+                    + " stack=" + BrowserRuntime.captureStack());
+        } catch (Throwable t) {
+            try {
+                MonitorRegistry.callbackError("diagnostics " + errorText(t));
+            } catch (Throwable ignored) {
+            }
         }
-        MonitorRegistry.owner(monitor.entry, monitorThreadName(monitor.owner), monitor.ownerFiberId,
-                monitor.count, waiters);
-        // Queue the waiter before emitting diagnostics: a diagnostic must never leave
-        // a suspended fiber with no path to being granted the lock.
-        monitor.enteringThreads.add(() -> {
-            TThread.setCurrentThread(thread);
-            o.monitor.count += count;
-            setOwner(o.monitor, thread, waiterFiber, waiterFiberId);
-            MonitorRegistry.grantCall();
-            MonitorRegistry.granted(monitor.traceId, waiterCount(monitor));
-            traceMonitor(monitor, "GRANT m" + monitor.traceId + " to=" + monitorThreadName(thread));
-            callback.complete(null);
-        });
-        diag("enter-wait m" + monitor.traceId + " obj=" + safeObjectClass(monitor)
-                + " owner=" + monitorThreadName(monitor.owner) + " count=" + monitor.count
-                + " by=" + monitorThreadName(thread));
-        traceMonitor(monitor, "WAIT m" + monitor.traceId + " obj=" + safeObjectClass(monitor)
-                + " owner=" + monitorThreadName(monitor.owner)
-                + " count=" + monitor.count + " by=" + monitorThreadName(thread)
-                + " stack=" + BrowserRuntime.captureStack());
+    }
+
+    private static String errorText(Throwable t) {
+        try {
+            String message = t.getMessage();
+            return t.getClass().getName() + (message != null ? ": " + message : "");
+        } catch (Throwable ignored) {
+            return "?";
+        }
     }
 
     static void monitorExit(TObject o) {

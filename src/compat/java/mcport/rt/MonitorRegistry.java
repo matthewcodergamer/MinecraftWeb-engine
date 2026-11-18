@@ -42,8 +42,12 @@ public final class MonitorRegistry {
     // the only step between a contender and its queue slot).
     private static int entryRepairs;
     private static int handoffGrants;
+    private static int selfReentries;
+    private static int enqueueCount;
     private static String lastContended;
     private static String lastHandoff;
+    private static String lastEnqueue;
+    private static String lastError;
 
     /** One lock we have seen; all fields are plain copies of monitor state. */
     public static final class Entry {
@@ -121,6 +125,27 @@ public final class MonitorRegistry {
     /** Snapshot of the waiter queue at the instant the queued runnable ran. */
     public static void granted(int traceId, int remaining) {
         lastHandoff = "m" + traceId + " ran remaining=" + remaining;
+    }
+
+    /** A contended enter was recognized as a re-entry by the owning fiber. */
+    public static void selfReentry() {
+        selfReentries++;
+    }
+
+    /** The waiter reached the queue. This call must stay free of monitor state. */
+    public static void enqueued(int traceId, int ownerFiberId, int waiterFiberId, int waiters) {
+        enqueueCount++;
+        lastEnqueue = "m" + traceId + " ownerFiber=#" + ownerFiberId
+                + " waiterFiber=#" + waiterFiberId + " waiters=" + waiters;
+    }
+
+    /** An exception escaped the contended enter. Logged immediately for the harness. */
+    public static void callbackError(String message) {
+        lastError = message;
+        try {
+            BrowserRuntime.log("[TOBJ-ERR] " + message);
+        } catch (Throwable ignored) {
+        }
     }
 
     /** Records the platform detector's answer from inside the class library. */
@@ -220,6 +245,9 @@ public final class MonitorRegistry {
                 .append(" imm=").append(immediateAcquires).append(" grant=").append(grantCalls)
                 .append(" exit=").append(exitCalls).append(" adopt=").append(adoptedCalls)
                 .append(" repairs=").append(entryRepairs).append(" granted=").append(handoffGrants)
+                .append(" self=").append(selfReentries).append(" enq=").append(enqueueCount)
+                .append(" enqueued=").append(lastEnqueue)
+                .append(" error=").append(lastError)
                 .append(" contended=").append(lastContended)
                 .append(" handoff=").append(lastHandoff)
                 .append(" gc=").append(gcPlatform).append(" gcSkip=").append(platformSkips)
