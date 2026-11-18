@@ -254,7 +254,7 @@ BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getLongLE([BI)J -> mcport.
 BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setLongLE([BIJ)V -> mcport.rt.patch.NettyVarHandlePatches setLongLE
 
 # --- Java Locale extension-key method absent from TeaVM 0.16 -------------------------------
-BODY java.util.Locale getExtensionKeys()Ljava/util/Set; -> mcport.rt.patch.LocalePatches getExtensionKeys
+REDIRECT java.util.Locale getExtensionKeys()Ljava/util/Set; -> mcport.rt.patch.LocalePatches getExtensionKeys
 
 # --- Java 25 Reader convenience method absent from TeaVM 0.16 ----------------------------
 REDIRECT java.io.Reader readAllAsString()Ljava/lang/String; -> mcport.rt.patch.ReaderPatches readAllAsString
