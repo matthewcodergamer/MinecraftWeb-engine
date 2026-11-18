@@ -194,6 +194,43 @@
     }
   }
 
+  function normalizeIntegerClampCalls(source) {
+    let out = '', cursor = 0;
+    const isIntCast = (s) => /^\s*int\s*\(/.test(s);
+    const isIntegerExpression = (s) => /^[\sA-Za-z0-9_+*/%<>&|^~!().-]+$/.test(s) && !/[0-9]\.[0-9]|[0-9][eE][+-]?[0-9]/.test(s);
+    const castBound = (s) => isIntCast(s) ? s : 'int(' + s.trim() + ')';
+    const re = /\bclamp\s*\(/g;
+    let match;
+    while ((match = re.exec(source))) {
+      const open = source.indexOf('(', match.index);
+      let depth = 1, end = open + 1;
+      for (; end < source.length && depth; end++) {
+        if (source[end] === '(') depth++;
+        else if (source[end] === ')') depth--;
+      }
+      if (depth !== 0) continue;
+      const body = source.slice(open + 1, end - 1);
+      const args = [];
+      let start = 0, nested = 0;
+      for (let i = 0; i < body.length; i++) {
+        if (body[i] === '(') nested++;
+        else if (body[i] === ')') nested--;
+        else if (body[i] === ',' && nested === 0) { args.push(body.slice(start, i)); start = i + 1; }
+      }
+      args.push(body.slice(start));
+      if (args.length === 3 && isIntCast(args[0]) &&
+          isIntegerExpression(args[1]) && isIntegerExpression(args[2])) {
+        out += source.slice(cursor, open + 1) + args[0] + ', ' +
+          castBound(args[1]) + ', ' + castBound(args[2]) + ')';
+      } else {
+        out += source.slice(cursor, end);
+      }
+      cursor = end;
+      re.lastIndex = end;
+    }
+    return out + source.slice(cursor);
+  }
+
   // =================================================================== shaderc -> glslang
   /**
    * Source preprocessing that shaderc does natively but the glslang.js build does not expose:
@@ -222,14 +259,11 @@
       });
     }
     let src = expand(source, fileName);
-    // glslang's GLSL frontend can report an ambiguous overload for Minecraft's
-    // OIT integer-index clamps when the macro-expanded upper bound participates
-    // in overload resolution. Preserve integer semantics by making both bounds
-    // explicitly int, matching the already-int first argument.
-    src = src.replace(
-      /\bclamp\s*\(\s*int\s*\(\s*floor\s*\(\s*([^()]*?)\s*\)\s*\)\s*,\s*0\s*,\s*(COEFF_COUNT\s*-\s*1)\s*\)/g,
-      (_match, value, upper) => 'clamp(int(floor(' + value.trim() + ')), int(0), int(' + upper.replace(/\s+/g, ' ') + '))'
-    );
+    // glslang can ambiguously resolve integer clamp overloads when one or both
+    // bounds are macros or integer expressions. Parse call arguments with balanced
+    // parentheses (rather than a shallow regex, which misses nested expressions),
+    // then make the bounds explicitly int whenever the first argument is int(...).
+    src = normalizeIntegerClampCalls(src);
     src = src.replace(/^[ \t]*#[ \t]*extension[ \t]+GL_GOOGLE_include_directive.*$/gm, '');
     // WebGPU rasterizes points at exactly 1px and Tint rejects other gl_PointSize values.
     src = src.replace(/\bgl_PointSize\s*=[^;]*;/g, '');
