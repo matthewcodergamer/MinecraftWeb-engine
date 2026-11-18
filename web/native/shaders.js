@@ -195,11 +195,64 @@
   }
 
   function normalizeIntegerClampCalls(source) {
+    // glslang sees overloads for signed/unsigned integer and floating-point
+    // clamp. Integer shader expressions with untyped numeric bounds can match
+    // more than one overload, so infer the first argument's declared scalar
+    // type and make both bounds explicit before glslang parses the source.
+    function scalarIntegerType(type) {
+      if (type === 'uint' || type === 'uvec2' || type === 'uvec3' || type === 'uvec4') return 'uint';
+      if (type === 'int' || type === 'ivec2' || type === 'ivec3' || type === 'ivec4') return 'int';
+      return null;
+    }
+
+    function inferIntegerType(expression) {
+      let expr = expression.trim();
+      // Remove balanced outer parentheses without changing nested expressions.
+      while (expr.startsWith('(') && expr.endsWith(')')) {
+        let depth = 0, closesAtEnd = false;
+        for (let i = 0; i < expr.length; i++) {
+          if (expr[i] === '(') depth++;
+          else if (expr[i] === ')') {
+            depth--;
+            if (depth === 0) { closesAtEnd = i === expr.length - 1; break; }
+          }
+        }
+        if (!closesAtEnd) break;
+        expr = expr.slice(1, -1).trim();
+      }
+
+      const constructor = /^(int|uint|ivec[234]|uvec[234])\\s*\\(/.exec(expr);
+      if (constructor) return scalarIntegerType(constructor[1]);
+      if (/^[+-]?\\d+[uU]$/.test(expr)) return 'uint';
+      if (/^[+-]?\\d+$/.test(expr)) return 'int';
+
+      const declarationType = (name) => {
+        if (/^(gl_VertexID|gl_InstanceID|gl_PrimitiveID|gl_Layer|gl_SampleID)$/.test(name)) return 'int';
+        const escaped = name.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
+        const variable = new RegExp('\\\\b(u?int|[iu]vec[234])\\\\s+' + escaped + '\\\\b').exec(source);
+        if (variable) return scalarIntegerType(variable[1]);
+        const fn = new RegExp('\\\\b(u?int|[iu]vec[234])\\\\s+' + escaped + '\\\\s*\\\\(').exec(source);
+        return fn ? scalarIntegerType(fn[1]) : null;
+      };
+
+      const simple = /^([A-Za-z_]\\w*)$/.exec(expr);
+      if (simple) return declarationType(simple[1]);
+
+      const ignoredFunctions = new Set([
+        'min', 'max', 'abs', 'sign', 'clamp', 'bitCount', 'bitfieldExtract',
+        'bitfieldInsert', 'bitfieldReverse', 'findLSB', 'findMSB', 'mod',
+        'textureSize', 'imageSize'
+      ]);
+      const names = (expr.match(/[A-Za-z_]\\w*/g) || [])
+        .filter(name => !ignoredFunctions.has(name) && !/^[xyzwrgba stpq]$/.test(name));
+      if (!names.length) return null;
+      const types = names.map(declarationType);
+      if (types.some(type => !type) || types.some(type => type !== types[0])) return null;
+      return types[0];
+    }
+
     let out = '', cursor = 0;
-    const isIntCast = (s) => /^\s*int\s*\(/.test(s);
-    const isIntegerExpression = (s) => /^[\sA-Za-z0-9_+*/%<>&|^~!().-]+$/.test(s) && !/[0-9]\.[0-9]|[0-9][eE][+-]?[0-9]/.test(s);
-    const castBound = (s) => isIntCast(s) ? s : 'int(' + s.trim() + ')';
-    const re = /\bclamp\s*\(/g;
+    const re = /\\bclamp\\s*\\(/g;
     let match;
     while ((match = re.exec(source))) {
       const open = source.indexOf('(', match.index);
@@ -218,8 +271,14 @@
         else if (body[i] === ',' && nested === 0) { args.push(body.slice(start, i)); start = i + 1; }
       }
       args.push(body.slice(start));
-      if (args.length === 3 && isIntCast(args[0]) &&
-          isIntegerExpression(args[1]) && isIntegerExpression(args[2])) {
+
+      const type = args.length === 3 ? inferIntegerType(args[0]) : null;
+      if (type) {
+        const castBound = (value) => {
+          const trimmed = value.trim();
+          const existing = /^(int|uint)\\s*\\(/.exec(trimmed);
+          return existing && existing[1] === type ? trimmed : type + '(' + trimmed + ')';
+        };
         out += source.slice(cursor, open + 1) + args[0] + ', ' +
           castBound(args[1]) + ', ' + castBound(args[2]) + ')';
       } else {
