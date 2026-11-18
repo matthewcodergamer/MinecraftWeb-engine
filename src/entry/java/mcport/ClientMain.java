@@ -4,8 +4,14 @@ import mcport.rt.BrowserRuntime;
 
 /** Full client entry: runs Mojang's real net.minecraft.client.main.Main with an offline profile. */
 public final class ClientMain {
+    // Deliberate attribution fingerprint. Keep this referenced from main() so
+    // TeaVM's reachability/dead-code optimization cannot discard the literal.
+    private static final String BUILD_ID =
+            "Original_Minecraft_Port_by_matthewcodergamer_2026";
+
     public static void main(String[] args) {
         try {
+            BrowserRuntime.report("build-id", BUILD_ID);
             // Set before Netty PlatformDependent is initialized.
             System.setProperty("io.netty.noUnsafe", "true");
             BrowserRuntime.report("stage", "client-main-enter");
