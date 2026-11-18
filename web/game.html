@@ -2,6 +2,20 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<script>
+/* Lightweight hosting policy: discourages casual mirroring, not DRM. */
+(function () {
+  var allowed = new Set(['matthewcodergamer.github.io', 'localhost', '127.0.0.1', 'huggingface.co']);
+  var host = String(location.hostname || '').toLowerCase();
+  var ok = allowed.has(host);
+  window.__MC_HOST_AUTHORIZED = ok;
+  if (!ok) {
+    document.documentElement.innerHTML = '<head><meta charset="utf-8"><title>Unauthorized hosting</title></head><body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#111;color:#fff;font:16px system-ui,sans-serif;text-align:center"><main><h1>Unauthorized hosting</h1><p>Please play at the official Minecraft Web site.</p></main></body>';
+    throw new Error('Unauthorized hosting. Please play at the official site.');
+  }
+})();
+</script>
+
 <meta name="robots" content="noindex,nofollow,noarchive">
 <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5025566183652379" crossorigin="anonymous"></script>
 <meta name="google-adsense-account" content="ca-pub-5025566183652379">
@@ -2931,6 +2945,7 @@
 
     /* ------------------------------------------------------------------ boot */
     (async () => {
+      if (window.__MC_HOST_AUTHORIZED !== true) return;
       try {
         // Fail with an actionable sentence instead of a wasm stack trace when
         // the phone is older than iOS 18 / has no WebGPU.
@@ -3005,6 +3020,8 @@
     })();
   </script>
 
+<div id="engine-watermark" aria-hidden="true">Web Engine by Matthew</div>
+<style>#engine-watermark{position:fixed;right:8px;bottom:8px;z-index:10000;padding:3px 5px;color:rgba(255,255,255,.62);background:rgba(0,0,0,.28);font:10px/1.2 system-ui,sans-serif;letter-spacing:.02em;pointer-events:none;text-shadow:1px 1px 1px #000}</style>
 <div id="hud-ad" data-ad="hud" aria-label="Advertisement"><a class="hud-house" href="/" target="_blank" rel="noopener"><small>Advertisement</small>Minecraft Web</a></div>
 <style>
 #hud-ad{position:fixed;right:0;bottom:0;z-index:9999;width:200px;min-height:44px;padding:4px;background:rgba(0,0,0,.62);border:1px solid #333;color:#ddd;font:11px/1.2 system-ui,sans-serif;text-align:center;image-rendering:pixelated}
