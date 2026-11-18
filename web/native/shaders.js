@@ -199,9 +199,10 @@
     // clamp. Integer shader expressions with untyped numeric bounds can match
     // more than one overload, so infer the first argument's declared scalar
     // type and make both bounds explicit before glslang parses the source.
-    function scalarIntegerType(type) {
-      if (type === 'uint' || type === 'uvec2' || type === 'uvec3' || type === 'uvec4') return 'uint';
-      if (type === 'int' || type === 'ivec2' || type === 'ivec3' || type === 'ivec4') return 'int';
+    function integerType(type) {
+      // Preserve vector width: GLSL integer-vector clamp overloads require
+      // vector bounds (ivecN/uvecN), not scalar int/uint bounds.
+      if (/^(?:u?int|[iu]vec[234])$/.test(type)) return type;
       return null;
     }
 
@@ -227,7 +228,7 @@
       // there is exactly one integer signedness; conflicting int/uint casts are
       // deliberately left alone rather than guessed.
       const constructors = [...expr.matchAll(/\b(int|uint|ivec[234]|uvec[234])\s*\(/g)]
-        .map(match => scalarIntegerType(match[1]));
+        .map(match => integerType(match[1]));
       if (constructors.length && constructors.every(type => type === constructors[0])) {
         return constructors[0];
       }
@@ -238,9 +239,9 @@
       const declarationType = (name) => {
         if (/^(gl_VertexID|gl_InstanceID|gl_PrimitiveID|gl_Layer|gl_SampleID)$/.test(name)) return 'int';
         const variable = new RegExp('\\b(u?int|[iu]vec[234])\\s+' + name + '\\b').exec(source);
-        if (variable) return scalarIntegerType(variable[1]);
+        if (variable) return integerType(variable[1]);
         const fn = new RegExp('\\b(u?int|[iu]vec[234])\\s+' + name + '\\s*\\(').exec(source);
-        return fn ? scalarIntegerType(fn[1]) : null;
+        return fn ? integerType(fn[1]) : null;
       };
 
       const simple = /^([A-Za-z_]\w*)$/.exec(expr);
@@ -293,7 +294,7 @@
       if (type) {
         const castBound = (value) => {
           const trimmed = value.trim();
-          const existing = /^(int|uint)\s*\(/.exec(trimmed);
+          const existing = /^(?:int|uint|ivec[234]|uvec[234])\s*\(/.exec(trimmed);
           return existing && existing[1] === type ? trimmed : type + '(' + trimmed + ')';
         };
         out += source.slice(cursor, open + 1) + args[0] + ', ' +
