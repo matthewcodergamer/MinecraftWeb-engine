@@ -226,25 +226,25 @@
 
       // A vector constructor determines the complete overload even when its
       // components contain scalar casts. Otherwise use a consistent scalar type.
-      const constructors = [...expr.matchAll(/\\b(int|uint|float|double|[iu]vec[234]|vec[234]|dvec[234])\\s*\\(/g)]
+      const constructors = [...expr.matchAll(/\b(int|uint|float|double|[iu]vec[234]|vec[234]|dvec[234])\s*\(/g)]
         .map(match => typeOf(match[1]));
       const vectors = constructors.filter(type => vectorTypes.has(type));
       if (vectors.length) return vectors.every(type => type === vectors[0]) ? vectors[0] : null;
       if (constructors.length) return constructors.every(type => type === constructors[0]) ? constructors[0] : null;
 
-      if (/^[+-]?\\d+[uU]$/.test(expr)) return 'uint';
-      if (/^[+-]?\\d+$/.test(expr)) return 'int';
-      if (/^[+-]?(?:\\d+\\.\\d*|\\d*\\.\\d+|\\d+)(?:[eE][+-]?\\d+)?[fF]?$/.test(expr)) return 'float';
-      if (/^[+-]?(?:\\d+\\.\\d*|\\d*\\.\\d+|\\d+)(?:[eE][+-]?\\d+)?[lL][fF]?$/.test(expr)) return 'double';
+      if (/^[+-]?\d+[uU]$/.test(expr)) return 'uint';
+      if (/^[+-]?\d+$/.test(expr)) return 'int';
+      if (/^[+-]?(?:\d+\.\d*|\d*\.\d+|\d+)(?:[eE][+-]?\d+)?[fF]?$/.test(expr)) return 'float';
+      if (/^[+-]?(?:\d+\.\d*|\d*\.\d+|\d+)(?:[eE][+-]?\d+)?[lL][fF]?$/.test(expr)) return 'double';
 
       const declarationType = (name) => {
-        const variable = new RegExp('\\\\b(int|uint|float|double|[iu]vec[234]|vec[234]|dvec[234])\\\\s+' + name + '\\\\b').exec(source);
+        const variable = new RegExp('\\b(int|uint|float|double|[iu]vec[234]|vec[234]|dvec[234])\\s+' + name + '\\b').exec(source);
         if (variable) return typeOf(variable[1]);
-        const fn = new RegExp('\\\\b(int|uint|float|double|[iu]vec[234]|vec[234]|dvec[234])\\\\s+' + name + '\\\\s*\\\\(').exec(source);
+        const fn = new RegExp('\\b(int|uint|float|double|[iu]vec[234]|vec[234]|dvec[234])\\s+' + name + '\\s*\\(').exec(source);
         return fn ? typeOf(fn[1]) : null;
       };
 
-      const simple = /^([A-Za-z_]\\w*)$/.exec(expr);
+      const simple = /^([A-Za-z_]\w*)$/.exec(expr);
       if (simple) return declarationType(simple[1]);
 
       const ignoredFunctions = new Set([
@@ -258,7 +258,7 @@
         'textureSize', 'imageSize'
       ]);
       const swizzles = new Set(['x', 'y', 'z', 'w', 'r', 'g', 'b', 'a', 's', 't', 'p', 'q']);
-      const names = (expr.match(/[A-Za-z_]\\w*/g) || [])
+      const names = (expr.match(/[A-Za-z_]\w*/g) || [])
         .filter(name => !ignoredFunctions.has(name) && !swizzles.has(name));
       if (!names.length) return null;
       const types = names.map(declarationType);
@@ -267,7 +267,7 @@
     }
 
     let out = '', cursor = 0;
-    const re = /\\bclamp\\s*\\(/g;
+    const re = /\bclamp\s*\(/g;
     let match;
     while ((match = re.exec(source))) {
       const open = source.indexOf('(', match.index);
@@ -291,7 +291,7 @@
       if (type) {
         const castBound = (value) => {
           const trimmed = value.trim();
-          const existing = /^(int|uint|float|double|ivec[234]|uvec[234]|vec[234]|dvec[234])\\s*\\(/.exec(trimmed);
+          const existing = /^(int|uint|float|double|ivec[234]|uvec[234]|vec[234]|dvec[234])\s*\(/.exec(trimmed);
           return existing && existing[1] === type ? trimmed : type + '(' + trimmed + ')';
         };
         out += source.slice(cursor, open + 1) + args[0] + ', ' +
