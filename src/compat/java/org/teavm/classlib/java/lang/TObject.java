@@ -82,11 +82,7 @@ public class TObject {
         if (monitor == null) {
             return;
         }
-        boolean webAssemblyGC = PlatformDetector.isWebAssemblyGC();
-        MonitorRegistry.platform(webAssemblyGC);
-        if (!webAssemblyGC) {
-            return;
-        }
+        MonitorRegistry.platform(PlatformDetector.isWebAssemblyGC());
         MonitorRegistry.trace(message);
     }
 
@@ -115,9 +111,13 @@ public class TObject {
      * fiber and the runtime-visible registry can never disagree.
      */
     private static void setOwner(Monitor monitor, TThread thread) {
+        setOwner(monitor, thread, currentFiber(), currentFiberId());
+    }
+
+    private static void setOwner(Monitor monitor, TThread thread, Object fiber, int fiberId) {
         monitor.owner = thread;
-        monitor.ownerFiber = currentFiber();
-        monitor.ownerFiberId = currentFiberId();
+        monitor.ownerFiber = fiber;
+        monitor.ownerFiberId = fiberId;
         MonitorRegistry.owner(monitor.entry, monitorThreadName(thread), monitor.ownerFiberId,
                 monitor.count, waiterCount(monitor));
     }
@@ -131,17 +131,6 @@ public class TObject {
 
     private static int waiterCount(Monitor monitor) {
         return monitor.enteringThreads != null ? monitor.enteringThreads.size() : 0;
-    }
-
-    private static boolean ownerIsDead(TThread owner) {
-        if (owner == null) {
-            return false;
-        }
-        try {
-            return !owner.isAlive();
-        } catch (Throwable ignored) {
-            return false;
-        }
     }
 
     private static String monitorThreadName(TThread thread) {
@@ -200,9 +189,6 @@ public class TObject {
             traceMonitor(o.monitor, "ACQUIRE m" + o.monitor.traceId + " obj=" + o.monitor.entry.objectClass
                     + " by=" + monitorThreadName(o.monitor.owner));
         } else if (o.monitor.owner != TThread.currentThread()) {
-            if (adoptAbandonedMonitor(o.monitor, count)) {
-                return;
-            }
             monitorEnterWait(o, count);
         } else {
             o.monitor.count += count;
@@ -235,29 +221,6 @@ public class TObject {
         }
     }
 
-    /**
-     * Recovers a monitor whose recorded owner can never release it:
-     *  - the same cooperative fiber already owns it but the recorded Java thread
-     *    instance changed identity across a suspension point (self-deadlock), or
-     *  - the owning thread has terminated without running its monitorExit.
-     * In both cases the lock is effectively free for the calling fiber.
-     */
-    private static boolean adoptAbandonedMonitor(Monitor monitor, int count) {
-        Object fiber = currentFiber();
-        boolean sameFiber = fiber != null && monitor.ownerFiber == fiber;
-        boolean deadOwner = ownerIsDead(monitor.owner);
-        if (!sameFiber && !deadOwner) {
-            return false;
-        }
-        traceMonitor(monitor, (sameFiber ? "STALE-OWNER m" : "DEAD-OWNER m") + monitor.traceId
-                + " obj=" + monitor.entry.objectClass + " recorded=" + monitorThreadName(monitor.owner)
-                + " count=" + monitor.count + " by=" + monitorThreadName(TThread.currentThread()));
-        monitor.count += count;
-        setOwner(monitor, TThread.currentThread());
-        MonitorRegistry.adoptedCall();
-        return true;
-    }
-
     static void monitorEnterWait(TObject o, int count) {
         TObjectAsync.monitorEnterWait(o, count);
     }
@@ -265,6 +228,8 @@ public class TObject {
     static void monitorEnterWait(TObject o, int count, AsyncCallback<Void> callback) {
         MonitorRegistry.asyncEnterCall();
         TThread thread = TThread.currentThread();
+        Object waiterFiber = currentFiber();
+        int waiterFiberId = currentFiberId();
         if (o.monitor == null) {
             createMonitor(o);
             TThread.setCurrentThread(thread);
@@ -287,11 +252,6 @@ public class TObject {
         diag("enter-wait m" + monitor.traceId + " obj=" + monitor.entry.objectClass
                 + " owner=" + monitorThreadName(monitor.owner) + " count=" + monitor.count
                 + " by=" + monitorThreadName(thread));
-        if (adoptAbandonedMonitor(monitor, count)) {
-            TThread.setCurrentThread(thread);
-            callback.complete(null);
-            return;
-        }
         traceMonitor(monitor, "WAIT m" + monitor.traceId + " obj=" + monitor.entry.objectClass
                 + " owner=" + monitorThreadName(monitor.owner)
                 + " count=" + monitor.count + " by=" + monitorThreadName(thread)
@@ -304,7 +264,7 @@ public class TObject {
         monitor.enteringThreads.add(() -> {
             TThread.setCurrentThread(thread);
             o.monitor.count += count;
-            setOwner(o.monitor, thread);
+            setOwner(o.monitor, thread, waiterFiber, waiterFiberId);
             MonitorRegistry.grantCall();
             traceMonitor(monitor, "GRANT m" + monitor.traceId + " to=" + monitorThreadName(thread));
             callback.complete(null);

@@ -99,10 +99,12 @@ public final class MonitorRegistry {
         entry.objectClass = objectClass;
         if (entries == null) {
             entries = new Entry[512];
+        } else if (entryCount == entries.length) {
+            Entry[] expanded = new Entry[entries.length * 2];
+            System.arraycopy(entries, 0, expanded, 0, entries.length);
+            entries = expanded;
         }
-        if (entryCount < entries.length) {
-            entries[entryCount++] = entry;
-        }
+        entries[entryCount++] = entry;
         return entry;
     }
 
@@ -146,7 +148,7 @@ public final class MonitorRegistry {
         }
         traceTotal++;
         try {
-            BrowserRuntime.report("trace", "[MONITOR] " + message);
+            BrowserRuntime.report("monitor", message);
         } catch (Throwable ignored) {
         }
     }
