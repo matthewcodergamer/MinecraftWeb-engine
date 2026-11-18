@@ -222,6 +222,14 @@
       });
     }
     let src = expand(source, fileName);
+    // glslang's GLSL frontend can report an ambiguous overload for Minecraft's
+    // OIT integer-index clamps when the macro-expanded upper bound participates
+    // in overload resolution. Preserve integer semantics by making both bounds
+    // explicitly int, matching the already-int first argument.
+    src = src.replace(
+      /\\bclamp\\s*\\(\\s*int\\s*\\(\\s*floor\\s*\\(\\s*([^()]*?)\\s*\\)\\s*\\)\\s*,\\s*0\\s*,\\s*(COEFF_COUNT\\s*-\\s*1)\\s*\\)/g,
+      (_match, value, upper) => 'clamp(int(floor(' + value.trim() + ')), int(0), int(' + upper.replace(/\\s+/g, ' ') + '))'
+    );
     src = src.replace(/^[ \t]*#[ \t]*extension[ \t]+GL_GOOGLE_include_directive.*$/gm, '');
     // WebGPU rasterizes points at exactly 1px and Tint rejects other gl_PointSize values.
     src = src.replace(/\bgl_PointSize\s*=[^;]*;/g, '');
