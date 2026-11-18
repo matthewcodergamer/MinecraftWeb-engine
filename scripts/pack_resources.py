@@ -45,6 +45,7 @@ import json
 import os
 import struct
 import sys
+import tempfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -175,6 +176,44 @@ def index_file_entries(mc_dir: Path, meta: dict, version: str) -> list[Entry]:
     alias = f"assets/indexes/{version}.json"
     if alias != f"assets/indexes/{index_id}.json":
         out.append(Entry(alias, size, "file", str(path)))
+    return out
+
+
+
+
+def icu_resource_entries(mc_dir: Path, meta: dict, already: set[str], temp_dir: Path) -> list[Entry]:
+    """Expose ICU4J's bundled timezone/locale data through ClasspathResources.
+
+    Minecraft's ICU classes are loaded from a library jar, but browser resource
+    lookups are redirected to client-resources.bin. Pack ICU's .res data from
+    the declared Java libraries so UResourceBundle can resolve zoneinfo64.
+    """
+    out: list[Entry] = []
+    for library in meta.get("libraries", []):
+        artifact = (library.get("downloads") or {}).get("artifact") or {}
+        relative = artifact.get("path")
+        if not relative or not relative.endswith(".jar"):
+            continue
+        archive_path = mc_dir / "libraries" / relative
+        if not archive_path.is_file():
+            continue
+        try:
+            with zipfile.ZipFile(archive_path) as archive:
+                for info in archive.infolist():
+                    name = info.filename
+                    if info.is_dir() or not name.startswith("com/ibm/icu/impl/data/"):
+                        continue
+                    if name in already:
+                        continue
+                    target = temp_dir / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    data = archive.read(name)
+                    target.write_bytes(data)
+                    out.append(Entry(name, len(data), "file", str(target)))
+                    already.add(name)
+        except zipfile.BadZipFile:
+            print(f"warning: skipping invalid library archive {archive_path}", file=sys.stderr)
+    print(f"packed {len(out)} ICU4J resource file(s) from Minecraft libraries")
     return out
 
 
@@ -375,32 +414,38 @@ def main(argv: list[str] | None = None) -> int:
         entries.extend(external)
         names.update(e.name for e in external)
 
-    # Asset index files: canonical id + version-named alias.
-    indexes = [e for e in index_file_entries(mc_dir, meta, version) if e.name not in names]
-    entries.extend(indexes)
-    names.update(e.name for e in indexes)
+    # The browser redirects Class/ClassLoader resource lookups into this archive.
+    # Include ICU4J's non-class data from Minecraft's declared library jars too.
+    with tempfile.TemporaryDirectory(prefix="mcport-library-resources-") as temp:
+        library_resources = icu_resource_entries(mc_dir, meta, names, Path(temp))
+        entries.extend(library_resources)
 
-    entries = dedupe(entries)
+        # Asset index files: canonical id + version-named alias.
+        indexes = [e for e in index_file_entries(mc_dir, meta, version) if e.name not in names]
+        entries.extend(indexes)
+        names.update(e.name for e in indexes)
 
-    total = sum(e.size for e in entries)
-    counts: dict[str, int] = {}
-    bytes_by: dict[str, int] = {}
-    for entry in entries:
-        c = category(entry.name)
-        counts[c] = counts.get(c, 0) + 1
-        bytes_by[c] = bytes_by.get(c, 0) + entry.size
+        entries = dedupe(entries)
 
-    # Lay out the index (offset, length) exactly as the readers expect.
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(jar) as zf:
-        write_archive(out, entries, zf)
+        total = sum(e.size for e in entries)
+        counts: dict[str, int] = {}
+        bytes_by: dict[str, int] = {}
+        for entry in entries:
+            c = category(entry.name)
+            counts[c] = counts.get(c, 0) + 1
+            bytes_by[c] = bytes_by.get(c, 0) + entry.size
 
-        if not args.no_extra:
-            ui_dir = Path(args.ui_dir).expanduser() if args.ui_dir else out.parent / "ui"
-            extract_ui(entries, zf, ui_dir)
-            textures_out = (Path(args.textures_out).expanduser()
-                            if args.textures_out else out.parent / "client-textures.bin")
-            write_texture_archive(textures_out, entries, zf)
+        # Lay out the index (offset, length) exactly as the readers expect.
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(jar) as zf:
+            write_archive(out, entries, zf)
+
+            if not args.no_extra:
+                ui_dir = Path(args.ui_dir).expanduser() if args.ui_dir else out.parent / "ui"
+                extract_ui(entries, zf, ui_dir)
+                textures_out = (Path(args.textures_out).expanduser()
+                                if args.textures_out else out.parent / "client-textures.bin")
+                write_texture_archive(textures_out, entries, zf)
 
     print(f"packed {len(entries)} files, {total / 1048576:.1f} MiB payload "
           f"-> {out} ({out.stat().st_size / 1048576:.1f} MiB)")
