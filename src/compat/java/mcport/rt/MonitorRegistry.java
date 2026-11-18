@@ -44,6 +44,8 @@ public final class MonitorRegistry {
     private static int handoffGrants;
     private static int selfReentries;
     private static int enqueueCount;
+    private static int stepCount;
+    private static String lastStep;
     private static String lastContended;
     private static String lastHandoff;
     private static String lastEnqueue;
@@ -105,6 +107,17 @@ public final class MonitorRegistry {
     /** A monitor reached the contended path without a registry entry. */
     public static void entryRepaired() {
         entryRepairs++;
+    }
+
+    /**
+     * Records the last step reached inside the contended monitor-enter path. This
+     * is deliberately independent of the waiter queue: if a fiber suspends and is
+     * never granted, this field identifies the exact statement that returned
+     * without completing the callback.
+     */
+    public static void step(String name) {
+        stepCount++;
+        lastStep = name;
     }
 
     /** Snapshot of the monitor a fiber is about to wait on, captured pre-enqueue. */
@@ -246,6 +259,7 @@ public final class MonitorRegistry {
                 .append(" exit=").append(exitCalls).append(" adopt=").append(adoptedCalls)
                 .append(" repairs=").append(entryRepairs).append(" granted=").append(handoffGrants)
                 .append(" self=").append(selfReentries).append(" enq=").append(enqueueCount)
+                .append(" steps=").append(stepCount).append(" step=").append(lastStep)
                 .append(" enqueued=").append(lastEnqueue)
                 .append(" error=").append(lastError)
                 .append(" contended=").append(lastContended)

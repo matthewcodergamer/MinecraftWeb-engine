@@ -213,6 +213,7 @@ public class TObject {
             traceMonitor(o.monitor, "ACQUIRE m" + o.monitor.traceId + " obj=" + safeObjectClass(o.monitor)
                     + " by=" + monitorThreadName(o.monitor.owner));
         } else if (o.monitor.owner != TThread.currentThread()) {
+            MonitorRegistry.step("enter-contended");
             monitorEnterWait(o, count);
         } else {
             o.monitor.count += count;
@@ -251,15 +252,19 @@ public class TObject {
 
     static void monitorEnterWait(TObject o, int count, AsyncCallback<Void> callback) {
         MonitorRegistry.asyncEnterCall();
+        MonitorRegistry.step("enter-wait");
         TThread thread = TThread.currentThread();
         Object waiterFiber = currentFiber();
         int waiterFiberId = currentFiberId();
+        MonitorRegistry.step("captured");
         Monitor monitor = o.monitor;
         if (monitor == null) {
             createMonitor(o);
             TThread.setCurrentThread(thread);
             o.monitor.count += count;
+            MonitorRegistry.step("new-monitor-grant");
             callback.complete(null);
+            MonitorRegistry.step("new-monitor-complete");
             return;
         } else if (monitor.owner == null) {
             TThread.setCurrentThread(thread);
@@ -268,7 +273,9 @@ public class TObject {
             traceMonitor(monitor, "ACQUIRE m" + monitor.traceId + " obj=" + safeObjectClass(monitor)
                     + " by=" + monitorThreadName(thread));
             MonitorRegistry.immediateAcquire();
+            MonitorRegistry.step("free-monitor-grant");
             callback.complete(null);
+            MonitorRegistry.step("free-monitor-complete");
             return;
         }
 
@@ -281,12 +288,15 @@ public class TObject {
             monitor.count += count;
             setOwner(monitor, thread, waiterFiber, waiterFiberId);
             MonitorRegistry.selfReentry();
+            MonitorRegistry.step("self-reentry-grant");
             callback.complete(null);
+            MonitorRegistry.step("self-reentry-complete");
             return;
         }
 
         // Queue the waiter before any bookkeeping or string building. Whatever the
         // diagnostics below do, a release now has a fiber to grant.
+        MonitorRegistry.step("before-enqueue");
         try {
             if (monitor.enteringThreads == null) {
                 monitor.enteringThreads = new ArrayDeque<>();
@@ -303,11 +313,16 @@ public class TObject {
                 traceMonitor(monitor, "GRANT m" + monitor.traceId + " to=" + monitorThreadName(thread));
                 callback.complete(null);
             });
+            MonitorRegistry.step("queued");
         } catch (Throwable t) {
+            MonitorRegistry.step("enqueue-error");
             try {
                 MonitorRegistry.callbackError("enqueue " + errorText(t));
             } catch (Throwable ignored) {
             }
+            // Never leave a suspended fiber without a wakeup. If queueing failed,
+            // resume it with the error so the failure is visible instead of a hang.
+            callback.error(t);
             return;
         }
 
@@ -315,6 +330,7 @@ public class TObject {
             MonitorRegistry.asyncWaitCall();
             MonitorRegistry.enqueued(monitor.traceId, monitor.ownerFiberId, waiterFiberId,
                     monitor.enteringThreads.size());
+            MonitorRegistry.step("enqueue-recorded");
             if (monitor.entry == null && MonitorRegistry.allowRepair()) {
                 String className = null;
                 try {
@@ -336,7 +352,9 @@ public class TObject {
                     + " owner=" + monitorThreadName(monitor.owner)
                     + " count=" + monitor.count + " by=" + monitorThreadName(thread)
                     + " stack=" + BrowserRuntime.captureStack());
+            MonitorRegistry.step("wait-recorded");
         } catch (Throwable t) {
+            MonitorRegistry.step("diagnostics-error");
             try {
                 MonitorRegistry.callbackError("diagnostics " + errorText(t));
             } catch (Throwable ignored) {
