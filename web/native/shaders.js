@@ -220,8 +220,18 @@
         expr = expr.slice(1, -1).trim();
       }
 
-      const constructor = /^(int|uint|ivec[234]|uvec[234])\s*\(/.exec(expr);
-      if (constructor) return scalarIntegerType(constructor[1]);
+      // The first clamp argument is often wrapped in another GLSL call, e.g.
+      // mix(..., int(floor(...)), ...) or a helper returning an integer. Looking
+      // only at the beginning of the expression misses casts nested inside calls.
+      // Prefer an explicit integer constructor anywhere in the expression when
+      // there is exactly one integer signedness; conflicting int/uint casts are
+      // deliberately left alone rather than guessed.
+      const constructors = [...expr.matchAll(/\b(int|uint|ivec[234]|uvec[234])\s*\(/g)]
+        .map(match => scalarIntegerType(match[1]));
+      if (constructors.length && constructors.every(type => type === constructors[0])) {
+        return constructors[0];
+      }
+      if (constructors.length) return null;
       if (/^[+-]?\d+[uU]$/.test(expr)) return 'uint';
       if (/^[+-]?\d+$/.test(expr)) return 'int';
 
