@@ -159,10 +159,14 @@
   }
 
   function resourceName(m, v) {
-    const n = m.names[v.id];
-    if (n) return n;
     const ptr = m.types[v.type];
-    return m.names[stripArrays(m, ptr.pointee)] || m.names[ptr.pointee] || '';
+    const base = ptr && ptr.kind === 'pointer' ? stripArrays(m, ptr.pointee) : -1;
+    const decor = base >= 0 ? m.decor[base] || {} : {};
+    if (decor[Dec.Block] || decor[Dec.BufferBlock]) {
+      const block = m.names[base];
+      if (block) return block;
+    }
+    return m.names[v.id] || m.names[base] || (ptr && m.names[ptr.pointee]) || '';
   }
 
   /** Size in bytes of a type in a buffer block (uses the Offset/ArrayStride/MatrixStride decorations). */
