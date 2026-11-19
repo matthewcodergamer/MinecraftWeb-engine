@@ -11,6 +11,7 @@
     glslang: null,
     twgsl: null,
     handles: [null],
+    failedShaders: [],
   };
   globalThis.__mcShaders = S;
 
@@ -194,121 +195,442 @@
     }
   }
 
-  function normalizeIntegerClampCalls(source) {
-    // glslang's overload resolver can treat integer literals as candidates for
-    // both integer and floating clamp overloads. Resolve the bounds to the
-    // first argument's exact scalar/vector type before GLSL parsing.
-    const supportedTypes = new Set([
-      'int', 'uint', 'float', 'double',
-      'ivec2', 'ivec3', 'ivec4', 'uvec2', 'uvec3', 'uvec4',
-      'vec2', 'vec3', 'vec4', 'dvec2', 'dvec3', 'dvec4'
-    ]);
-    const vectorTypes = new Set([
-      'ivec2', 'ivec3', 'ivec4', 'uvec2', 'uvec3', 'uvec4',
-      'vec2', 'vec3', 'vec4', 'dvec2', 'dvec3', 'dvec4'
-    ]);
-    const typeOf = (type) => supportedTypes.has(type) ? type : null;
+  const GLSL_TYPE_PATTERN = '(?:int|uint|float|double|bool|ivec[234]|uvec[234]|vec[234]|dvec[234]|bvec[234]|mat[234](?:x[234])?)';
 
-    function inferClampType(expression) {
-      let expr = expression.trim();
-      while (expr.startsWith('(') && expr.endsWith(')')) {
-        let depth = 0, closesAtEnd = false;
-        for (let i = 0; i < expr.length; i++) {
-          if (expr[i] === '(') depth++;
-          else if (expr[i] === ')') {
-            depth--;
-            if (depth === 0) { closesAtEnd = i === expr.length - 1; break; }
-          }
-        }
-        if (!closesAtEnd) break;
-        expr = expr.slice(1, -1).trim();
+  function normalizeClampCalls(source, macros) {
+    const parsedType = (name) => {
+      let match = /^(int|uint|float|double|bool)$/.exec(name);
+      if (match) return { base: match[1], vec: 1, dims: 0 };
+      match = /^([iudb]?)vec([234])$/.exec(name);
+      if (match) {
+        const base = { i: 'int', u: 'uint', d: 'double', b: 'bool', '': 'float' }[match[1]];
+        return { base, vec: Number(match[2]), dims: 0 };
       }
+      match = /^mat([234])(?:x([234]))?$/.exec(name);
+      if (match) {
+        const cols = Number(match[1]);
+        return { base: 'float', vec: match[2] ? Number(match[2]) : cols, cols, kind: 'matrix', dims: 0 };
+      }
+      return null;
+    };
 
-      // A vector constructor determines the complete overload even when its
-      // components contain scalar casts. Otherwise use a consistent scalar type.
-      const constructors = [...expr.matchAll(/\b(int|uint|float|double|[iu]vec[234]|vec[234]|dvec[234])\s*\(/g)]
-        .map(match => typeOf(match[1]));
-      const vectors = constructors.filter(type => vectorTypes.has(type));
-      if (vectors.length) return vectors.every(type => type === vectors[0]) ? vectors[0] : null;
-      if (constructors.length) return constructors.every(type => type === constructors[0]) ? constructors[0] : null;
+    const sameType = (a, b) => !!a && !!b && a.base === b.base && a.vec === b.vec &&
+      (a.dims || 0) === (b.dims || 0) && (a.kind || '') === (b.kind || '');
 
-      if (/^[+-]?\d+[uU]$/.test(expr)) return 'uint';
-      if (/^[+-]?\d+$/.test(expr)) return 'int';
-      if (/^[+-]?(?:\d+\.\d*|\d*\.\d+|\d+)(?:[eE][+-]?\d+)?[fF]?$/.test(expr)) return 'float';
-      if (/^[+-]?(?:\d+\.\d*|\d*\.\d+|\d+)(?:[eE][+-]?\d+)?[lL][fF]?$/.test(expr)) return 'double';
+    const typeLabel = (type) => {
+      if (!type || type.kind === 'matrix' || type.dims || type.base === 'bool') return null;
+      if (type.vec < 1 || type.vec > 4) return null;
+      if (type.vec === 1) return type.base;
+      const prefix = { int: 'i', uint: 'u', float: '', double: 'd' }[type.base];
+      return prefix === undefined ? null : prefix + 'vec' + type.vec;
+    };
 
-      const declarationType = (name) => {
-        const variable = new RegExp('\\b(int|uint|float|double|[iu]vec[234]|vec[234]|dvec[234])\\s+' + name + '\\b').exec(source);
-        if (variable) return typeOf(variable[1]);
-        const fn = new RegExp('\\b(int|uint|float|double|[iu]vec[234]|vec[234]|dvec[234])\\s+' + name + '\\s*\\(').exec(source);
-        return fn ? typeOf(fn[1]) : null;
+    const commonBase = (a, b) => {
+      if (a === 'bool' || b === 'bool') return null;
+      if (a === b) return a;
+      if ((a === 'int' && b === 'uint') || (a === 'uint' && b === 'int')) return 'uint';
+      if (a === 'double' || b === 'double') return 'double';
+      if (a === 'float' || b === 'float') return 'float';
+      return null;
+    };
+
+    const combine = (a, b) => {
+      if (!a || !b || a.kind === 'matrix' || b.kind === 'matrix' || a.dims || b.dims) return null;
+      const base = commonBase(a.base, b.base);
+      if (!base) return null;
+      if (a.vec !== 1 && b.vec !== 1 && a.vec !== b.vec) return null;
+      return { base, vec: Math.max(a.vec, b.vec), dims: 0 };
+    };
+
+    const stripCommentsAndDirectives = (text) => {
+      let out = '', i = 0;
+      while (i < text.length) {
+        if (text[i] === '/' && text[i + 1] === '/') {
+          const end = text.indexOf('\n', i);
+          const stop = end < 0 ? text.length : end;
+          out += ' '.repeat(stop - i);
+          i = stop;
+        } else if (text[i] === '/' && text[i + 1] === '*') {
+          const end = text.indexOf('*/', i + 2);
+          const stop = end < 0 ? text.length : end + 2;
+          out += text.slice(i, stop).replace(/[^\n]/g, ' ');
+          i = stop;
+        } else {
+          out += text[i++];
+        }
+      }
+      return out.split('\n').map((line) => /^\s*#/.test(line) ? ' '.repeat(line.length) : line).join('\n');
+    };
+
+    const vars = new Map(), funcs = new Map();
+    const sanitized = stripCommentsAndDirectives(source);
+    const declaration = new RegExp('\\b(' + GLSL_TYPE_PATTERN + ')\\b\\s+([A-Za-z_]\\w*)\\s*((?:\\[[^\\]]*\\]\\s*)*)', 'g');
+    let dm;
+    while ((dm = declaration.exec(sanitized))) {
+      const type = parsedType(dm[1]);
+      if (!type) continue;
+      let after = dm.index + dm[0].length;
+      while (/\s/.test(sanitized[after] || '')) after++;
+      if (sanitized[after] === '(') {
+        funcs.set(dm[2], type);
+        continue;
+      }
+      const dims = (dm[3].match(/\[/g) || []).length;
+      const variable = Object.assign({}, type, { dims });
+      const previous = vars.get(dm[2]);
+      vars.set(dm[2], previous === undefined || sameType(previous, variable) ? variable : null);
+    }
+
+    const builtinVars = {
+      gl_FragCoord: { base: 'float', vec: 4, dims: 0 },
+      gl_FragColor: { base: 'float', vec: 4, dims: 0 },
+      gl_FragDepth: { base: 'float', vec: 1, dims: 0 },
+      gl_FragData: { base: 'float', vec: 4, dims: 1 },
+      gl_FrontFacing: { base: 'bool', vec: 1, dims: 0 },
+      gl_PointCoord: { base: 'float', vec: 2, dims: 0 },
+      gl_PointSize: { base: 'float', vec: 1, dims: 0 },
+      gl_Position: { base: 'float', vec: 4, dims: 0 },
+      gl_VertexID: { base: 'int', vec: 1, dims: 0 },
+      gl_InstanceID: { base: 'int', vec: 1, dims: 0 },
+    };
+
+    const literalType = (raw) => {
+      const text = raw.toLowerCase();
+      if (text.endsWith('lf')) return { base: 'double', vec: 1, dims: 0 };
+      const hex = text.startsWith('0x');
+      if (!hex && text.endsWith('f')) return { base: 'float', vec: 1, dims: 0 };
+      if (!hex && /[.e]/.test(text)) return { base: 'float', vec: 1, dims: 0 };
+      if (text.endsWith('u')) return { base: 'uint', vec: 1, dims: 0 };
+      return { base: 'int', vec: 1, dims: 0 };
+    };
+
+    const tokenize = (text) => {
+      const tokens = [];
+      let i = 0;
+      while (i < text.length) {
+        const c = text[i];
+        if (/\s/.test(c)) { i++; continue; }
+        if (c === '/' && text[i + 1] === '/') {
+          const end = text.indexOf('\n', i);
+          i = end < 0 ? text.length : end;
+          continue;
+        }
+        if (c === '/' && text[i + 1] === '*') {
+          const end = text.indexOf('*/', i + 2);
+          i = end < 0 ? text.length : end + 2;
+          continue;
+        }
+        if (/[A-Za-z_]/.test(c)) {
+          let j = i + 1;
+          while (j < text.length && /[A-Za-z0-9_]/.test(text[j])) j++;
+          tokens.push({ k: 'id', v: text.slice(i, j) });
+          i = j;
+          continue;
+        }
+        if (/[0-9]/.test(c) || (c === '.' && /[0-9]/.test(text[i + 1] || ''))) {
+          let j = i;
+          if (c === '0' && /[xX]/.test(text[i + 1] || '')) {
+            j = i + 2;
+            while (/[0-9a-fA-F]/.test(text[j] || '')) j++;
+            while (/[uU]/.test(text[j] || '')) j++;
+          } else {
+            while (/[0-9]/.test(text[j] || '')) j++;
+            if (text[j] === '.') {
+              j++;
+              while (/[0-9]/.test(text[j] || '')) j++;
+            }
+            if (/[eE]/.test(text[j] || '')) {
+              let k = j + 1;
+              if (/[+-]/.test(text[k] || '')) k++;
+              if (/[0-9]/.test(text[k] || '')) {
+                j = k;
+                while (/[0-9]/.test(text[j] || '')) j++;
+              }
+            }
+            while (/[uUlLfF]/.test(text[j] || '')) j++;
+          }
+          tokens.push({ k: 'num', v: text.slice(i, j) });
+          i = j;
+          continue;
+        }
+        const two = text.slice(i, i + 2);
+        if (['&&', '||', '<=', '>=', '==', '!=', '<<', '>>', '++', '--', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^='].includes(two)) {
+          tokens.push({ k: 'op', v: two });
+          i += 2;
+          continue;
+        }
+        tokens.push({ k: 'op', v: c });
+        i++;
+      }
+      return tokens;
+    };
+
+    const swizzleType = (type, swizzle) => {
+      if (!type || type.kind === 'matrix' || type.dims || type.vec < 2 || !swizzle) return null;
+      const groups = 'xyzwrgba stpq'.replace(' ', '');
+      const first = swizzle[0];
+      const group = 'xyzw'.includes(first) ? 'xyzw' : 'rgba'.includes(first) ? 'rgba' : 'stpq'.includes(first) ? 'stpq' : null;
+      if (!group) return null;
+      for (const ch of swizzle) if (!group.includes(ch)) return null;
+      if (swizzle.length > 4 || swizzle.length > type.vec) return null;
+      return { base: type.base, vec: swizzle.length, dims: 0 };
+    };
+
+    const indexType = (type, index) => {
+      if (!type) return null;
+      if (type.dims > 0) return Object.assign({}, type, { dims: type.dims - 1 });
+      if (type.kind === 'matrix') return { base: type.base, vec: type.vec, dims: 0 };
+      if (type.vec > 1) return { base: type.base, vec: 1, dims: 0 };
+      return null;
+    };
+
+    const floatMath = new Set([
+      'radians', 'degrees', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'sinh', 'cosh', 'tanh',
+      'asinh', 'acosh', 'atanh', 'pow', 'exp', 'log', 'exp2', 'log2', 'sqrt', 'inversesqrt',
+      'floor', 'trunc', 'round', 'roundEven', 'ceil', 'fract',
+    ]);
+    const preserveType = new Set(['abs', 'sign', 'mod', 'normalize', 'faceforward', 'reflect', 'refract']);
+    const textureReturn = new Set([
+      'texture', 'textureProj', 'textureLod', 'textureOffset', 'textureProjOffset', 'textureLodOffset',
+      'textureProjLod', 'textureProjLodOffset', 'textureGrad', 'textureGradOffset', 'textureProjGrad',
+      'textureProjGradOffset', 'texelFetch', 'texelFetchOffset', 'textureGather', 'textureGatherOffset',
+      'imageLoad',
+    ]);
+
+    const inferExpression = (expression, macroDepth) => {
+      if (!expression || macroDepth > 8) return null;
+      const tokens = tokenize(expression);
+      let pos = 0;
+      const precedence = {
+        '||': 1, '&&': 2, '|': 3, '^': 4, '&': 5, '==': 6, '!=': 6,
+        '<': 7, '>': 7, '<=': 7, '>=': 7, '<<': 8, '>>': 8,
+        '+': 9, '-': 9, '*': 10, '/': 10, '%': 10,
+      };
+      const isOp = (value) => { const t = tokens[pos]; return !!t && t.k === 'op' && t.v === value; };
+      const eat = (value) => { if (isOp(value)) { pos++; return true; } return false; };
+
+      const resolveMacro = (name) => {
+        if (!macros || !macros.has(name) || macroDepth > 8) return null;
+        const value = (macros.get(name) || '').trim();
+        return value ? inferExpression(value, macroDepth + 1) : null;
       };
 
-      const simple = /^([A-Za-z_]\w*)$/.exec(expr);
-      if (simple) return declarationType(simple[1]);
+      const lookup = (name) => {
+        const macro = resolveMacro(name);
+        if (macro) return macro;
+        if (vars.has(name)) return vars.get(name);
+        if (builtinVars[name]) return builtinVars[name];
+        if (name === 'true' || name === 'false') return { base: 'bool', vec: 1, dims: 0 };
+        return null;
+      };
 
-      const ignoredFunctions = new Set([
-        'int', 'uint', 'float', 'double', 'bool',
-        'ivec2', 'ivec3', 'ivec4', 'uvec2', 'uvec3', 'uvec4',
-        'vec2', 'vec3', 'vec4', 'dvec2', 'dvec3', 'dvec4',
-        'bvec2', 'bvec3', 'bvec4', 'min', 'max', 'abs', 'sign',
-        'clamp', 'bitCount', 'bitfieldExtract', 'bitfieldInsert',
-        'bitfieldReverse', 'findLSB', 'findMSB', 'mod', 'floor', 'ceil',
-        'round', 'trunc', 'fract', 'sqrt', 'inversesqrt', 'pow',
-        'textureSize', 'imageSize'
-      ]);
-      const swizzles = new Set(['x', 'y', 'z', 'w', 'r', 'g', 'b', 'a', 's', 't', 'p', 'q']);
-      const names = (expr.match(/[A-Za-z_]\w*/g) || [])
-        .filter(name => !ignoredFunctions.has(name) && !swizzles.has(name));
-      if (!names.length) return null;
-      const types = names.map(declarationType);
-      if (types.some(type => !type) || types.some(type => type !== types[0])) return null;
-      return types[0];
-    }
+      const inferCall = (name, args) => {
+        const constructor = parsedType(name);
+        if (constructor) return Object.assign({}, constructor, { dims: 0 });
+        if (name === 'min' || name === 'max' || name === 'clamp') {
+          let type = null;
+          for (const arg of args) {
+            type = type ? combine(type, arg) : arg;
+            if (!type) return null;
+          }
+          return type;
+        }
+        if (name === 'mix') return args[0] ? Object.assign({}, args[0], { dims: 0 }) : null;
+        if (name === 'step') return args[1] ? Object.assign({}, args[1], { dims: 0 }) : null;
+        if (name === 'smoothstep') return args[2] ? Object.assign({}, args[2], { dims: 0 }) : null;
+        if (floatMath.has(name)) {
+          const arg = args[0];
+          if (!arg) return null;
+          return { base: arg.base === 'double' || args.some((a) => a && a.base === 'double') ? 'double' : 'float', vec: arg.vec, dims: 0 };
+        }
+        if (preserveType.has(name)) return args[0] ? Object.assign({}, args[0], { dims: 0 }) : null;
+        if (name === 'length' || name === 'distance' || name === 'dot' || name === 'determinant') {
+          return { base: args.some((a) => a && a.base === 'double') ? 'double' : 'float', vec: 1, dims: 0 };
+        }
+        if (name === 'cross') {
+          const arg = args[0];
+          return arg ? { base: arg.base === 'double' ? 'double' : 'float', vec: 3, dims: 0 } : null;
+        }
+        if (textureReturn.has(name)) return { base: 'float', vec: 4, dims: 0 };
+        if (name === 'textureSize' || name === 'imageSize') return { base: 'int', vec: 2, dims: 0 };
+        if (name === 'any' || name === 'all') return { base: 'bool', vec: 1, dims: 0 };
+        if (name === 'not' || name === 'isnan' || name === 'isinf') {
+          return { base: 'bool', vec: args[0] ? args[0].vec : 1, dims: 0 };
+        }
+        if (name === 'floatBitsToInt' || name === 'floatBitsToUint' ||
+            name === 'intBitsToFloat' || name === 'uintBitsToFloat' ||
+            name === 'bitCount' || name === 'findLSB' || name === 'findMSB' ||
+            name === 'bitfieldReverse') {
+          const arg = args[0];
+          if (!arg) return null;
+          const base = name === 'floatBitsToInt' || name === 'bitCount' || name === 'findLSB' ||
+            name === 'findMSB' || name === 'bitfieldReverse' ? 'int'
+            : name === 'floatBitsToUint' ? 'uint' : 'float';
+          return { base, vec: name === 'findLSB' || name === 'findMSB' || name === 'bitCount' ? arg.vec : arg.vec, dims: 0 };
+        }
+        if (funcs.has(name)) return Object.assign({}, funcs.get(name), { dims: 0 });
+        const macro = resolveMacro(name);
+        return macro;
+      };
 
-    let out = '', cursor = 0;
-    const re = /\bclamp\s*\(/g;
-    let match;
-    while ((match = re.exec(source))) {
-      const open = source.indexOf('(', match.index);
-      let depth = 1, end = open + 1;
-      for (; end < source.length && depth; end++) {
-        if (source[end] === '(') depth++;
-        else if (source[end] === ')') depth--;
+      const parsePrimary = () => {
+        const token = tokens[pos];
+        if (!token) return null;
+        if (token.k === 'num') { pos++; return literalType(token.v); }
+        if (token.k === 'id') {
+          pos++;
+          if (eat('(')) {
+            const args = [];
+            if (!eat(')')) {
+              while (true) {
+                args.push(parseConditional());
+                if (eat(',')) continue;
+                if (eat(')')) break;
+                return null;
+              }
+            }
+            return inferCall(token.v, args);
+          }
+          return lookup(token.v);
+        }
+        if (eat('(')) {
+          const inner = parseConditional();
+          return eat(')') ? inner : null;
+        }
+        pos++;
+        return null;
+      };
+
+      const parsePostfix = () => {
+        let type = parsePrimary();
+        while (type !== null && pos < tokens.length) {
+          if (eat('[')) {
+            const index = parseConditional();
+            if (!eat(']')) return null;
+            type = indexType(type, index);
+          } else if (eat('.')) {
+            const token = tokens[pos];
+            if (!token || token.k !== 'id') return null;
+            pos++;
+            type = swizzleType(type, token.v);
+          } else {
+            break;
+          }
+        }
+        return type;
+      };
+
+      const applyUnary = (op, type) => {
+        if (op === '!' || op === 'not') return { base: 'bool', vec: 1, dims: 0 };
+        if (op === '~') return type && (type.base === 'int' || type.base === 'uint') ? type : null;
+        if (op === '+' || op === '-' || op === '++' || op === '--') return type;
+        return null;
+      };
+
+      const parseUnary = () => {
+        const token = tokens[pos];
+        if (token && token.k === 'op' && ['+', '-', '!', '~', '++', '--'].includes(token.v)) {
+          pos++;
+          return applyUnary(token.v, parseUnary());
+        }
+        return parsePostfix();
+      };
+
+      const applyBinary = (op, left, right) => {
+        if (['<', '>', '<=', '>=', '==', '!=', '&&', '||'].includes(op)) {
+          return { base: 'bool', vec: 1, dims: 0 };
+        }
+        if (op === '<<' || op === '>>') {
+          return left && (left.base === 'int' || left.base === 'uint') ? left : null;
+        }
+        if (['+', '-', '*', '/', '%', '&', '|', '^'].includes(op)) return combine(left, right);
+        return null;
+      };
+
+      const parseBinary = (minPrecedence) => {
+        let left = parseUnary();
+        while (true) {
+          const token = tokens[pos];
+          if (!token || token.k !== 'op') break;
+          const level = precedence[token.v];
+          if (level === undefined || level < minPrecedence) break;
+          pos++;
+          left = applyBinary(token.v, left, parseBinary(level + 1));
+        }
+        return left;
+      };
+
+      const parseConditional = () => {
+        const condition = parseBinary(1);
+        if (!eat('?')) return condition;
+        const whenTrue = parseConditional();
+        if (!eat(':')) return null;
+        const whenFalse = parseConditional();
+        return combine(whenTrue, whenFalse) || whenTrue || whenFalse;
+      };
+
+      const result = parseConditional();
+      return pos === tokens.length ? result : null;
+    };
+
+    const findMatching = (text, open) => {
+      let depth = 0;
+      for (let i = open; i < text.length; i++) {
+        if (text[i] === '(') depth++;
+        else if (text[i] === ')' && --depth === 0) return i + 1;
       }
-      if (depth !== 0) continue;
-      const body = source.slice(open + 1, end - 1);
+      return -1;
+    };
+
+    const splitArguments = (body) => {
       const args = [];
-      let start = 0, nested = 0;
+      let start = 0, depth = 0;
       for (let i = 0; i < body.length; i++) {
-        if (body[i] === '(') nested++;
-        else if (body[i] === ')') nested--;
-        else if (body[i] === ',' && nested === 0) { args.push(body.slice(start, i)); start = i + 1; }
+        if (body[i] === '(') depth++;
+        else if (body[i] === ')') depth--;
+        else if (body[i] === ',' && depth === 0) {
+          args.push(body.slice(start, i));
+          start = i + 1;
+        }
       }
       args.push(body.slice(start));
+      return args;
+    };
 
-      const type = args.length === 3 ? inferClampType(args[0]) : null;
-      if (type) {
-        const castArgument = (value) => {
-          const trimmed = value.trim();
-          const existing = /^(int|uint|float|double|ivec[234]|uvec[234]|vec[234]|dvec[234])\s*\(/.exec(trimmed);
-          return existing && existing[1] === type ? trimmed : type + '(' + trimmed + ')';
-        };
-        // Resolve the overload for every argument, not just the bounds.
-        // The first expression can itself contain implicit conversions (for
-        // example an integer constructor combined with an untyped literal),
-        // which leaves glslang with multiple viable clamp overloads.
-        out += source.slice(cursor, open + 1) +
-          castArgument(args[0]) + ', ' +
-          castArgument(args[1]) + ', ' +
-          castArgument(args[2]) + ')';
-      } else {
-        out += source.slice(cursor, end);
+    const castArgument = (arg, type, first) => {
+      const trimmed = arg.trim();
+      const label = typeLabel(type);
+      if (!label) return trimmed;
+      const existing = new RegExp('^(' + GLSL_TYPE_PATTERN + ')\\s*\\(').exec(trimmed);
+      if (existing && existing[1] === label) return trimmed;
+      if (first && sameType(inferExpression(trimmed, 0), type)) return trimmed;
+      return label + '(' + trimmed + ')';
+    };
+
+    const transform = (text) => {
+      let out = '', cursor = 0;
+      const re = /\bclamp\s*\(/g;
+      let match;
+      while ((match = re.exec(text))) {
+        const open = text.indexOf('(', match.index);
+        const end = findMatching(text, open);
+        if (end < 0) break;
+        const args = splitArguments(text.slice(open + 1, end - 1)).map((arg) => transform(arg).trim());
+        if (args.length === 3) {
+          const type = inferExpression(args[0].trim(), 0);
+          const label = typeLabel(type);
+          out += text.slice(cursor, match.index);
+          out += label ? 'clamp(' + args.map((arg, index) => castArgument(arg, type, index === 0)).join(', ') + ')' : 'clamp(' + args.join(', ') + ')';
+        } else {
+          out += text.slice(cursor, end);
+        }
+        cursor = end;
+        re.lastIndex = end;
       }
-      cursor = end;
-      re.lastIndex = end;
-    }
-    return out + source.slice(cursor);
+      return out + text.slice(cursor);
+    };
+
+    return transform(source);
   }
 
   // =================================================================== shaderc -> glslang
@@ -343,7 +665,7 @@
     // bounds are macros or integer expressions. Parse call arguments with balanced
     // parentheses (rather than a shallow regex, which misses nested expressions),
     // then make the bounds explicitly int whenever the first argument is int(...).
-    src = normalizeIntegerClampCalls(src);
+    src = normalizeClampCalls(src, opts.macros);
     src = src.replace(/^[ \t]*#[ \t]*extension[ \t]+GL_GOOGLE_include_directive.*$/gm, '');
     // WebGPU rasterizes points at exactly 1px and Tint rejects other gl_PointSize values.
     src = src.replace(/\bgl_PointSize\s*=[^;]*;/g, '');
@@ -370,6 +692,18 @@
     if (vm) src = src.slice(0, vm.index + vm[0].length) + header + src.slice(vm.index + vm[0].length);
     else src = '#version 450\n' + header + src;
     return src;
+  }
+
+  function shaderErrorContext(source, error) {
+    const lines = source.split('\n');
+    const wanted = new Set();
+    for (const match of String(error).matchAll(/ERROR:\s*\d+:(\d+):/g)) {
+      const line = Number(match[1]) - 1;
+      for (let i = Math.max(0, line - 2); i <= Math.min(lines.length - 1, line + 2); i++) wanted.add(i);
+    }
+    if (!wanted.size) return '';
+    return '\n--- transformed shader context ---\n' +
+      [...wanted].sort((a, b) => a - b).map((i) => String(i + 1).padStart(5) + ': ' + lines[i]).join('\n');
   }
 
   function compileGLSL(source, kind) {
@@ -414,7 +748,13 @@
       try {
         const text = preprocess(opts, h.utf8.decode(h.u8.subarray(src, src + srcLen)), name);
         const r = compileGLSL(text, kind);
-        result = r.words ? { status: 0, words: r.words, source: text } : { status: 3, error: name + ': ' + r.error, source: text };
+        if (r.words) {
+          result = { status: 0, words: r.words, source: text };
+        } else {
+          result = { status: 3, error: name + ': ' + r.error + shaderErrorContext(text, r.error), source: text };
+          S.failedShaders.push({ name, source: text });
+          if (S.failedShaders.length > 8) S.failedShaders.shift();
+        }
       } catch (e) {
         result = { status: 3, error: name + ': ' + (e && e.message || e) };
       }
@@ -757,5 +1097,6 @@
   };
   S.parse = parse;
   S.classify = classify;
+  S.normalizeClampCalls = normalizeClampCalls;
   S.preprocess = preprocess;
 })();

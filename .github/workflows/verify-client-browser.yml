@@ -477,6 +477,8 @@ jobs:
           google-chrome --version
           python3 -m py_compile scripts/fetch_minecraft.py scripts/cdp.py scripts/patch_teavm_wasm_runtime.py
           bash -n scripts/build_client_probe.sh scripts/build_body.sh
+          node --check web/native/shaders.js
+          node scripts/test_shader_normalizer.js
 
       - name: Run real client singleplayer-to-Rust smoke test
         env:
