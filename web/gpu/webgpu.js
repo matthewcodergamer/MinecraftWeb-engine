@@ -823,7 +823,16 @@
   G.createFence = function () {
     G.submit();
     const f = { done: false };
-    G.queue.onSubmittedWorkDone().then(() => { f.done = true; });
+    G.queue.onSubmittedWorkDone().then(() => {
+      f.done = true;
+    }, (error) => {
+      // A rejected completion promise must not strand Java's Render thread.
+      // This can happen after device loss or invalid GPU command submission.
+      f.failed = true;
+      f.error = String(error && error.message || error);
+      f.done = true;
+      console.error('WebGPU fence completion failed: ' + f.error);
+    });
     return put(f);
   };
   G.fenceDone = (id) => !G.obj[id] || G.obj[id].done;
