@@ -177,7 +177,10 @@
     if (usage & B_UNIFORM) u |= GU.UNIFORM;
     if (usage & B_TEXEL) u |= GU.STORAGE;
     if (usage & B_INDIRECT) u |= GU.INDIRECT;
-    const padded = Math.max(4, Math.ceil(size / 4) * 4);
+    // WebGPU uniform bindings must be padded to 16-byte WGSL struct alignment.
+    // Keep storage/copy buffers at 4-byte alignment; only uniform buffers need 16.
+    const alignment = (usage & B_UNIFORM) ? 16 : 4;
+    const padded = Math.max(alignment, Math.ceil(size / alignment) * alignment);
     const buf = G.device.createBuffer({ size: padded, usage: u, label: label || undefined });
     return put({ kind: 'buffer', buf, size, usage, shadow: 0 });
   };
