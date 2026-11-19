@@ -289,13 +289,19 @@
 
       const type = args.length === 3 ? inferClampType(args[0]) : null;
       if (type) {
-        const castBound = (value) => {
+        const castArgument = (value) => {
           const trimmed = value.trim();
           const existing = /^(int|uint|float|double|ivec[234]|uvec[234]|vec[234]|dvec[234])\s*\(/.exec(trimmed);
           return existing && existing[1] === type ? trimmed : type + '(' + trimmed + ')';
         };
-        out += source.slice(cursor, open + 1) + args[0] + ', ' +
-          castBound(args[1]) + ', ' + castBound(args[2]) + ')';
+        // Resolve the overload for every argument, not just the bounds.
+        // The first expression can itself contain implicit conversions (for
+        // example an integer constructor combined with an untyped literal),
+        // which leaves glslang with multiple viable clamp overloads.
+        out += source.slice(cursor, open + 1) +
+          castArgument(args[0]) + ', ' +
+          castArgument(args[1]) + ', ' +
+          castArgument(args[2]) + ')';
       } else {
         out += source.slice(cursor, end);
       }
