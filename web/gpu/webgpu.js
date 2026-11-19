@@ -514,12 +514,16 @@
    */
   G.createPipeline = function (json) {
     const desc = JSON.parse(json);
-    const p = { kind: 'pipeline', desc, variants: new Map(), modules: {}, error: null, samplerBindings: new Set() };
+    const p = { kind: 'pipeline', desc, variants: new Map(), modules: {}, error: null, samplerBindings: new Set(), textureDimensions: {} };
     try {
       for (const sh of desc.shaders) {
         const words = new Uint32Array(H().buffer.slice(sh.spv[0], sh.spv[0] + sh.spv[1]));
         const r = globalThis.__mcShaders.toWGSL(words, 1);
         let code = r.code;
+        // The translated WGSL is authoritative: layout dimensions must match the shader's declared texture type.
+        for (const match of code.matchAll(/@group\\(0\\)\\s*@binding\\((\\d+)\\)[\\s\\S]{0,240}?var(?:<[^>]+>)?\\s+[A-Za-z_]\\w*\\s*:\\s*texture_(2d|cube)\\b/g)) {
+          p.textureDimensions[Number(match[1])] = match[2];
+        }
         if (sh.stage === 'vertex') code = patchVertexWGSL(code);
         for (const s of r.samplers) p.samplerBindings.add(s.binding);
         const module = G.device.createShaderModule({ code, label: desc.name + ':' + sh.stage });
@@ -547,7 +551,7 @@
         g0.push({ binding: i, visibility: SS.VERTEX | SS.FRAGMENT, buffer: { type: 'uniform', hasDynamicOffset: true } });
       } else if (u.type === 'COMBINED_IMAGE_SAMPLER') {
         const kind = sampleKinds[i] || 'float';
-        g0.push({ binding: i, visibility: SS.VERTEX | SS.FRAGMENT, texture: { sampleType: kind, viewDimension: u.cube ? 'cube' : '2d' } });
+        g0.push({ binding: i, visibility: SS.VERTEX | SS.FRAGMENT, texture: { sampleType: kind, viewDimension: p.textureDimensions[i] || (u.cube ? 'cube' : '2d') } });
         if (p.samplerBindings.has(i)) {
           g1.push({ binding: i, visibility: SS.VERTEX | SS.FRAGMENT,
             sampler: { type: kind === 'float' ? 'filtering' : 'non-filtering' } });
@@ -694,6 +698,23 @@
     return 'float';
   }
 
+  function viewForShaderDimension(view, dimension) {
+    const isCube = dimension === 'cube';
+    if (isCube === !!view.tex.cube) return view.view;
+    if (isCube) {
+      throw new Error('shader requires a cube texture but bound texture is 2D');
+    }
+    // A cube texture is a six-layer 2D texture underneath. A 2D shader binding
+    // must receive a one-layer 2D view, not the cube view used by other shaders.
+    view.bindingViews ||= {};
+    if (!view.bindingViews['2d']) {
+      view.bindingViews['2d'] = view.tex.tex.createView({ dimension: '2d', baseMipLevel: view.baseMip,
+        mipLevelCount: view.mipCount, baseArrayLayer: 0, arrayLayerCount: 1,
+        aspect: isDepth(view.tex.format) && hasStencil(view.tex.format) ? 'depth-only' : 'all' });
+    }
+    return view.bindingViews['2d'];
+  }
+
   function bindAndValidate() {
     const s = G.passState, p = s.pipeline;
     if (!p || p.error || !p.modules.vertex) return false;
@@ -731,7 +752,8 @@
         key0 += 'b' + val[1] + ':' + size + ',';
       } else {
         const view = G.obj[val[1]], smp = G.obj[val[2]];
-        e0.push({ binding: i, resource: view.view });
+        const dimension = p.textureDimensions[i] || (u.cube ? 'cube' : '2d');
+        e0.push({ binding: i, resource: viewForShaderDimension(view, dimension) });
         key0 += 't' + val[1] + ',';
         if (p.samplerBindings.has(i)) {
           e1.push({ binding: i, resource: kinds[i] === 'float' ? smp.s : smp.nonFiltering });
