@@ -521,7 +521,7 @@
         const r = globalThis.__mcShaders.toWGSL(words, 1);
         let code = r.code;
         // The translated WGSL is authoritative: layout dimensions must match the shader's declared texture type.
-        for (const match of code.matchAll(/@group\\(0\\)\\s*@binding\\((\\d+)\\)[\\s\\S]{0,240}?var(?:<[^>]+>)?\\s+[A-Za-z_]\\w*\\s*:\\s*texture_(2d|cube)\\b/g)) {
+        for (const match of code.matchAll(/@group\(0\)\s*@binding\((\d+)\)[\s\S]{0,240}?var(?:<[^>]+>)?\s+[A-Za-z_]\w*\s*:\s*texture_(2d|cube)\b/g)) {
           p.textureDimensions[Number(match[1])] = match[2];
         }
         if (sh.stage === 'vertex') code = patchVertexWGSL(code);
