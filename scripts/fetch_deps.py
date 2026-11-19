@@ -10,7 +10,7 @@ import sys
 import urllib.request
 import xml.etree.ElementTree as ET
 
-REPO = "https://repo1.maven.org/maven2"
+REPO = "https://repo.maven.apache.org/maven2"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LIB = os.path.join(ROOT, "tools", "lib")
 NS = "{http://maven.apache.org/POM/4.0.0}"
