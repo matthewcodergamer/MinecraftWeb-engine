@@ -64,6 +64,13 @@ REDIRECT_STATIC org.teavm.jso.typedarrays.Uint16Array fromJavaArray([C)Lorg/teav
 REDIRECT_STATIC org.teavm.jso.typedarrays.Float32Array fromJavaArray([F)Lorg/teavm/jso/typedarrays/Float32Array; -> org.teavm.jso.typedarrays.Float32Array copyFromJavaArray
 REDIRECT_STATIC org.teavm.jso.typedarrays.BigInt64Array fromJavaArray([J)Lorg/teavm/jso/typedarrays/BigInt64Array; -> org.teavm.jso.typedarrays.BigInt64Array copyFromJavaArray
 
+# TeaVM rejects reachable native methods without @Import. These native entry points
+# are not usable in the browser target: browser memory is provided by BrowserMemoryBackend,
+# and Tracy profiling is intentionally disabled. Replace their native bodies with defaults.
+ZERO_NATIVES org.lwjgl.system.MemoryAccessJNI
+ZERO_NATIVES org.lwjgl.system.MemoryUtil
+ZERO_NATIVES com.mojang.jtracy.TracyBindings
+
 # LWJGL (abbreviated critical set)
 BODY_STATIC org.lwjgl.system.MemoryUtil createBackend()Lorg/lwjgl/system/MemoryBackend; -> mcport.lwjgl.BrowserMemoryBackend create
 BODY_STATIC org.lwjgl.system.Library initialize()V -> mcport.lwjgl.LwjglPatches libraryInitialize
