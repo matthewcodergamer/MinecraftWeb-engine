@@ -1,0 +1,1 @@
+Temporary CI trigger for browser ZIP/static-invocation verification. Do not merge this file into the feature branch.
