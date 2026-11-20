@@ -330,3 +330,6 @@ BODY com.mojang.blaze3d.platform.Window setIcon(Lnet/minecraft/server/packs/Pack
 # Browser ZIP resource packs: replace the desktop ZipFile-backed supplier with the in-memory NIO/ZipInputStream implementation.
 # BODY_OBJECT preserves the private FolderPackDetector receiver as Object for the static compatibility helper.
 BODY_OBJECT net.minecraft.server.packs.repository.FolderRepositorySource$FolderPackDetector createZipPack(Ljava/nio/file/Path;)Lnet/minecraft/server/packs/repository/Pack$ResourcesSupplier; -> mcport.rt.patch.BrowserZipPackResources create
+
+# --- Browser audio is unavailable: skip sounds.json preparation (TeaVM illegal-cast trap) ---
+BODY net.minecraft.client.sounds.SoundManager prepare(Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)Lnet/minecraft/client/sounds/SoundManager$Preparations; -> net.minecraft.client.sounds.BrowserSoundManagerPatches prepare
