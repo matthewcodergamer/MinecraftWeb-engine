@@ -80,29 +80,24 @@ jobs:
           PORT_LENIENT: "true"
         run: bash scripts/build.sh mcport.ClientMain wasm
 
-      - name: Verify TeaVM Wasm GC runtime was emitted
+      - name: Patch and verify TeaVM Wasm GC runtime
         run: |
           set -euo pipefail
           test -s build/web/clientmain.wasm
           test -s build/web/clientmain.wasm-runtime.js
-          grep -q "TeaVM.wasmGC" build/web/clientmain.wasm-runtime.js
-          echo "Verified clientmain.wasm and its TeaVM Wasm GC browser runtime"
+          python3 scripts/patch_teavm_wasm_runtime.py build/web/clientmain.wasm-runtime.js
+          grep -q "createWeakRef" build/web/clientmain.wasm-runtime.js
+          echo "Verified clientmain.wasm and patched TeaVM Wasm GC browser runtime"
 
-      - name: Install Binaryen 133 and try Wasm GC optimization
+      - name: Preserve original TeaVM Wasm GC module for Chrome
         run: |
           set -euo pipefail
-          archive=binaryen-version_133-x86_64-linux.tar.gz
-          base=https://github.com/WebAssembly/binaryen/releases/download/version_133
-          curl --fail --location --retry 5 "$base/$archive" -o "/tmp/$archive"
-          tar -xzf "/tmp/$archive" -C /tmp
-          BINARYEN_BIN="/tmp/binaryen-version_133/bin/wasm-opt"
-          test -x "$BINARYEN_BIN"
-          "$BINARYEN_BIN" --version || true
-          if "${BINARYEN_BIN}" --enable-gc build/web/clientmain.wasm -Oz --converge -o build/web/clientmain.optimized.wasm 2>/dev/null; then
-            mv -f build/web/clientmain.optimized.wasm build/web/clientmain.wasm || true
-          else
-            echo "Binaryen optimize skipped/failed; keeping original module"
-          fi
+          # Binaryen 133 can rewrite TeaVM's GC reference casts into br_on_cast
+          # sequences rejected by Chrome's WebAssembly validator. Keep the
+          # original TeaVM module until an optimized candidate passes Chrome.
+          test -s build/web/clientmain.wasm
+          rm -f build/web/clientmain.optimized.wasm
+          echo "Keeping original TeaVM output; no unverified Binaryen rewrite applied."
 
       - name: Stage client page and vanilla resources
         run: |
