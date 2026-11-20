@@ -200,13 +200,18 @@ def main():
         # are delivered by CDP without Runtime.evaluate polling: if the renderer's main
         # thread is monopolized, heartbeat ticks stop; when it yields, queued ticks resume.
         heartbeat_js = """(() => {
+            // addScriptToEvaluateOnNewDocument runs in every frame. Only the top-level
+            // page should emit diagnostics; otherwise iframe churn floods CDP/logs.
+            if (window !== window.top || window.__cdpHeartbeatInstalled) return;
+            window.__cdpHeartbeatInstalled = true;
             const started = Date.now();
             let tick = 0;
             console.log("[CDP_HEARTBEAT] installed");
-            setInterval(() => console.log(
-                "[CDP_HEARTBEAT] tick=" + (++tick) +
-                " elapsed_ms=" + (Date.now() - started)
-            ), 2000);
+            const timer = setInterval(() => {
+                console.log("[CDP_HEARTBEAT] tick=" + (++tick) +
+                    " elapsed_ms=" + (Date.now() - started));
+                if (tick >= 90) clearInterval(timer);
+            }, 2000);
         })();"""
         ws.call("Page.addScriptToEvaluateOnNewDocument", {"source": heartbeat_js}, pump=pump)
         if a.preload_js:
