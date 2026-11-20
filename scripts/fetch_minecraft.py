@@ -8,6 +8,8 @@ fetches exactly what scripts/build.sh reads:
   <dest>/versions/<ver>/<ver>.json   the version manifest (library list)
   <dest>/versions/<ver>/<ver>.jar    the client jar
   <dest>/libraries/<maven path>      every Java library artifact
+  <dest>/assets/indexes/<id>.json    the asset index
+  <dest>/assets/objects/<xx>/<hash>  asset objects (--assets core/all)
 
 Layout matches the launcher's, so scripts/build.sh finds everything unmodified.
 
@@ -23,6 +25,16 @@ import sys
 import urllib.request
 
 MANIFEST = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json"
+ASSET_OBJECTS = "https://resources.download.minecraft.net"
+
+# Sounds and languages are large and already available in the client jar;
+# realms assets are desktop-only. Everything else (pack.mcmeta, resource packs,
+# fonts, icons, atlases, panoramas) must come from the asset objects.
+CORE_ASSET_SKIP = (
+    "minecraft/sounds/",
+    "minecraft/lang/",
+    "minecraft/realms/",
+)
 
 
 def get_json(url):
@@ -62,6 +74,13 @@ def main() -> int:
     ap.add_argument("--version", default=os.environ.get("MC_VERSION", "26.3"))
     ap.add_argument("--dest", default=os.environ.get("MC_DIR", os.path.expanduser("~/.minecraft")))
     ap.add_argument("--jobs", type=int, default=8)
+    ap.add_argument(
+        "--assets",
+        choices=("none", "core", "all"),
+        default="core",
+        help="asset objects to fetch: none, core (metadata/resource packs/fonts/textures, "
+             "skipping sounds, languages and realms) or all",
+    )
     args = ap.parse_args()
 
     manifest = get_json(MANIFEST)
@@ -80,16 +99,33 @@ def main() -> int:
 
     # The browser-side IndexedAssetSource patch reads this JSON from the
     # packed resource archive. Fetch the small index metadata even when the
-    # external asset objects are intentionally omitted from a smoke build.
+    # external asset objects are omitted from a smoke build.
     asset_index = version.get("assetIndex")
+    index_path = None
     if asset_index and asset_index.get("url"):
-        index_dest = os.path.join(args.dest, "assets", "indexes", f"{asset_index['id']}.json")
-        download(asset_index["url"], index_dest, asset_index.get("sha1"), asset_index.get("size"))
+        index_path = os.path.join(args.dest, "assets", "indexes", f"{asset_index['id']}.json")
+        download(asset_index["url"], index_path, asset_index.get("sha1"), asset_index.get("size"))
 
     jobs = []
     client = version["downloads"]["client"]
     jobs.append((client["url"], os.path.join(vdir, f"{args.version}.jar"),
                  client.get("sha1"), client.get("size")))
+
+    # Vanilla pack metadata, built-in resource-pack ZIPs and font includes are
+    # external asset objects, not client-jar entries. Without them the browser
+    # resource reload stalls waiting on packs that never finish loading.
+    asset_objects = 0
+    if index_path and args.assets != "none" and os.path.exists(index_path):
+        with open(index_path, encoding="utf-8") as fh:
+            objects = json.load(fh).get("objects", {})
+        for name, spec in sorted(objects.items()):
+            if args.assets == "core" and name.startswith(CORE_ASSET_SKIP):
+                continue
+            digest = spec["hash"]
+            jobs.append((f"{ASSET_OBJECTS}/{digest[:2]}/{digest}",
+                         os.path.join(args.dest, "assets", "objects", digest[:2], digest),
+                         digest, spec.get("size")))
+            asset_objects += 1
 
     skipped = 0
     for lib in version.get("libraries", []):
@@ -110,7 +146,8 @@ def main() -> int:
                 fail += 1
                 print(f"FAILED {futures[fut]}: {e}", file=sys.stderr)
 
-    print(f"{args.version}: {ok} artifacts ready, {fail} failed, {skipped} skipped -> {args.dest}")
+    print(f"{args.version}: {ok} artifacts ready, {fail} failed, {skipped} skipped "
+          f"({asset_objects} asset objects) -> {args.dest}")
     return 1 if fail else 0
 
 
