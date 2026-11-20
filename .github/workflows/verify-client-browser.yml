@@ -452,7 +452,10 @@ jobs:
         run: |
           mkdir -p build/web
           cp -R web/. build/web/
-          python3 scripts/pack_resources.py --mc-dir "$MC_DIR" --version "$MC_VERSION" --jar-only --out build/web/client-resources.bin
+          # Include the complete official asset-index payload, not only the client JAR.
+          # Vanilla pack metadata, built-in resource-pack ZIPs and font includes are external
+          # asset objects; --jar-only silently omits them and stalls Minecraft's reload.
+          python3 scripts/pack_resources.py --mc-dir "$MC_DIR" --version "$MC_VERSION" --out build/web/client-resources.bin
           test -s build/web/client-resources.bin
           test -s build/web/client-textures.bin
           python3 - <<'PY'
@@ -466,7 +469,16 @@ jobs:
           asset_id = meta["assetIndex"]["id"]
           assert f"assets/indexes/{asset_id}.json" in index
           assert "assets/indexes/26.3.json" in index
-          print(f"Packed vanilla jar resources and asset index {asset_id}.")
+          required = [
+              "assets/pack.mcmeta",
+              "assets/minecraft/resourcepacks/high_contrast.zip",
+              "assets/minecraft/resourcepacks/programmer_art.zip",
+              "assets/minecraft/font/include/unifont_pua.json",
+          ]
+          missing = [name for name in required if name not in index]
+          if missing:
+              raise SystemExit("Missing required vanilla asset payloads: " + ", ".join(missing))
+          print(f"Packed complete vanilla resources and asset index {asset_id}; verified {len(required)} critical metadata/resource-pack/font assets.")
           PY
 
       - name: Build Rust WebGPU Body
