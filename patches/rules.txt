@@ -28,6 +28,7 @@ REDIRECT java.nio.ByteBuffer slice(II)Ljava/nio/ByteBuffer; -> mcport.rt.jdk.Jdk
 REDIRECT_STATIC java.util.stream.StreamSupport intStream(Ljava/util/Spliterator$OfInt;Z)Ljava/util/stream/IntStream; -> mcport.rt.jdk.JdkExt intStream
 REDIRECT_STATIC java.util.stream.StreamSupport longStream(Ljava/util/Spliterator$OfLong;Z)Ljava/util/stream/LongStream; -> mcport.rt.jdk.JdkExt longStream
 REDIRECT java.lang.Runtime maxMemory()J -> mcport.rt.jdk.JdkExt runtimeMaxMemory
+REDIRECT java.lang.Runtime addShutdownHook(Ljava/lang/Thread;)V -> mcport.rt.jdk.JdkExt runtimeAddShutdownHook
 REDIRECT java.lang.Class getGenericSuperclass()Ljava/lang/reflect/Type; -> mcport.rt.jdk.JdkExt classGetGenericSuperclass
 
 BODY_STATIC org.joml.MemUtil createInstance()Lorg/joml/MemUtil; -> org.joml.BrowserMemUtil createInstance
