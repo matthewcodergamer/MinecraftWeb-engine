@@ -99,6 +99,25 @@ public class PortBuilder {
         tool.setSourceMapsFileGenerated(false);
         tool.generate();
 
+        // TeaVM's low-level Tool API writes the Wasm module but does not copy
+        // its companion browser loader. The Gradle plugin performs this as a
+        // separate copyWasmGCRuntime task. Mirror that task for this build.
+        if ("wasm".equals(target)) {
+            String runtimeResource = "org/teavm/backend/wasm/wasm-gc-runtime.js";
+            File runtimeFile = new File(args[2], args[3] + "-runtime.js");
+            try (java.io.InputStream runtime = PortBuilder.class.getClassLoader()
+                    .getResourceAsStream(runtimeResource)) {
+                if (runtime == null) {
+                    throw new IllegalStateException("TeaVM Wasm GC runtime resource not found: "
+                            + runtimeResource);
+                }
+                java.nio.file.Files.copy(runtime, runtimeFile.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            tool.getGeneratedFiles().add(runtimeFile);
+            System.out.println("Wasm GC runtime successfully copied to " + runtimeFile);
+        }
+
         int severe = tool.getProblemProvider().getSevereProblems().size();
         int linkage = 0;
         java.util.Set<Problem> severeSet = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
