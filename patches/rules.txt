@@ -32,6 +32,12 @@ REDIRECT java.lang.Class getGenericSuperclass()Ljava/lang/reflect/Type; -> mcpor
 
 BODY_STATIC org.joml.MemUtil createInstance()Lorg/joml/MemUtil; -> org.joml.BrowserMemUtil createInstance
 
+# --- Graphics: renderpearl backends for the browser (WebGPU preferred) -----------------------------
+# ClientBootstrap references VulkanFeatureSets only to run its empty bootstrap(); redirect the call
+# before class initialization, because the browser never uses Vulkan and Vk* structs cannot reflect on TeaVM.
+REDIRECT_STATIC com.mojang.renderpearl.backend.vulkan.VulkanFeatureSets bootstrap()V -> mcport.rt.patch.ClientPatches noop
+BODY net.minecraft.client.PreferredGraphicsApi getBackendsToTry()[Lcom/mojang/renderpearl/api/device/GpuBackend; -> mcport.gpu.GraphicsPatches backendsToTry
+
 # --- SystemReport / uptime ---
 BODY_STATIC net.minecraft.client.Minecraft fillSystemReport(Lnet/minecraft/SystemReport;Lnet/minecraft/client/Minecraft;Lnet/minecraft/client/resources/language/LanguageManager;Ljava/lang/String;Lnet/minecraft/client/Options;)Lnet/minecraft/SystemReport; -> mcport.rt.SystemReportBrowser fillMinecraft
 BODY_STATIC net.minecraft.client.Minecraft lambda$fillUptime$0()Ljava/lang/String; -> mcport.rt.SystemReportBrowser uptime
