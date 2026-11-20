@@ -103,16 +103,29 @@ public class PortBuilder {
         // its companion browser loader. The Gradle plugin performs this as a
         // separate copyWasmGCRuntime task. Mirror that task for this build.
         if ("wasm".equals(target)) {
-            String runtimeResource = "org/teavm/backend/wasm/wasm-gc-runtime.js";
+            String[] runtimeResources = {
+                "org/teavm/backend/wasm/wasm-gc-runtime.min.js",
+                "org/teavm/backend/wasm/wasm-gc-runtime.js"
+            };
             File runtimeFile = new File(args[2], args[3] + "-runtime.js");
-            try (java.io.InputStream runtime = PortBuilder.class.getClassLoader()
-                    .getResourceAsStream(runtimeResource)) {
-                if (runtime == null) {
-                    throw new IllegalStateException("TeaVM Wasm GC runtime resource not found: "
-                            + runtimeResource);
+            boolean copied = false;
+            for (String runtimeResource : runtimeResources) {
+                try (java.io.InputStream runtime = PortBuilder.class.getClassLoader()
+                        .getResourceAsStream(runtimeResource)) {
+                    if (runtime == null) {
+                        continue;
+                    }
+                    java.nio.file.Files.copy(runtime, runtimeFile.toPath(),
+                            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    System.out.println("Wasm GC runtime copied from " + runtimeResource
+                            + " to " + runtimeFile);
+                    copied = true;
+                    break;
                 }
-                java.nio.file.Files.copy(runtime, runtimeFile.toPath(),
-                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            if (!copied) {
+                throw new IllegalStateException("TeaVM Wasm GC runtime resources not found: "
+                        + java.util.Arrays.toString(runtimeResources));
             }
             tool.getGeneratedFiles().add(runtimeFile);
             System.out.println("Wasm GC runtime successfully copied to " + runtimeFile);
