@@ -118,6 +118,7 @@ jobs:
           sleep 2
           python3 scripts/cdp.py "http://127.0.0.1:8765/game.html?smoke-world=1&wasm=1" \
             --timeout 180 \
+            --preload-js "try { sessionStorage.setItem('mw_play_pass', String(Date.now())); } catch (e) {}" \
             --screenshot build/browser_title_or_world.png \
             --until-js "window.__mc && window.__mc.stage === 'complete'" \
             --assert-js "window.__mc && window.__mc.stage === 'complete'" \
