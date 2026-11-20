@@ -119,15 +119,26 @@ jobs:
           python3 scripts/cdp.py "http://127.0.0.1:8765/game.html?smoke-world=1&wasm=1" \
             --timeout 600 \
             --screenshot build/browser_title_or_world.png \
-            --until-js "window.__mc && /complete|failed/.test(window.__mc.stage)" || true
+            --until-js "window.__mc && window.__mc.stage === 'complete'" \
+            --assert-js "window.__mc && window.__mc.stage === 'complete'" \
+            --assert-js "(() => { const c = document.querySelector('canvas'); return !!c && c.width > 0 && c.height > 0; })()"
 
-      - name: Assert the real Minecraft title screen was constructed
+      - name: Assert browser boot completed and a real screenshot was captured
         run: |
-          if [ ! -f build/browser_title_or_world.png ]; then
-            echo "No screenshot captured"
-            exit 1
-          fi
-          echo "Screenshot present"
+          set -euo pipefail
+          test -s build/browser_title_or_world.png
+          python3 - <<'PY'
+          import struct
+          from pathlib import Path
+          p = Path("build/browser_title_or_world.png")
+          data = p.read_bytes()
+          if data[:8] != b"\\x89PNG\\r\\n\\x1a\\n" or len(data) < 24:
+              raise SystemExit("Screenshot is not a valid PNG")
+          width, height = struct.unpack(">II", data[16:24])
+          if width < 640 or height < 360:
+              raise SystemExit(f"Screenshot dimensions too small: {width}x{height}")
+          print(f"Verified rendered browser screenshot: {width}x{height} ({len(data)} bytes)")
+          PY
 
       - name: Preserve full Chrome browser console and error diagnostics
         if: always()
