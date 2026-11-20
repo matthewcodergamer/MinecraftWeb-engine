@@ -80,6 +80,14 @@ jobs:
           PORT_LENIENT: "true"
         run: bash scripts/build.sh mcport.ClientMain wasm
 
+      - name: Verify TeaVM Wasm GC runtime was emitted
+        run: |
+          set -euo pipefail
+          test -s build/web/clientmain.wasm
+          test -s build/web/clientmain.wasm-runtime.js
+          grep -q "TeaVM.wasmGC" build/web/clientmain.wasm-runtime.js
+          echo "Verified clientmain.wasm and its TeaVM Wasm GC browser runtime"
+
       - name: Install Binaryen 133 and try Wasm GC optimization
         run: |
           set -euo pipefail
