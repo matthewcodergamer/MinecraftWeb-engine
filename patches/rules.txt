@@ -332,4 +332,5 @@ BODY com.mojang.blaze3d.platform.Window setIcon(Lnet/minecraft/server/packs/Pack
 BODY_OBJECT net.minecraft.server.packs.repository.FolderRepositorySource$FolderPackDetector createZipPack(Ljava/nio/file/Path;)Lnet/minecraft/server/packs/repository/Pack$ResourcesSupplier; -> mcport.rt.patch.BrowserZipPackResources create
 
 # --- Browser audio is unavailable: skip sounds.json preparation (TeaVM illegal-cast trap) ---
+# Keep this rule active in both browser and TeaVM probe builds.
 BODY net.minecraft.client.sounds.SoundManager prepare(Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)Lnet/minecraft/client/sounds/SoundManager$Preparations; -> net.minecraft.client.sounds.BrowserSoundManagerPatches prepare
