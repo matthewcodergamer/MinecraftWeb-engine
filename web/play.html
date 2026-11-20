@@ -2,19 +2,6 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<script>
-/* Lightweight hosting policy: discourages casual mirroring, not DRM. */
-(function () {
-  var allowed = new Set(['matthewcodergamer.github.io', 'localhost', '127.0.0.1', 'huggingface.co']);
-  var host = String(location.hostname || '').toLowerCase();
-  var ok = allowed.has(host) || host.endsWith('.hf.space');
-  window.__MC_HOST_AUTHORIZED = ok;
-  if (!ok) {
-    document.documentElement.innerHTML = '<head><meta charset="utf-8"><title>Unauthorized hosting</title></head><body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#111;color:#fff;font:16px system-ui,sans-serif;text-align:center"><main><h1>Unauthorized hosting</h1><p>Please play at the official Minecraft Web site.</p></main></body>';
-    throw new Error('Unauthorized hosting. Please play at the official site.');
-  }
-})();
-</script>
 
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -58,7 +45,6 @@
 // initialises the WebAssembly shader toolchain and the WebGPU device, then starts the real
 // net.minecraft.client.main.Main compiled by TeaVM (clientmain.js).
 'use strict';
-if (window.__MC_HOST_AUTHORIZED !== true) throw new Error('Unauthorized hosting. Please play at the official site.');
 const params = new URLSearchParams(location.search);
 const embedded = params.get('embedded') === '1';
 // All game parts live on the Hugging Face Space. The same files are also
