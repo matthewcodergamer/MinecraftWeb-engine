@@ -29,7 +29,7 @@ permissions:
 jobs:
   client-browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 100
+    timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -117,7 +117,7 @@ jobs:
           trap "kill $SERVER_PID" EXIT
           sleep 2
           python3 scripts/cdp.py "http://127.0.0.1:8765/game.html?smoke-world=1&wasm=1" \
-            --timeout 600 \
+            --timeout 180 \
             --screenshot build/browser_title_or_world.png \
             --until-js "window.__mc && window.__mc.stage === 'complete'" \
             --assert-js "window.__mc && window.__mc.stage === 'complete'" \
