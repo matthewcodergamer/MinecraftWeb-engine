@@ -6,16 +6,24 @@
 # Every rule must preserve the original method's documented behaviour (see docs/MIGRATION_MATRIX.md).
 
 # --- Browser resource-pack ZIP loading ------------------------------------------------------
+# FolderPackDetector is private; BODY_OBJECT erases only the helper receiver type, not the
+# actual runtime receiver. ZIP bytes are read through NIO and served from memory.
 BODY_OBJECT net.minecraft.server.packs.repository.FolderRepositorySource$FolderPackDetector createZipPack(Ljava/nio/file/Path;)Lnet/minecraft/server/packs/repository/Pack$ResourcesSupplier; -> mcport.rt.patch.BrowserZipPackResources create
+
+# Route provider stream reads through newByteChannel directly. This avoids TeaVM's inherited
+# FileSystemProvider.newInputStream dispatch while retaining LinkFSProvider delegation.
 REDIRECT java.nio.file.spi.FileSystemProvider newInputStream(Ljava/nio/file/Path;[Ljava/nio/file/OpenOption;)Ljava/io/InputStream; -> mcport.rt.fs.BrowserFileStreams newInputStream
 REDIRECT_STATIC java.nio.file.Files newByteChannel(Ljava/nio/file/Path;Ljava/util/Set;[Ljava/nio/file/attribute/FileAttribute;)Ljava/nio/channels/SeekableByteChannel; -> mcport.rt.fs.BrowserFileStreams newByteChannel
 
-# --- JDK / assets ---
-# TeaVM 0.16's File has no toPath(); Minecraft's constructor converts its game/asset/pack
-# directories to Path. Map File.toPath() onto the default browser VFS path.
-REDIRECT java.io.File toPath()Ljava/nio/file/Path; -> mcport.rt.jdk.JdkExt fileToPath
+# --- JDK methods missing from TeaVM's class library ---------------------------------------
+# --- file system / assets ---------------------------------------------------------------
+# The browser has no launcher asset store; read the index from the client jar archive and
+# map logical names onto assets/<name> entries the host page already loaded.
 REDIRECT_STATIC net.minecraft.client.resources.IndexedAssetSource createIndexFs(Ljava/nio/file/Path;Ljava/lang/String;)Ljava/nio/file/Path; -> mcport.rt.patch.AssetIndexPatches createIndexFs
+# TeaVM's Files.find concatenates a null stream for directories and crashes when a pack
+# directory is listed; walk the tree directly instead (LinkFS-safe in Wasm GC).
 BODY_STATIC net.minecraft.server.packs.PathPackResources listPath(Ljava/lang/String;Ljava/nio/file/Path;Ljava/util/List;Lnet/minecraft/server/packs/PackResources$ResourceOutput;)V -> mcport.rt.patch.PathPackPatches listPath
+
 REDIRECT_STATIC java.lang.Character toString(I)Ljava/lang/String; -> mcport.rt.jdk.JdkExt characterToString
 REDIRECT_STATIC java.lang.Character codePointOf(Ljava/lang/String;)I -> mcport.rt.jdk.JdkExt characterCodePointOf
 REDIRECT_STATIC java.lang.Integer parseUnsignedInt(Ljava/lang/String;I)I -> mcport.rt.jdk.JdkExt parseUnsignedInt
@@ -31,18 +39,12 @@ REDIRECT java.nio.ByteBuffer slice(II)Ljava/nio/ByteBuffer; -> mcport.rt.jdk.Jdk
 REDIRECT_STATIC java.util.stream.StreamSupport intStream(Ljava/util/Spliterator$OfInt;Z)Ljava/util/stream/IntStream; -> mcport.rt.jdk.JdkExt intStream
 REDIRECT_STATIC java.util.stream.StreamSupport longStream(Ljava/util/Spliterator$OfLong;Z)Ljava/util/stream/LongStream; -> mcport.rt.jdk.JdkExt longStream
 REDIRECT java.lang.Runtime maxMemory()J -> mcport.rt.jdk.JdkExt runtimeMaxMemory
-REDIRECT java.lang.Runtime addShutdownHook(Ljava/lang/Thread;)V -> mcport.rt.jdk.JdkExt runtimeAddShutdownHook
 REDIRECT java.lang.Class getGenericSuperclass()Ljava/lang/reflect/Type; -> mcport.rt.jdk.JdkExt classGetGenericSuperclass
 
+# --- JOML: no sun.misc.Unsafe in a browser; use JOML's own NIO implementation --------------
 BODY_STATIC org.joml.MemUtil createInstance()Lorg/joml/MemUtil; -> org.joml.BrowserMemUtil createInstance
 
-# --- Graphics: renderpearl backends for the browser (WebGPU preferred) -----------------------------
-# ClientBootstrap references VulkanFeatureSets only to run its empty bootstrap(); redirect the call
-# before class initialization, because the browser never uses Vulkan and Vk* structs cannot reflect on TeaVM.
-REDIRECT_STATIC com.mojang.renderpearl.backend.vulkan.VulkanFeatureSets bootstrap()V -> mcport.rt.patch.ClientPatches noop
-BODY net.minecraft.client.PreferredGraphicsApi getBackendsToTry()[Lcom/mojang/renderpearl/api/device/GpuBackend; -> mcport.gpu.GraphicsPatches backendsToTry
-
-# --- SystemReport / uptime ---
+# --- net.minecraft.SystemReport: JMX/OSHI system probing -> browser equivalents ------------
 BODY_STATIC net.minecraft.client.Minecraft fillSystemReport(Lnet/minecraft/SystemReport;Lnet/minecraft/client/Minecraft;Lnet/minecraft/client/resources/language/LanguageManager;Ljava/lang/String;Lnet/minecraft/client/Options;)Lnet/minecraft/SystemReport; -> mcport.rt.SystemReportBrowser fillMinecraft
 BODY_STATIC net.minecraft.client.Minecraft lambda$fillUptime$0()Ljava/lang/String; -> mcport.rt.SystemReportBrowser uptime
 BODY net.minecraft.client.Minecraft fillUptime(Lnet/minecraft/CrashReportCategory;)V -> mcport.rt.SystemReportBrowser fillUptimeSafe
@@ -54,13 +56,22 @@ BODY net.minecraft.SystemReport lambda$new$7()V -> mcport.rt.SystemReportBrowser
 BODY_STATIC net.minecraft.SystemReport printJvmFlags(Ljava/util/function/Predicate;)Ljava/lang/String; -> mcport.rt.SystemReportBrowser jvmFlags
 REDIRECT java.lang.Class getGenericInterfaces()[Ljava/lang/reflect/Type; -> mcport.rt.jdk.JdkExt classGetGenericInterfaces
 REDIRECT java.lang.Class isAnonymousClass()Z -> mcport.rt.jdk.JdkExt classIsAnonymousClass
+
+# --- Browser debug memory tracking: native reflection metadata is not available in TeaVM --------
+# Memory untracking is diagnostic-only; disable its reflective static bootstrap in the browser.
 BODY_STATIC com.mojang.blaze3d.platform.DebugMemoryUntracker <clinit>()V -> mcport.rt.patch.LibraryPatches noop
 
+# --- Libraries: take the same fallback paths they use on JVMs without sun.misc.Unsafe ---------
+# Guava catches the failure (Exception|Error) and falls back to AtomicReferenceFieldUpdaterAtomicHelper.
 STUB_CLASS com.google.common.util.concurrent.AbstractFutureState$UnsafeAtomicHelper
 BODY_STATIC com.google.gson.internal.UnsafeAllocator create()Lcom/google/gson/internal/UnsafeAllocator; -> mcport.rt.patch.LibraryPatches gsonUnsafeAllocator
 BODY_STATIC io.netty.util.internal.logging.InternalLoggerFactory newDefaultFactory(Ljava/lang/String;)Lio/netty/util/internal/logging/InternalLoggerFactory; -> mcport.rt.patch.LibraryPatches nettyDefaultFactory
+
+# --- joptsimple CLI option converters: resolved reflectively on the JVM; the browser keeps no reflective
+# member metadata for java.io.File, so mcport.rt.patch.LibraryPatches supplies the converters directly.
 BODY_STATIC joptsimple.internal.Reflection findConverter(Ljava/lang/Class;)Ljoptsimple/ValueConverter; -> mcport.rt.patch.LibraryPatches joptFindConverter
 
+# --- Classpath resources -> in-memory copy of the client jar's resources (mcport.rt.ClasspathResources)
 REDIRECT java.lang.Class getResourceAsStream(Ljava/lang/String;)Ljava/io/InputStream; -> mcport.rt.ClasspathResources classGetResourceAsStream
 REDIRECT java.lang.ClassLoader getResourceAsStream(Ljava/lang/String;)Ljava/io/InputStream; -> mcport.rt.ClasspathResources loaderGetResourceAsStream
 REDIRECT_STATIC java.lang.ClassLoader getSystemResourceAsStream(Ljava/lang/String;)Ljava/io/InputStream; -> mcport.rt.ClasspathResources systemGetResourceAsStream
@@ -68,60 +79,270 @@ REDIRECT java.lang.Class getResource(Ljava/lang/String;)Ljava/net/URL; -> mcport
 REDIRECT java.lang.ClassLoader getResource(Ljava/lang/String;)Ljava/net/URL; -> mcport.rt.ClasspathResources loaderGetResource
 REDIRECT java.lang.ClassLoader getResources(Ljava/lang/String;)Ljava/util/Enumeration; -> mcport.rt.ClasspathResources loaderGetResources
 
+# --- TeaVM JSO arrays: use the optional-by-ref converters, which copy on Wasm GC ----------
+# The zero-copy fromJavaArray methods are not supported by Wasm GC. Their copyFromJavaArray
+# counterparts use @JSByRef(optional = true), retaining JS zero-copy where available and
+# allowing Wasm GC to transfer the arrays through its supported copy bridge.
 REDIRECT_STATIC org.teavm.jso.typedarrays.Int8Array fromJavaArray([B)Lorg/teavm/jso/typedarrays/Int8Array; -> org.teavm.jso.typedarrays.Int8Array copyFromJavaArray
 REDIRECT_STATIC org.teavm.jso.typedarrays.Int32Array fromJavaArray([I)Lorg/teavm/jso/typedarrays/Int32Array; -> org.teavm.jso.typedarrays.Int32Array copyFromJavaArray
 REDIRECT_STATIC org.teavm.jso.typedarrays.Uint16Array fromJavaArray([C)Lorg/teavm/jso/typedarrays/Uint16Array; -> org.teavm.jso.typedarrays.Uint16Array copyFromJavaArray
 REDIRECT_STATIC org.teavm.jso.typedarrays.Float32Array fromJavaArray([F)Lorg/teavm/jso/typedarrays/Float32Array; -> org.teavm.jso.typedarrays.Float32Array copyFromJavaArray
 REDIRECT_STATIC org.teavm.jso.typedarrays.BigInt64Array fromJavaArray([J)Lorg/teavm/jso/typedarrays/BigInt64Array; -> org.teavm.jso.typedarrays.BigInt64Array copyFromJavaArray
 
-# TeaVM rejects reachable native methods without @Import. These native entry points
-# are not usable in the browser target: browser memory is provided by BrowserMemoryBackend,
-# and Tracy profiling is intentionally disabled. Replace their native bodies with defaults.
+# --- LWJGL platform layer -> browser (mcport.lwjgl): emulated native heap + JS natives table ----------
+BODY_STATIC org.lwjgl.system.MemoryUtil createBackend()Lorg/lwjgl/system/MemoryBackend; -> mcport.lwjgl.BrowserMemoryBackend create
+BODY_STATIC org.lwjgl.system.MemoryUtil getPageSize()I -> mcport.lwjgl.LwjglPatches pageSize
+BODY_STATIC org.lwjgl.system.MemoryUtil getCacheLineSize()I -> mcport.lwjgl.LwjglPatches cacheLineSize
+BODY_STATIC org.lwjgl.system.MemoryManage getInstance()Lorg/lwjgl/system/MemoryUtil$MemoryAllocator; -> mcport.lwjgl.LwjglPatches allocator
+BODY_STATIC org.lwjgl.system.MemoryAccessJNI getPointerSize()I -> mcport.lwjgl.LwjglPatches pointerSize
+BODY_STATIC org.lwjgl.system.MemoryAccessJNI malloc()J -> mcport.lwjgl.LwjglPatches zeroJ
+BODY_STATIC org.lwjgl.system.MemoryAccessJNI calloc()J -> mcport.lwjgl.LwjglPatches zeroJ
+BODY_STATIC org.lwjgl.system.MemoryAccessJNI realloc()J -> mcport.lwjgl.LwjglPatches zeroJ
+BODY_STATIC org.lwjgl.system.MemoryAccessJNI free()J -> mcport.lwjgl.LwjglPatches zeroJ
+BODY_STATIC org.lwjgl.system.MemoryAccessJNI aligned_alloc()J -> mcport.lwjgl.LwjglPatches zeroJ
+BODY_STATIC org.lwjgl.system.MemoryAccessJNI aligned_free()J -> mcport.lwjgl.LwjglPatches zeroJ
+BODY_STATIC org.lwjgl.system.Library initialize()V -> mcport.lwjgl.LwjglPatches libraryInitialize
+BODY_STATIC org.lwjgl.system.Library loadSystem(Ljava/lang/String;Ljava/lang/String;)V -> mcport.lwjgl.LwjglPatches loadSystem
+BODY_STATIC org.lwjgl.system.Library loadSystem(Ljava/util/function/Consumer;Ljava/util/function/Consumer;Ljava/lang/Class;Ljava/lang/String;Ljava/lang/String;)V -> mcport.lwjgl.LwjglPatches loadSystem
+BODY_STATIC org.lwjgl.system.Library loadNative(Ljava/lang/String;Ljava/lang/String;)Lorg/lwjgl/system/SharedLibrary; -> mcport.lwjgl.LwjglPatches loadNative
+BODY_STATIC org.lwjgl.system.Library loadNative(Ljava/lang/Class;Ljava/lang/String;Ljava/lang/String;)Lorg/lwjgl/system/SharedLibrary; -> mcport.lwjgl.LwjglPatches loadNative
+BODY_STATIC org.lwjgl.system.Library loadNative(Ljava/lang/Class;Ljava/lang/String;Ljava/lang/String;Z)Lorg/lwjgl/system/SharedLibrary; -> mcport.lwjgl.LwjglPatches loadNative
+BODY_STATIC org.lwjgl.system.Library loadNative(Ljava/lang/Class;Ljava/lang/String;Lorg/lwjgl/system/Configuration;[Ljava/lang/String;)Lorg/lwjgl/system/SharedLibrary; -> mcport.lwjgl.LwjglPatches loadNative
+BODY_STATIC org.lwjgl.system.Library loadNative(Ljava/lang/Class;Ljava/lang/String;Lorg/lwjgl/system/Configuration;Ljava/util/function/Supplier;[Ljava/lang/String;)Lorg/lwjgl/system/SharedLibrary; -> mcport.lwjgl.LwjglPatches loadNative
+BODY_STATIC org.lwjgl.system.Library <clinit>()V -> mcport.lwjgl.LwjglPatches noop
+BODY_STATIC org.lwjgl.system.ThreadLocalUtil getThreadJNIEnv()J -> mcport.lwjgl.LwjglPatches zeroJ
+BODY_STATIC org.lwjgl.system.ThreadLocalUtil getFunctionMissingAbort()J -> mcport.lwjgl.LwjglPatches zeroJ
+BODY_STATIC org.lwjgl.system.ThreadLocalUtil setupEnvData(I)J -> mcport.lwjgl.LwjglPatches zeroJI
+BODY_STATIC org.lwjgl.system.Upcalls <clinit>()V -> mcport.lwjgl.LwjglPatches noop
+BODY_STATIC org.lwjgl.system.Upcalls upcallCreate(Lorg/lwjgl/system/Callback$Descriptor;Ljava/lang/Object;)J -> mcport.lwjgl.LwjglPatches upcallCreate
+BODY_STATIC org.lwjgl.system.Upcalls upcallGet(J)Lorg/lwjgl/system/CallbackI; -> mcport.lwjgl.LwjglPatches upcallGet
+BODY_STATIC org.lwjgl.system.Upcalls upcallFree(J)V -> mcport.lwjgl.LwjglPatches upcallFree
+BODY_STATIC org.lwjgl.system.APIUtil apiCreateCIF(Lorg/lwjgl/system/libffi/FFIType;[Lorg/lwjgl/system/libffi/FFIType;)Lorg/lwjgl/system/libffi/FFICIF; -> mcport.lwjgl.LwjglPatches apiCreateCIF
+BODY_STATIC org.lwjgl.system.APIUtil apiCreateCIF(ILorg/lwjgl/system/libffi/FFIType;[Lorg/lwjgl/system/libffi/FFIType;)Lorg/lwjgl/system/libffi/FFICIF; -> mcport.lwjgl.LwjglPatches apiCreateCIF
+BODY_STATIC org.lwjgl.system.APIUtil apiCreateCIFVar(IILorg/lwjgl/system/libffi/FFIType;[Lorg/lwjgl/system/libffi/FFIType;)Lorg/lwjgl/system/libffi/FFICIF; -> mcport.lwjgl.LwjglPatches apiCreateCIFVar
+BODY_STATIC org.lwjgl.system.Platform get()Lorg/lwjgl/system/Platform; -> mcport.lwjgl.LwjglPatches platform
+REDIRECT_STATIC java.lang.invoke.MethodHandles lookup()Ljava/lang/invoke/MethodHandles$Lookup; -> mcport.lwjgl.LwjglPatches methodHandlesLookup
+# Direct buffers must be addressable native memory.
+REDIRECT_STATIC java.nio.ByteBuffer allocateDirect(I)Ljava/nio/ByteBuffer; -> mcport.lwjgl.BrowserAllocator allocateDirect
+
+# --- JDK methods missing from TeaVM (client entry) --------------------------------------------
+REDIRECT java.lang.Class getSigners()[Ljava/lang/Object; -> mcport.rt.jdk.JdkExt classGetSigners
+REDIRECT java.lang.Class getModule()Ljava/lang/Module; -> mcport.rt.jdk.JdkExt classGetModule
+REDIRECT java.lang.Module getLayer()Ljava/lang/ModuleLayer; -> mcport.rt.jdk.JdkExt moduleGetLayer
+REDIRECT java.lang.ModuleLayer findModule(Ljava/lang/String;)Ljava/util/Optional; -> mcport.rt.jdk.JdkExt moduleLayerFindModule
+REDIRECT_STATIC jdk.jfr.FlightRecorder isAvailable()Z -> mcport.rt.jdk.JdkExt jfrIsAvailable
+REDIRECT java.lang.Thread threadId()J -> mcport.rt.jdk.JdkExt threadId
+REDIRECT_STATIC java.lang.Thread dumpStack()V -> mcport.rt.jdk.JdkExt threadDumpStack
+REDIRECT java.lang.Runtime addShutdownHook(Ljava/lang/Thread;)V -> mcport.rt.jdk.JdkExt runtimeAddShutdownHook
+REDIRECT_STATIC java.lang.System exit(I)V -> mcport.rt.jdk.JdkExt systemExit
+REDIRECT_STATIC java.lang.System load(Ljava/lang/String;)V -> mcport.rt.jdk.JdkExt systemLoad
+REDIRECT_STATIC java.lang.System loadLibrary(Ljava/lang/String;)V -> mcport.rt.jdk.JdkExt systemLoad
+REDIRECT_STATIC java.lang.System mapLibraryName(Ljava/lang/String;)Ljava/lang/String; -> mcport.rt.jdk.JdkExt systemMapLibraryName
+REDIRECT java.lang.Package getSpecificationVersion()Ljava/lang/String; -> mcport.rt.jdk.JdkExt packageGetSpecificationVersion
+REDIRECT java.lang.Package getImplementationVersion()Ljava/lang/String; -> mcport.rt.jdk.JdkExt packageGetImplementationVersion
+REDIRECT_STATIC java.nio.file.Files getFileStore(Ljava/nio/file/Path;)Ljava/nio/file/FileStore; -> mcport.rt.fs.BrowserFileStore getFileStore
+REDIRECT java.lang.ClassLoader loadClass(Ljava/lang/String;)Ljava/lang/Class; -> mcport.rt.jdk.JdkExt classLoaderLoadClass
+REDIRECT_STATIC java.util.Spliterators iterator(Ljava/util/Spliterator;)Ljava/util/Iterator; -> mcport.rt.jdk.JdkExt spliteratorsIterator
+REDIRECT_STATIC java.util.Spliterators iterator(Ljava/util/Spliterator$OfInt;)Ljava/util/PrimitiveIterator$OfInt; -> mcport.rt.jdk.JdkExt spliteratorsIterator
+REDIRECT_STATIC java.util.Collections unmodifiableSortedSet(Ljava/util/SortedSet;)Ljava/util/SortedSet; -> mcport.rt.jdk.JdkExt unmodifiableSortedSet
+REDIRECT_STATIC java.util.Collections unmodifiableSortedMap(Ljava/util/SortedMap;)Ljava/util/SortedMap; -> mcport.rt.jdk.JdkExt unmodifiableSortedMap
+REDIRECT java.util.Calendar getCalendarType()Ljava/lang/String; -> mcport.rt.jdk.JdkExt calendarGetCalendarType
+REDIRECT java.util.regex.Pattern asPredicate()Ljava/util/function/Predicate; -> mcport.rt.jdk.JdkExt patternAsPredicate
+REDIRECT_STATIC java.util.Base64 getMimeEncoder(I[B)Ljava/util/Base64$Encoder; -> mcport.rt.jdk.JdkExt base64MimeEncoder
+REDIRECT java.util.Locale getScript()Ljava/lang/String; -> mcport.rt.jdk.JdkExt localeGetScript
+REDIRECT java.io.File toPath()Ljava/nio/file/Path; -> mcport.rt.jdk.JdkExt fileToPath
+REDIRECT_STATIC java.nio.file.Files probeContentType(Ljava/nio/file/Path;)Ljava/lang/String; -> mcport.rt.jdk.JdkExt filesProbeContentType
+REDIRECT java.nio.file.Path resolve(Ljava/lang/String;[Ljava/lang/String;)Ljava/nio/file/Path; -> mcport.rt.jdk.JdkExt pathResolve
+
+# --- Offline auth: the browser has no live Minecraft Services session ------------------------------
+# Always use the offline discovery service so no background HTTP retries are scheduled. The
+# scheduled executor implementation still exists for libraries that construct one.
+REDIRECT_STATIC com.mojang.authlib.services.MinecraftServicesDiscoveryService create(Ljava/net/Proxy;)Lcom/mojang/authlib/services/MinecraftServicesDiscoveryService; -> mcport.rt.patch.AuthPatches createOffline
+REDIRECT_STATIC com.mojang.authlib.services.MinecraftServicesDiscoveryService create(Ljava/net/Proxy;Z)Lcom/mojang/authlib/services/MinecraftServicesDiscoveryService; -> mcport.rt.patch.AuthPatches createOffline
+REDIRECT_STATIC com.mojang.authlib.services.MinecraftServicesDiscoveryService create(Ljava/net/Proxy;ZLcom/mojang/authlib/Environment;)Lcom/mojang/authlib/services/MinecraftServicesDiscoveryService; -> mcport.rt.patch.AuthPatches createOfflineWithEnv
+# Minecraft.createUserApiService always asks the discovery service for a live user API, whose
+# constructor schedules getAttributes over HTTPS. The browser has no session: hand the client
+# authlib's OFFLINE implementation instead (the same one offlineDeveloperMode uses).
+BODY com.mojang.authlib.services.MinecraftServicesDiscoveryService createUserApiService(Ljava/lang/String;)Lcom/mojang/authlib/minecraft/UserApiService; -> mcport.rt.patch.AuthPatches createOfflineUserApiService
+# And if a live user API is ever constructed anyway, its property fetch returns the offline set
+# instead of throwing AuthenticationUnavailableException on a worker thread.
+BODY com.mojang.authlib.services.MinecraftServicesUserApiService fetchProperties()Lcom/mojang/authlib/minecraft/UserApiService$UserProperties; -> mcport.rt.patch.AuthPatches offlineProperties
+
+# --- Client code that probes the OS / loads native libraries ---------------------------------
+BODY_STATIC com.mojang.blaze3d.platform.NativeLibrariesBootstrap loadLibraries()V -> mcport.rt.patch.ClientPatches loadNativeLibraries
+BODY_STATIC com.mojang.blaze3d.platform.NativeLibrariesBootstrap isVulkanLoaderAvailable()Z -> mcport.rt.patch.ClientPatches vulkanLoaderAvailable
+BODY_STATIC net.minecraft.util.NativeModuleLister listModules()Ljava/util/List; -> mcport.rt.patch.ClientPatches listNativeModules
+BODY_STATIC net.minecraft.util.NativeModuleLister tryGetModuleVersion(Ljava/lang/String;)Ljava/util/Optional; -> mcport.rt.patch.ClientPatches nativeModuleVersion
+BODY_STATIC net.minecraft.client.gui.components.debug.DebugEntrySystemSpecs getCpuInfo()Ljava/lang/String; -> mcport.rt.patch.ClientPatches cpuInfo
+BODY_STATIC com.mojang.jtracy.TracyClient load()V -> mcport.rt.patch.ClientPatches tracyLoad
+BODY_STATIC com.mojang.jtracy.TracyClient beginZone(Ljava/lang/String;Z)Lcom/mojang/jtracy/Zone; -> mcport.rt.patch.ClientPatches tracyBeginZone
+STUB_CLASS com.mojang.jtracy.Loader
+# Chat-signing keys from servers (X.509): not available; Mojang's code reports CryptException as for a bad key.
+STUB net.minecraft.util.Crypt byteToPublicKey([B)Ljava/security/PublicKey;
+
+# --- FileFixerUpper: browser has neither atomic moves nor hard links -------------------------------
+# These are compile-time BODY replacements: they remove the original Path probing code (the
+# source of the Wasm-GC reference-cast failure) while preserving a fail-closed capability result.
+BODY_STATIC net.minecraft.util.filefix.FileFixerUpper detectFileSystemCapabilities(Ljava/nio/file/Path;)Lnet/minecraft/util/filefix/FileSystemCapabilities; -> mcport.rt.patch.FileFixPatches detectFileSystemCapabilities
+BODY_STATIC net.minecraft.util.filefix.FileFixerUpper supportsAtomicMove(Ljava/nio/file/Path;)Z -> mcport.rt.patch.FileFixPatches supportsAtomicMove
+BODY_STATIC net.minecraft.util.filefix.FileFixerUpper supportsHardLinks(Ljava/nio/file/Path;)Z -> mcport.rt.patch.FileFixPatches supportsHardLinks
+
+# --- Graphics: renderpearl backends for the browser (WebGPU preferred) -----------------------------
+# ClientBootstrap references VulkanFeatureSets only to run its empty bootstrap(); touching the class
+# initializes large Vk* feature structs that cannot reflect on TeaVM. The browser never uses Vulkan.
+REDIRECT_STATIC com.mojang.renderpearl.backend.vulkan.VulkanFeatureSets bootstrap()V -> mcport.rt.patch.ClientPatches noop
+BODY net.minecraft.client.PreferredGraphicsApi getBackendsToTry()[Lcom/mojang/renderpearl/api/device/GpuBackend; -> mcport.gpu.GraphicsPatches backendsToTry
+# Minecraft.<init> probes Vulkan when the preferred API is DEFAULT (the default) before it tries
+# the backends above. A browser has no Vulkan loader, and renderpearl's probe loads the loader and
+# instantiates @NativeType feature structs, which TeaVM cannot run: answer "unavailable" instead.
+BODY_STATIC com.mojang.renderpearl.backend.vulkan.VulkanBackend checkBackendAvailable()Lcom/mojang/renderpearl/api/device/BackendCreationException; -> mcport.gpu.GraphicsPatches vulkanUnavailable
+# JOML's Unsafe-based implementations are never selected (createInstance is patched above); fast dependency
+# analysis still reaches them.
+STUB_CLASS org.joml.MemUtil$MemUtilUnsafe
+STUB_CLASS org.joml.MemUtil$MemUtilInternalUnsafe
+
+# --- LWJGL modules with their own JNI natives ------------------------------------------------------
+BODY_STATIC org.lwjgl.stb.STBImage nstbi_load_from_memory(JIJJJI)J -> mcport.lwjgl.StbNatives loadFromMemory
+BODY_STATIC org.lwjgl.stb.STBImage nstbi_failure_reason()J -> mcport.lwjgl.StbNatives failureReason
+BODY_STATIC org.lwjgl.stb.STBImage nstbi_image_free(J)V -> mcport.lwjgl.StbNatives imageFree
+BODY_STATIC org.lwjgl.stb.STBImageResize nstbir_resize_uint8_linear(JIIIJIIII)J -> mcport.lwjgl.StbNatives resizeLinear
+BODY_STATIC org.lwjgl.stb.STBImageWrite nstbi_write_png_compression_level()J -> mcport.lwjgl.StbNatives pngCompressionLevel
+BODY_STATIC org.lwjgl.stb.STBImageWrite nstbi_write_force_png_filter()J -> mcport.lwjgl.StbNatives pngForceFilter
+BODY_STATIC org.lwjgl.stb.STBImageWrite nstbi_zlib_compress()J -> mcport.lwjgl.StbNatives zlibCompress
+BODY_STATIC org.lwjgl.stb.STBImageWrite nstbi_write_tga_with_rle()J -> mcport.lwjgl.StbNatives tgaWithRle
+BODY_STATIC org.lwjgl.stb.STBImageWrite nstbi_write_png_to_func(JJIIIJI)I -> mcport.lwjgl.StbNatives writePng
+ZERO_NATIVES org.lwjgl.stb.LibSTB
+# libffi: callback descriptors only (the browser bridge needs no CIFs); Vulkan memory allocator and Tracy are
+# never loaded in the browser. LibFFI.<clinit> wraps the ffi_type_* natives in FFIType objects, but those
+# natives return 0 here, and FFIType(0) is a checked null pointer. The callback path (LwjglPatches.upcallCreate
+# + apiCreateCIF) ignores the CIF and FFI types entirely, so leave the type table empty instead of building it.
+ZERO_NATIVES org.lwjgl.system.libffi.LibFFI
+BODY_STATIC org.lwjgl.system.libffi.LibFFI <clinit>()V -> mcport.lwjgl.LwjglPatches noop
+ZERO_NATIVES org.lwjgl.util.vma.Vma
+ZERO_NATIVES org.lwjgl.util.vma.LibVma
+ZERO_NATIVES com.mojang.jtracy.TracyBindings
+ZERO_NATIVES org.lwjgl.system.jni.JNINativeInterface
+
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getShortBE(Ljava/nio/ByteBuffer;I)S -> mcport.rt.patch.NettyVarHandlePatches getShortBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setShortBE(Ljava/nio/ByteBuffer;II)V -> mcport.rt.patch.NettyVarHandlePatches setShortBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getShortLE(Ljava/nio/ByteBuffer;I)S -> mcport.rt.patch.NettyVarHandlePatches getShortLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setShortLE(Ljava/nio/ByteBuffer;II)V -> mcport.rt.patch.NettyVarHandlePatches setShortLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getShortBE([BI)S -> mcport.rt.patch.NettyVarHandlePatches getShortBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setShortBE([BII)V -> mcport.rt.patch.NettyVarHandlePatches setShortBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getShortLE([BI)S -> mcport.rt.patch.NettyVarHandlePatches getShortLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setShortLE([BII)V -> mcport.rt.patch.NettyVarHandlePatches setShortLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getIntBE(Ljava/nio/ByteBuffer;I)I -> mcport.rt.patch.NettyVarHandlePatches getIntBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setIntBE(Ljava/nio/ByteBuffer;II)V -> mcport.rt.patch.NettyVarHandlePatches setIntBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getIntLE(Ljava/nio/ByteBuffer;I)I -> mcport.rt.patch.NettyVarHandlePatches getIntLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setIntLE(Ljava/nio/ByteBuffer;II)V -> mcport.rt.patch.NettyVarHandlePatches setIntLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getIntBE([BI)I -> mcport.rt.patch.NettyVarHandlePatches getIntBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setIntBE([BII)V -> mcport.rt.patch.NettyVarHandlePatches setIntBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getIntLE([BI)I -> mcport.rt.patch.NettyVarHandlePatches getIntLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setIntLE([BII)V -> mcport.rt.patch.NettyVarHandlePatches setIntLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getLongBE(Ljava/nio/ByteBuffer;I)J -> mcport.rt.patch.NettyVarHandlePatches getLongBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setLongBE(Ljava/nio/ByteBuffer;IJ)V -> mcport.rt.patch.NettyVarHandlePatches setLongBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getLongLE(Ljava/nio/ByteBuffer;I)J -> mcport.rt.patch.NettyVarHandlePatches getLongLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setLongLE(Ljava/nio/ByteBuffer;IJ)V -> mcport.rt.patch.NettyVarHandlePatches setLongLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getLongBE([BI)J -> mcport.rt.patch.NettyVarHandlePatches getLongBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setLongBE([BIJ)V -> mcport.rt.patch.NettyVarHandlePatches setLongBE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess getLongLE([BI)J -> mcport.rt.patch.NettyVarHandlePatches getLongLE
+BODY_STATIC io.netty.buffer.VarHandleByteBufferAccess setLongLE([BIJ)V -> mcport.rt.patch.NettyVarHandlePatches setLongLE
+
+# --- Java Locale methods absent from TeaVM 0.16 --------------------------------------------
+REDIRECT java.util.Locale getExtensionKeys()Ljava/util/Set; -> mcport.rt.patch.LocalePatches getExtensionKeys
+REDIRECT java.util.Locale getISO3Country()Ljava/lang/String; -> mcport.rt.patch.LocalePatches getISO3Country
+
+# --- Java 25 Reader convenience method absent from TeaVM 0.16 ----------------------------
+REDIRECT java.io.Reader readAllAsString()Ljava/lang/String; -> mcport.rt.patch.ReaderPatches readAllAsString
+REDIRECT java.io.Reader transferTo(Ljava/io/Writer;)J -> mcport.rt.patch.ReaderPatches transferTo
+REDIRECT java.io.BufferedReader transferTo(Ljava/io/Writer;)J -> mcport.rt.patch.ReaderPatches transferTo
+
+REDIRECT java.util.zip.Inflater setInput(Ljava/nio/ByteBuffer;)V -> mcport.rt.patch.InflaterPatches setInput
+REDIRECT java.util.zip.Inflater inflate(Ljava/nio/ByteBuffer;)I -> mcport.rt.patch.InflaterPatches inflate
+
+BODY_STATIC io.netty.util.internal.PlatformDependent0 equals([BI[BII)Z -> mcport.rt.patch.NettyUnsafePatches equals
+BODY_STATIC io.netty.util.internal.PlatformDependent0 hashCodeAscii([BII)I -> mcport.rt.patch.NettyUnsafePatches hashCodeAscii
+BODY_STATIC io.netty.util.internal.PlatformDependent0 getShort([BI)S -> mcport.rt.patch.NettyUnsafePatches getShort
+BODY_STATIC io.netty.util.internal.PlatformDependent0 putShort([BIS)V -> mcport.rt.patch.NettyUnsafePatches putShort
+BODY_STATIC io.netty.util.internal.PlatformDependent0 getShort(J)S -> mcport.rt.patch.NettyUnsafePatches getShort
+BODY_STATIC io.netty.util.internal.PlatformDependent0 putShort(JS)V -> mcport.rt.patch.NettyUnsafePatches putShort
+
+# --- Netty raw native-memory operations -> the browser's bounds-checked ArrayBuffer heap --------
+BODY_STATIC io.netty.util.internal.PlatformDependent0 copyMemory(JJJ)V -> mcport.rt.patch.NettyBrowserPatches copyMemory
+BODY_STATIC io.netty.util.internal.PlatformDependent0 copyMemoryWithSafePointPolling(JJJ)V -> mcport.rt.patch.NettyBrowserPatches copyMemoryWithSafePointPolling
+BODY_STATIC io.netty.util.internal.PlatformDependent0 allocateDirectNoCleaner(I)Ljava/nio/ByteBuffer; -> mcport.rt.patch.NettyBrowserPatches allocateDirectNoCleaner
+BODY_STATIC io.netty.util.internal.PlatformDependent0 reallocateDirectNoCleaner(Ljava/nio/ByteBuffer;I)Ljava/nio/ByteBuffer; -> mcport.rt.patch.NettyBrowserPatches reallocateDirectNoCleaner
+BODY_STATIC io.netty.util.internal.PlatformDependent0 alignSlice(Ljava/nio/ByteBuffer;I)Ljava/nio/ByteBuffer; -> mcport.rt.patch.NettyBrowserPatches alignSlice
+BODY_STATIC io.netty.util.internal.PlatformDependent0 offsetSlice(Ljava/nio/ByteBuffer;II)Ljava/nio/ByteBuffer; -> mcport.rt.patch.NettyBrowserPatches offsetSlice
+BODY_STATIC io.netty.util.internal.PlatformDependent0 absolutePut(Ljava/nio/ByteBuffer;ILjava/nio/ByteBuffer;II)Ljava/nio/ByteBuffer; -> mcport.rt.patch.NettyBrowserPatches absolutePut
+BODY_STATIC io.netty.util.internal.PlatformDependent0 absolutePut(Ljava/nio/ByteBuffer;I[BII)Ljava/nio/ByteBuffer; -> mcport.rt.patch.NettyBrowserPatches absolutePut
+BODY_STATIC io.netty.util.internal.PlatformDependent0 allocateUninitializedArray(I)[B -> mcport.rt.patch.NettyBrowserPatches allocateUninitializedArray
+
+# The corresponding methods above are real browser implementations, so advertise them as available.
+BODY_STATIC io.netty.util.internal.PlatformDependent0 hasDirectBufferNoCleanerConstructor()Z -> mcport.rt.patch.NettyBrowserPatches available
+BODY_STATIC io.netty.util.internal.PlatformDependent0 hasAlignSliceMethod()Z -> mcport.rt.patch.NettyBrowserPatches available
+BODY_STATIC io.netty.util.internal.PlatformDependent0 hasOffsetSliceMethod()Z -> mcport.rt.patch.NettyBrowserPatches available
+BODY_STATIC io.netty.util.internal.PlatformDependent0 hasAbsolutePutBufferMethod()Z -> mcport.rt.patch.NettyBrowserPatches available
+BODY_STATIC io.netty.util.internal.PlatformDependent0 hasAbsolutePutArrayMethod()Z -> mcport.rt.patch.NettyBrowserPatches available
+BODY_STATIC io.netty.util.internal.PlatformDependent0 hasAllocateArrayMethod()Z -> mcport.rt.patch.NettyBrowserPatches available
+
+# --- Netty network initialization: browser has no host NetworkInterface enumeration --------
+# Preserve usable loopback address constants without probing host adapters or enumerations.
+BODY_STATIC io.netty.util.NetUtilInitializations networkInterfaces()Ljava/util/Collection; -> io.netty.util.NetUtilInitializationsBrowser networkInterfaces
+BODY_STATIC io.netty.util.NetUtilInitializations createLocalhost4()Ljava/net/Inet4Address; -> io.netty.util.NetUtilInitializationsBrowser createLocalhost4
+BODY_STATIC io.netty.util.NetUtilInitializations createLocalhost6()Ljava/net/Inet6Address; -> io.netty.util.NetUtilInitializationsBrowser createLocalhost6
+BODY_STATIC io.netty.util.NetUtilInitializations determineLoopback(Ljava/util/Collection;Ljava/net/Inet4Address;Ljava/net/Inet6Address;)Lio/netty/util/NetUtilInitializations$NetworkIfaceAndInetAddress; -> io.netty.util.NetUtilInitializationsBrowser determineLoopback
+
+# --- Startup stage tracing (diagnostics only) -----------------------------------------------
+# TRACE rules insert mcport.rt.patch.Trace.mark(id) at method entry. Each call prints
+# "[JAVA_TRACE] port-stage-<id>" in the browser console/window.__mc, so a crash or hang between
+# two vanilla log lines can be attributed to exactly one client stage. They change no game state.
+# The ids are stable: keep the number when editing, append new stages at the end.
+TRACE 100 net.minecraft.client.Minecraft <init>(Lnet/minecraft/client/main/GameConfig;)V
+TRACE 101 com.mojang.blaze3d.systems.RenderSystem getBackendDescription()Ljava/lang/String;
+TRACE 102 com.mojang.blaze3d.systems.RenderSystem initBackendSystem()Lnet/minecraft/util/TimeSource$NanoTimeSource;
+TRACE 103 com.mojang.blaze3d.platform.SdlDebug init()V
+TRACE 104 net.minecraft.util.Util setTimeSource(Lnet/minecraft/util/TimeSource$NanoTimeSource;)V
+TRACE 105 com.mojang.blaze3d.platform.MonitorManager <init>()V
+TRACE 106 com.mojang.blaze3d.platform.Monitor tryCreate(I)Lcom/mojang/blaze3d/platform/Monitor;
+TRACE 107 com.mojang.blaze3d.platform.Monitor queryMonitorName(I)Ljava/lang/String;
+TRACE 108 com.mojang.blaze3d.platform.VideoMode <init>(Lorg/lwjgl/sdl/SDL_DisplayMode;)V
+TRACE 109 net.minecraft.client.PreferredGraphicsApi getBackendsToTry()[Lcom/mojang/renderpearl/api/device/GpuBackend;
+TRACE 110 com.mojang.renderpearl.backend.vulkan.VulkanBackend checkBackendAvailable()Lcom/mojang/renderpearl/api/device/BackendCreationException;
+TRACE 111 net.minecraft.client.Minecraft createTitle()Ljava/lang/String;
+TRACE 112 mcport.gpu.webgpu.WebGpuBackend loadLibrary()V
+TRACE 113 mcport.gpu.webgpu.WebGpuBackend createDevice(Lcom/mojang/renderpearl/api/device/GpuDebugOptions;)Lcom/mojang/renderpearl/api/device/GpuDevice;
+TRACE 114 mcport.gpu.webgpu.WebGpuDevice <init>()V
+TRACE 115 com.mojang.renderpearl.frontend.FrontendGpuDevice <init>(Lcom/mojang/renderpearl/backend/api/GpuDeviceBackend;)V
+TRACE 116 com.mojang.blaze3d.systems.RenderSystem initRenderer(Lcom/mojang/renderpearl/api/device/GpuDevice;)V
+TRACE 117 net.minecraft.client.Minecraft run()V
+TRACE 118 org.lwjgl.system.MemoryStack stackPush()Lorg/lwjgl/system/MemoryStack;
+TRACE 119 net.minecraft.client.gui.screens.TitleScreen <init>()V
+TRACE 120 net.minecraft.client.gui.screens.TitleScreen init()V
+# BODY replacement targets are static helpers; PortTransformer emits INVOKESTATIC and prepends the instance receiver.
+BODY com.mojang.blaze3d.platform.Window setIcon(Lnet/minecraft/server/packs/PackMetadataResources;Lcom/mojang/blaze3d/platform/IconSet;)V -> mcport.rt.WindowBrowser noopIcon
+
+# --- Browser audio is unavailable: skip sounds.json preparation (TeaVM illegal-cast trap) ---
+# Keep this rule active in both browser and TeaVM probe builds.
+BODY net.minecraft.client.sounds.SoundManager prepare(Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)Lnet/minecraft/client/sounds/SoundManager$Preparations; -> net.minecraft.client.sounds.BrowserSoundManagerPatches prepare
+
+# --- Browser audio is unavailable: skip the SoundManager/SoundEngine OpenAL paths ---------------
+# Sound preparation is already replaced above; apply/loadLibrary/reload avoid binding OpenAL at runtime.
+BODY net.minecraft.client.sounds.SoundManager apply(Lnet/minecraft/client/sounds/SoundManager$Preparations;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)V -> net.minecraft.client.sounds.BrowserSoundManagerPatches apply
+BODY net.minecraft.client.sounds.SoundEngine loadLibrary()V -> net.minecraft.client.sounds.BrowserSoundManagerPatches loadLibrary
+BODY net.minecraft.client.sounds.SoundEngine reload()V -> net.minecraft.client.sounds.BrowserSoundManagerPatches reload
+
+# --- Native entry points that are unreachable in the browser ----------------------------------
+# These classes may still be reached by TeaVM dependency analysis; zeroing their native
+# bodies avoids "Method is not annotated with @Import" severe errors during Wasm GC compilation.
 ZERO_NATIVES org.lwjgl.system.MemoryAccessJNI
 ZERO_NATIVES org.lwjgl.system.MemoryUtil
-ZERO_NATIVES com.mojang.jtracy.TracyBindings
-
-# These LWJGL native-library / libffi entry points are reachable through platform
-# discovery, but no native shared libraries or JNI callbacks exist in the browser WASM.
 ZERO_NATIVES org.lwjgl.system.freebsd.DynamicLinkLoader
 ZERO_NATIVES org.lwjgl.system.linux.DynamicLinkLoader
 ZERO_NATIVES org.lwjgl.system.macosx.DynamicLinkLoader
 ZERO_NATIVES org.lwjgl.system.macosx.CoreFoundation
 ZERO_NATIVES org.lwjgl.system.windows.WinBase
-ZERO_NATIVES org.lwjgl.system.jni.JNINativeInterface
-ZERO_NATIVES org.lwjgl.system.libffi.LibFFI
 ZERO_NATIVES org.lwjgl.system.SharedLibraryUtil
 ZERO_NATIVES org.lwjgl.system.libffi.FFIClosure
 ZERO_NATIVES org.lwjgl.system.Upcalls
 ZERO_NATIVES org.lwjgl.system.libc.LibCStdlib
-
-# LWJGL (abbreviated critical set)
-BODY_STATIC org.lwjgl.system.MemoryUtil createBackend()Lorg/lwjgl/system/MemoryBackend; -> mcport.lwjgl.BrowserMemoryBackend create
-BODY_STATIC org.lwjgl.system.Library initialize()V -> mcport.lwjgl.LwjglPatches libraryInitialize
-BODY_STATIC org.lwjgl.system.Library <clinit>()V -> mcport.lwjgl.LwjglPatches noop
-BODY_STATIC org.lwjgl.system.Platform get()Lorg/lwjgl/system/Platform; -> mcport.lwjgl.LwjglPatches platform
-REDIRECT_STATIC java.nio.ByteBuffer allocateDirect(I)Ljava/nio/ByteBuffer; -> mcport.lwjgl.BrowserAllocator allocateDirect
-
-# Auth offline
-REDIRECT_STATIC com.mojang.authlib.services.MinecraftServicesDiscoveryService create(Ljava/net/Proxy;)Lcom/mojang/authlib/services/MinecraftServicesDiscoveryService; -> mcport.rt.patch.AuthPatches createOffline
-REDIRECT_STATIC com.mojang.authlib.services.MinecraftServicesDiscoveryService create(Ljava/net/Proxy;Z)Lcom/mojang/authlib/services/MinecraftServicesDiscoveryService; -> mcport.rt.patch.AuthPatches createOffline
-REDIRECT_STATIC com.mojang.authlib.services.MinecraftServicesDiscoveryService create(Ljava/net/Proxy;ZLcom/mojang/authlib/Environment;)Lcom/mojang/authlib/services/MinecraftServicesDiscoveryService; -> mcport.rt.patch.AuthPatches createOfflineWithEnv
-BODY com.mojang.authlib.services.MinecraftServicesDiscoveryService createUserApiService(Ljava/lang/String;)Lcom/mojang/authlib/minecraft/UserApiService; -> mcport.rt.patch.AuthPatches createOfflineUserApiService
-BODY com.mojang.authlib.services.MinecraftServicesUserApiService fetchProperties()Lcom/mojang/authlib/minecraft/UserApiService$UserProperties; -> mcport.rt.patch.AuthPatches offlineProperties
-
-BODY_STATIC com.mojang.blaze3d.platform.NativeLibrariesBootstrap loadLibraries()V -> mcport.rt.patch.ClientPatches loadNativeLibraries
-BODY_STATIC com.mojang.blaze3d.platform.NativeLibrariesBootstrap isVulkanLoaderAvailable()Z -> mcport.rt.patch.ClientPatches vulkanLoaderAvailable
-
-# --- FileFixerUpper: browser has neither atomic moves nor hard links -------------------------------
-# These compile-time BODY replacements remove the original Path probing code, which TeaVM lowers to
-# an invalid br_on_cast in Wasm GC (Chrome rejects the whole module), and preserve fail-closed
-# capability results for the legacy world-upgrade path.
-BODY_STATIC net.minecraft.util.filefix.FileFixerUpper detectFileSystemCapabilities(Ljava/nio/file/Path;)Lnet/minecraft/util/filefix/FileSystemCapabilities; -> mcport.rt.patch.FileFixPatches detectFileSystemCapabilities
-BODY_STATIC net.minecraft.util.filefix.FileFixerUpper supportsAtomicMove(Ljava/nio/file/Path;)Z -> mcport.rt.patch.FileFixPatches supportsAtomicMove
-BODY_STATIC net.minecraft.util.filefix.FileFixerUpper supportsHardLinks(Ljava/nio/file/Path;)Z -> mcport.rt.patch.FileFixPatches supportsHardLinks
-
-# --- CRITICAL: Browser audio bypass so resource reload can finish and TitleScreen can construct ---
-BODY net.minecraft.client.sounds.SoundManager prepare(Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)Lnet/minecraft/client/sounds/SoundManager$Preparations; -> net.minecraft.client.sounds.BrowserSoundManagerPatches prepare
-BODY net.minecraft.client.sounds.SoundManager apply(Lnet/minecraft/client/sounds/SoundManager$Preparations;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)V -> net.minecraft.client.sounds.BrowserSoundManagerPatches apply
-BODY net.minecraft.client.sounds.SoundEngine loadLibrary()V -> net.minecraft.client.sounds.BrowserSoundManagerPatches loadLibrary
-BODY net.minecraft.client.sounds.SoundEngine reload()V -> net.minecraft.client.sounds.BrowserSoundManagerPatches reload
