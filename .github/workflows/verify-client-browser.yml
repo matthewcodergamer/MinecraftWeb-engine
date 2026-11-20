@@ -76,7 +76,7 @@ jobs:
           PORT_HEAP: 12g
           PORT_STACK: 256m
           PORT_JAVA_OPTS: "-XX:+UseSerialGC"
-          PORT_OPT: ADVANCED
+          PORT_OPT: SIMPLE
           PORT_LENIENT: "true"
         run: bash scripts/build.sh mcport.ClientMain wasm
 
