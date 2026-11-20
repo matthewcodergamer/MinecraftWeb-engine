@@ -22,7 +22,16 @@
 <script>
 (function(){
   var ok=false;
-  try { var p=Number(sessionStorage.getItem('mw_play_pass')); ok=p>0 && Date.now()-p<21600000; } catch(e){}
+  try {
+    var p=Number(sessionStorage.getItem('mw_play_pass'));
+    // Explicit direct-play links are supported on approved hosts. Seed the
+    // same short-lived pass used by the launcher before the game bootstraps.
+    if(new URLSearchParams(location.search).get('play')==='1') {
+      p=Date.now();
+      sessionStorage.setItem('mw_play_pass', String(p));
+    }
+    ok=p>0 && Date.now()-p<21600000;
+  } catch(e){}
   if(!ok){ document.documentElement.style.visibility='hidden'; location.replace('/?from=game'); }
 })();
 </script>
