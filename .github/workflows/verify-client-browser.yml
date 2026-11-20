@@ -59,17 +59,42 @@ jobs:
           MC_VERSION: "26.3"
         run: python3 scripts/fetch_minecraft.py --version "$MC_VERSION" --dest "$MC_DIR"
 
+      - name: Fetch TeaVM toolchain
+        run: |
+          python3 scripts/fetch_deps.py \
+            org.teavm:teavm-tooling:0.16.0 \
+            org.teavm:teavm-classlib:0.16.0 \
+            org.teavm:teavm-jso-apis:0.16.0 \
+            org.teavm:teavm-jso-impl:0.16.0 \
+            org.teavm:teavm-platform:0.16.0
+
       - name: Build the actual Minecraft client entry point
         env:
           MC_DIR: ${{ runner.temp }}/minecraft
           MC_VERSION: "26.3"
           JDK: ${{ env.JAVA_HOME }}
-          PORT_HEAP: 16g
+          PORT_HEAP: 12g
           PORT_STACK: 256m
           PORT_JAVA_OPTS: "-XX:+UseSerialGC"
           PORT_OPT: ADVANCED
           PORT_LENIENT: "true"
         run: bash scripts/build.sh mcport.ClientMain wasm
+
+      - name: Install Binaryen 133 and try Wasm GC optimization
+        run: |
+          set -euo pipefail
+          archive=binaryen-version_133-x86_64-linux.tar.gz
+          base=https://github.com/WebAssembly/binaryen/releases/download/version_133
+          curl --fail --location --retry 5 "$base/$archive" -o "/tmp/$archive"
+          tar -xzf "/tmp/$archive" -C /tmp
+          BINARYEN_BIN="/tmp/binaryen-version_133/bin/wasm-opt"
+          test -x "$BINARYEN_BIN"
+          "$BINARYEN_BIN" --version || true
+          if "${BINARYEN_BIN}" --enable-gc build/web/clientmain.wasm -Oz --converge -o build/web/clientmain.optimized.wasm 2>/dev/null; then
+            mv -f build/web/clientmain.optimized.wasm build/web/clientmain.wasm || true
+          else
+            echo "Binaryen optimize skipped/failed; keeping original module"
+          fi
 
       - name: Stage client page and vanilla resources
         run: |
@@ -85,7 +110,6 @@ jobs:
       - name: Run real client singleplayer-to-Rust smoke test
         run: |
           set -euo pipefail
-          # Start a simple static server and drive Chrome via CDP
           python3 -m http.server 8765 --directory build/web &
           SERVER_PID=$!
           trap "kill $SERVER_PID" EXIT
