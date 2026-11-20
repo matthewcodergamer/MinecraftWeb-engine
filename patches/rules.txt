@@ -109,6 +109,14 @@ BODY com.mojang.authlib.services.MinecraftServicesUserApiService fetchProperties
 BODY_STATIC com.mojang.blaze3d.platform.NativeLibrariesBootstrap loadLibraries()V -> mcport.rt.patch.ClientPatches loadNativeLibraries
 BODY_STATIC com.mojang.blaze3d.platform.NativeLibrariesBootstrap isVulkanLoaderAvailable()Z -> mcport.rt.patch.ClientPatches vulkanLoaderAvailable
 
+# --- FileFixerUpper: browser has neither atomic moves nor hard links -------------------------------
+# These compile-time BODY replacements remove the original Path probing code, which TeaVM lowers to
+# an invalid br_on_cast in Wasm GC (Chrome rejects the whole module), and preserve fail-closed
+# capability results for the legacy world-upgrade path.
+BODY_STATIC net.minecraft.util.filefix.FileFixerUpper detectFileSystemCapabilities(Ljava/nio/file/Path;)Lnet/minecraft/util/filefix/FileSystemCapabilities; -> mcport.rt.patch.FileFixPatches detectFileSystemCapabilities
+BODY_STATIC net.minecraft.util.filefix.FileFixerUpper supportsAtomicMove(Ljava/nio/file/Path;)Z -> mcport.rt.patch.FileFixPatches supportsAtomicMove
+BODY_STATIC net.minecraft.util.filefix.FileFixerUpper supportsHardLinks(Ljava/nio/file/Path;)Z -> mcport.rt.patch.FileFixPatches supportsHardLinks
+
 # --- CRITICAL: Browser audio bypass so resource reload can finish and TitleScreen can construct ---
 BODY net.minecraft.client.sounds.SoundManager prepare(Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)Lnet/minecraft/client/sounds/SoundManager$Preparations; -> net.minecraft.client.sounds.BrowserSoundManagerPatches prepare
 BODY net.minecraft.client.sounds.SoundManager apply(Lnet/minecraft/client/sounds/SoundManager$Preparations;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)V -> net.minecraft.client.sounds.BrowserSoundManagerPatches apply
