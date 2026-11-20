@@ -1,0 +1,77 @@
+name: Auto-repair failed Minecraft builds
+
+on:
+  workflow_run:
+    workflows:
+      - Verify real Minecraft client in browser
+      - Probe TeaVM WebAssembly GC client build
+    types: [completed]
+    branches:
+      - feat/client-headless-webgpu-boot
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: read
+  id-token: write
+
+concurrency:
+  group: minecraft-auto-repair-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out the failed build's branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+
+      - name: Run Claude repair agent
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          additional_permissions: |
+            actions: read
+          prompt: |
+            You are the autonomous repair engineer for this Minecraft 26.3 browser port.
+
+            A trusted push build failed.
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.event.workflow_run.head_branch }}
+            Failed workflow: ${{ github.event.workflow_run.name }}
+            Failed run ID: ${{ github.event.workflow_run.id }}
+            Failed run URL: ${{ github.event.workflow_run.html_url }}
+            Failed commit: ${{ github.event.workflow_run.head_sha }}
+
+            Work only on the checked-out branch. Inspect the exact failed run and job logs
+            using the GitHub Actions tools available to you. Reproduce the failure when
+            practical, identify its root cause, and implement the smallest safe fix.
+            Run relevant local checks and tests. Inspect the diff for accidental changes.
+            Commit the fix to this branch with a descriptive commit message so the normal
+            push-triggered build workflows run again.
+
+            Do not make cosmetic or speculative changes. Do not weaken browser assertions,
+            remove tests, fake successful boot stages, or fabricate screenshots. Preserve
+            the requirement that Chrome reaches window.__mc.stage === 'complete' and
+            captures a valid screenshot of the actual Minecraft main menu. If the failure
+            is external/transient, explain that and do not make a code change just to
+            force a green check. If credentials, secrets, or a major architectural choice
+            are needed, stop and report exactly what is required.
+          claude_args: |
+            --max-turns 12
+            --allowedTools "Bash(git:*),Bash(gh:*),Bash(python3:*),Bash(bash:*),Bash(cargo:*),Bash(java:*),Read,Edit,Glob,Grep"
+
+      - name: Report when the repair agent could not complete
+        if: failure()
+        run: |
+          echo "::error::The automatic repair agent did not complete. Inspect this run and the original failed build."
