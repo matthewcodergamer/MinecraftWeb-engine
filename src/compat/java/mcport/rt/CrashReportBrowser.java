@@ -16,7 +16,12 @@ public final class CrashReportBrowser {
         // JavaScript exception keeps the real Wasm function names. Log them before the report is
         // written: it is the only way to locate a crash inside the optimised client.
         if (crash != null) {
-            BrowserRuntime.log("[MinecraftWeb] crash: " + BrowserRuntime.describe(crash.getException()));
+            String description = BrowserRuntime.describe(crash.getException());
+            BrowserRuntime.log("[MinecraftWeb] crash: " + description);
+            // Keep the real cause visible to the page. System.exit() is reported as a
+            // generic "Minecraft exited (-1)" by the host bridge, which used to hide
+            // the actual startup failure (for example an unavailable graphics backend).
+            BrowserRuntime.reportCrash(crash.getTitle() + ": " + description);
         }
         int actualExitCode = Minecraft.saveReport(gameDirectory, crash, exitCode);
         if (minecraft != null) {

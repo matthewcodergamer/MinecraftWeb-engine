@@ -27,6 +27,15 @@ public final class BrowserRuntime {
     @JSBody(params = "text", script = "console.log(text);")
     public static native void log(String text);
 
+    /** Stores the real crash cause where the host page can show it after System.exit(). */
+    @JSBody(params = "text", script = ""
+            + "window.__mc = window.__mc || {}; window.__mc['crash-report'] = text;")
+    public static native void reportCrash(String text);
+
+    /** The crash cause recorded before System.exit(), or null when the client stopped normally. */
+    @JSBody(script = "return (window.__mc && window.__mc['crash-report']) ? String(window.__mc['crash-report']) : null;")
+    public static native String crashReport();
+
     /** Captures the live JS/Wasm call chain for deadlock diagnostics (the Java frames are synthetic). */
     @JSBody(script = "try { return String(new Error().stack || ''); } catch (e) { return ''; }")
     public static native String captureStack();

@@ -54,7 +54,10 @@ public final class ClientMain {
         } catch (Throwable t) {
             BrowserRuntime.report("stage", "client-main-caught-throwable");
             BrowserRuntime.report("stage", "failed");
-            BrowserRuntime.report("error", BrowserRuntime.describe(t));
+            String crash = BrowserRuntime.crashReport();
+            BrowserRuntime.report("error", crash != null && !crash.isEmpty()
+                    ? crash
+                    : BrowserRuntime.describe(t));
         }
     }
 
