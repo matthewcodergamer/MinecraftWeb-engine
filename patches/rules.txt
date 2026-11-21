@@ -346,6 +346,38 @@ TRACE 140 net.minecraft.util.thread.BlockableEventLoop runAllTasks()V
 TRACE 141 net.minecraft.client.Minecraft tick()V
 TRACE 142 net.minecraft.client.gui.Gui tick()V
 TRACE 143 net.minecraft.client.gui.screens.LoadingOverlay tick()V
+# Font pipeline. The Minecraft constructor calls createFont/createFontFilterFishy; both are
+# one-line wrappers, so their timestamps prove the constructor got past font creation. The
+# prepare/apply ids then separate "still loading font providers" from "font apply running".
+TRACE 144 net.minecraft.client.gui.font.FontManager createFont()Lnet/minecraft/client/gui/Font;
+TRACE 145 net.minecraft.client.gui.font.FontManager createFontFilterFishy()Lnet/minecraft/client/gui/Font;
+TRACE 146 net.minecraft.client.gui.font.FontManager prepare(Lnet/minecraft/server/packs/resources/ResourceManager;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture;
+TRACE 147 net.minecraft.client.gui.font.FontManager safeLoad(Lnet/minecraft/client/gui/font/FontManager$BuilderId;Lnet/minecraft/client/gui/font/providers/GlyphProviderDefinition$Loader;Lnet/minecraft/server/packs/resources/ResourceManager;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture;
+TRACE 148 net.minecraft.client.gui.font.FontManager lambda$safeLoad$0(Lnet/minecraft/client/gui/font/providers/GlyphProviderDefinition$Loader;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/client/gui/font/FontManager$BuilderId;)Ljava/util/Optional;
+TRACE 149 net.minecraft.client.gui.font.FontManager finalizeProviderLoading(Ljava/util/List;Lcom/mojang/blaze3d/font/GlyphProvider$Conditional;)V
+TRACE 150 net.minecraft.client.gui.font.FontManager resolveProviders(Ljava/util/List;)Ljava/util/Map;
+TRACE 151 net.minecraft.client.gui.font.FontManager lambda$prepare$8(Ljava/util/List;Ljava/util/Map;Ljava/lang/Void;)Lnet/minecraft/client/gui/font/FontManager$Preparation;
+TRACE 152 net.minecraft.client.gui.font.FontManager lambda$prepare$6(Ljava/util/List;Lcom/mojang/blaze3d/font/GlyphProvider$Conditional;)V
+TRACE 153 net.minecraft.client.gui.font.FontManager lambda$reload$0(Lnet/minecraft/client/gui/font/FontManager$Preparation;)V
+TRACE 154 net.minecraft.client.gui.font.FontManager createFontSet(Lnet/minecraft/resources/Identifier;Ljava/util/List;Ljava/util/Set;)Lnet/minecraft/client/gui/font/FontSet;
+TRACE 155 net.minecraft.client.gui.font.FontSet reload(Ljava/util/List;Ljava/util/Set;)V
+TRACE 156 net.minecraft.client.gui.font.FontSet reload(Ljava/util/Set;)V
+TRACE 157 net.minecraft.client.gui.font.FontSet selectProviders(Ljava/util/List;Ljava/util/Set;)Ljava/util/List;
+TRACE 158 net.minecraft.client.gui.font.FontSet resetTextures()V
+TRACE 159 net.minecraft.client.gui.font.FontManager lambda$apply$1(Lnet/minecraft/resources/Identifier;Lnet/minecraft/client/renderer/texture/TextureAtlas;)V
+# Model/atlas pipeline. The atlas uploads happen in AtlasManager.apply; the next listener is
+# font, then models. These ids show which prepare future is the long pole if apply never starts.
+TRACE 160 net.minecraft.client.resources.model.ModelManager reload(Lnet/minecraft/server/packs/resources/PreparableReloadListener$SharedState;Ljava/util/concurrent/Executor;Lnet/minecraft/server/packs/resources/PreparableReloadListener$PreparationBarrier;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture;
+TRACE 161 net.minecraft.client.resources.model.ModelManager loadBlockModels(Lnet/minecraft/server/packs/resources/ResourceManager;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture;
+TRACE 162 net.minecraft.client.resources.model.BlockStateModelLoader loadBlockStates(Lnet/minecraft/server/packs/resources/ResourceManager;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture;
+TRACE 163 net.minecraft.client.resources.model.ModelManager discoverModelDependencies(Ljava/util/Map;Lnet/minecraft/client/resources/model/BlockStateModelLoader$LoadedModels;Lnet/minecraft/client/resources/model/ClientItemInfoLoader$LoadedClientInfos;)Lnet/minecraft/client/resources/model/ModelManager$ResolvedModels;
+TRACE 164 net.minecraft.client.resources.model.ModelManager buildModelGroups(Lnet/minecraft/client/color/block/BlockColors;Lnet/minecraft/client/resources/model/BlockStateModelLoader$LoadedModels;)Lit/unimi/dsi/fastutil/objects/Object2IntMap;
+TRACE 165 net.minecraft.client.resources.model.ModelManager loadModels(Lnet/minecraft/client/renderer/texture/SpriteLoader$Preparations;Lnet/minecraft/client/renderer/texture/SpriteLoader$Preparations;Lnet/minecraft/client/resources/model/ModelBakery;Lnet/minecraft/client/renderer/block/LoadedBlockModels;Lit/unimi/dsi/fastutil/objects/Object2IntMap;Lnet/minecraft/client/model/geom/EntityModelSet;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture;
+TRACE 166 net.minecraft.client.resources.model.ModelBakery bakeModels(Lnet/minecraft/client/resources/model/sprite/MaterialBaker;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture;
+TRACE 167 net.minecraft.client.resources.model.sprite.AtlasManager reload(Lnet/minecraft/server/packs/resources/PreparableReloadListener$SharedState;Ljava/util/concurrent/Executor;Lnet/minecraft/server/packs/resources/PreparableReloadListener$PreparationBarrier;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture;
+TRACE 168 net.minecraft.client.resources.model.sprite.AtlasManager lambda$reload$0(Lnet/minecraft/server/packs/resources/ResourceManager;Ljava/util/concurrent/Executor;Lnet/minecraft/client/resources/model/sprite/AtlasManager$PendingStitch;)V
+TRACE 169 net.minecraft.client.renderer.texture.TextureManager reload(Lnet/minecraft/server/packs/resources/PreparableReloadListener$SharedState;Ljava/util/concurrent/Executor;Lnet/minecraft/server/packs/resources/PreparableReloadListener$PreparationBarrier;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture;
+TRACE 170 net.minecraft.client.renderer.texture.SpriteLoader loadAndStitch(Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/resources/Identifier;ILjava/util/concurrent/Executor;Ljava/util/Set;)Ljava/util/concurrent/CompletableFuture;
 # BODY replacement targets are static helpers; PortTransformer emits INVOKESTATIC and prepends the instance receiver.
 BODY com.mojang.blaze3d.platform.Window setIcon(Lnet/minecraft/server/packs/PackMetadataResources;Lcom/mojang/blaze3d/platform/IconSet;)V -> mcport.rt.WindowBrowser noopIcon
 
