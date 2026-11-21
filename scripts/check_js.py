@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
 """Finds classes the generated JS uses as superclass/interface but never defines (they break script load)."""
+import os
 import re
 import sys
 
-s = open(sys.argv[1]).read()
+# The WebAssembly build has no clientmain.js; this scan only applies to the
+# JavaScript backend. Default to the generated bundle and skip cleanly when the
+# workflow is checking a Wasm build.
+path = sys.argv[1] if len(sys.argv) > 1 else "build/web/clientmain.js"
+if not os.path.isfile(path):
+    print(f"no JavaScript client bundle at {path}; skipping supertype scan")
+    sys.exit(0)
+
+s = open(path).read()
 declared = set(re.findall(r'(?:^|[\s,;(])([A-Za-z_$][\w$]*)\s*=\s*', s, re.M)) | set(re.findall(r'function\s+([A-Za-z_$][\w$]*)\s*\(', s))
 missing = set()
 for m in re.finditer(r'^\s*([\w$]+), "[^"]*", -?\d+, ([\w$]+), \[([^\]]*)\]', s, re.M):

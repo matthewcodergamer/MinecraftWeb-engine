@@ -1396,6 +1396,7 @@
       status('Failed to start');
       errorBox.style.display = 'block';
       const message = String((error && error.message) || error || 'Unknown error');
+      window.__mc = Object.assign(window.__mc || {}, { stage: 'failed', error: message });
       errorBox.textContent = message + (detail ? '\n\n' + detail : '');
       errorActions.innerHTML = '';
       const retry = document.createElement('button');
@@ -1480,6 +1481,7 @@
       if (now < state.minUntil || now < state.firstChunkAt + 150) return;
       state.done = true;
       window.__mcLoadingFinished = true;
+      window.__mc = Object.assign(window.__mc || {}, { stage: 'complete' });
       progress();
       loading.classList.add('done');
       setTimeout(() => {
