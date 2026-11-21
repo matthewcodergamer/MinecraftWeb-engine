@@ -397,6 +397,13 @@ BODY net.minecraft.client.sounds.SoundEngine reload()V -> net.minecraft.client.s
 # the client would wait on a narrator prompt forever. Browsers have no narrator.
 BODY net.minecraft.client.gui.Gui addInitialScreens(Ljava/util/List;)Z -> mcport.rt.patch.GuiPatches addInitialScreens
 
+# --- Browser has no Realms session: do not probe the Realms HTTPS API ------------------------
+# TitleScreen eagerly creates RealmsNotificationsScreen, whose RealmsAvailability future runs a
+# RealmsClient request through URL.openConnection(Proxy) -- an overload TeaVM does not implement.
+# The exceptional future is rethrown by getNow() in TitleScreen.tick/extractRenderState and
+# crashes the render thread. Report an unauthenticated Realms client without any network call.
+BODY_STATIC com.mojang.realmsclient.RealmsAvailability check()Ljava/util/concurrent/CompletableFuture; -> mcport.rt.patch.RealmsPatches check
+
 # --- Native entry points that are unreachable in the browser ----------------------------------
 # These classes may still be reached by TeaVM dependency analysis; zeroing their native
 # bodies avoids "Method is not annotated with @Import" severe errors during Wasm GC compilation.
