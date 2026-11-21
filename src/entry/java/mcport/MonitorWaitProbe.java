@@ -17,11 +17,19 @@ public final class MonitorWaitProbe {
     static final class Waiter implements Runnable {
         @Override
         public void run() {
+            int waitingFiberId = org.teavm.runtime.Fiber.currentId();
+            BrowserRuntime.report("waiter-fiber-before", String.valueOf(waitingFiberId));
             synchronized (LOCK) {
                 BrowserRuntime.report("waiter-holds", "ok");
                 try {
                     LOCK.wait(200);
                 } catch (InterruptedException ignored) {
+                }
+                int resumedFiberId = org.teavm.runtime.Fiber.currentId();
+                BrowserRuntime.report("waiter-fiber-after", String.valueOf(resumedFiberId));
+                if (waitingFiberId != resumedFiberId) {
+                    throw new IllegalStateException("Object.wait resumed on a different fiber: "
+                            + waitingFiberId + " -> " + resumedFiberId);
                 }
                 BrowserRuntime.report("waiter-back-from-wait", Thread.currentThread().getName());
                 BrowserRuntime.report("waiter-monitors",
