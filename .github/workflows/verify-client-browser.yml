@@ -76,7 +76,7 @@ jobs:
           PORT_HEAP: 12g
           PORT_STACK: 256m
           PORT_JAVA_OPTS: "-XX:+UseSerialGC"
-          PORT_OPT: SIMPLE
+          PORT_OPT: ADVANCED
           PORT_LENIENT: "true"
         run: bash scripts/build.sh mcport.ClientMain wasm
 
@@ -100,15 +100,24 @@ jobs:
           echo "Keeping original TeaVM output; no unverified Binaryen rewrite applied."
 
       - name: Stage client page and vanilla resources
+        env:
+          MC_DIR: ${{ runner.temp }}/minecraft
+          MC_VERSION: "26.3"
         run: |
+          set -euo pipefail
           mkdir -p build/web
-          cp -r web/* build/web/ 2>/dev/null || true
+          cp -r web/* build/web/
+          # Regenerate the Java classpath archive from this exact client and its
+          # declared ICU4J libraries. The checked-in web archive can predate ICU
+          # timezone bundles, causing UResourceBundle to null-deref at startup.
+          python3 scripts/pack_resources.py --mc-dir "$MC_DIR" --version "$MC_VERSION" --jar-only --out build/web/client-resources.bin
+          test -s build/web/client-resources.bin
 
       - name: Build Rust WebGPU Body
-        run: bash scripts/build_body.sh || true
+        run: bash scripts/build_body.sh
 
       - name: Check browser and JavaScript syntax
-        run: python3 scripts/check_js.py || true
+        run: python3 scripts/check_js.py
 
       - name: Run real client singleplayer-to-Rust smoke test
         env:

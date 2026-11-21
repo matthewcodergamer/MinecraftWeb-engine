@@ -393,6 +393,12 @@ async function loadResources() {
   const index = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 8, len)));
   const base = 8 + len;
   for (const k in index) index[k][0] += base;
+  const icuZoneInfo = Object.keys(index).find((name) =>
+    name.startsWith('com/ibm/icu/impl/data/') && name.endsWith('/zoneinfo64.res'));
+  if (!icuZoneInfo) {
+    throw new Error('Minecraft resource archive is missing ICU4J zoneinfo64.res; rebuild with scripts/pack_resources.py');
+  }
+  console.log('[RESOURCE_PREFLIGHT] ICU4J timezone bundle present: ' + icuZoneInfo);
   window.__mcResources = { index, data: buf };
 }
 
