@@ -3050,7 +3050,10 @@
           if (brain) {
             const frame = $('mc-brain');
             frame.addEventListener('load', flushBrainQueue);
-            frame.src = 'play.html?embedded=1&scale=0.5&stats=0&v=20261121a' + (params.get('wasm') === '1' ? '&wasm=1' : '');
+            // Let the client pick its own render scale (devicePixelRatio,
+            // capped at 2). Forcing scale=0.5 stretched a half-resolution
+            // canvas over the viewport and clipped the GUI text.
+            frame.src = 'play.html?embedded=1&stats=0&v=20261121b' + (params.get('wasm') === '1' ? '&wasm=1' : '');
             watchJavaTitleScreen(frame);
           } else {
             console.warn('clientmain.js not deployed — renderer-only mode');
