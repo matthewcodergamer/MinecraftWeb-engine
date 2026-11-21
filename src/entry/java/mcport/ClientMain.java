@@ -18,9 +18,6 @@ public final class ClientMain {
             BrowserRuntime.report("owner-signature", OWNER_SIGNATURE);
             // Set before Netty PlatformDependent is initialized.
             System.setProperty("io.netty.noUnsafe", "true");
-            // LWJGL's per-thread MemoryStack size in KiB (default 64). Pin it explicitly so the
-            // first stack allocation (SDL_SetAppMetadataProperty) cannot hit a zero-sized stack.
-            System.setProperty("org.lwjgl.system.stackSize", "256");
             BrowserRuntime.report("stage", "client-main-enter");
 
             setOsProperties();

@@ -159,10 +159,20 @@ public class PortTransformer implements ClassHolderTransformer {
             }
         }
         for (MethodHolder method : cls.getMethods()) {
+            // ZERO_NATIVES is a blanket fallback for natives nothing else covers. An explicit
+            // BODY/STUB rule for the same method must win, otherwise rules such as
+            // MemoryAccessJNI.getPointerSize() -> 8 or MemoryUtil.getPageSize() are silently
+            // replaced by "return 0".
+            boolean explicitRule = (bodies != null && bodies.containsKey(method.getDescriptor()))
+                    || (stubs != null && stubs.contains(method.getDescriptor()));
             if (zeroNatives && method.hasModifier(ElementModifier.NATIVE)) {
-                zeroBody(method);
-                count("ZERO_NATIVE " + cls.getName() + "." + method.getDescriptor());
-                continue;
+                if (explicitRule) {
+                    count("ZERO_NATIVE_SKIPPED_EXPLICIT_RULE " + cls.getName() + "." + method.getDescriptor());
+                } else {
+                    zeroBody(method);
+                    count("ZERO_NATIVE " + cls.getName() + "." + method.getDescriptor());
+                    continue;
+                }
             }
             if ((stubAll || (stubs != null && stubs.contains(method.getDescriptor())))
                     && !method.hasModifier(ElementModifier.ABSTRACT)) {
