@@ -7,6 +7,7 @@ Usage:
 Environment fallbacks: HF_REPO, HF_PATH (default "web"), HF_REPO_TYPE (default "space").
 """
 import glob
+import json
 import os
 import sys
 
@@ -44,6 +45,59 @@ def main() -> int:
             commit_message=f"clientmain: {name}",
         )
     print(f"uploaded {len(files)} files to {repo}")
+
+    # Older bundles were longer (five parts). The manifest is authoritative, but
+    # leaving stale clientmain.part3/part4 behind confuses cache busting and
+    # makes the Space look like it still serves the old build.
+    manifest_path = os.path.join(src, "clientmain.parts.json")
+    if os.path.exists(manifest_path):
+        with open(manifest_path, encoding="utf-8") as f:
+            manifest = json.load(f)
+        keep = {p["name"] for p in manifest.get("parts", []) if isinstance(p, dict) and "name" in p}
+        prefix = f"{path_in_repo}/" if path_in_repo else ""
+        for repo_file in api.list_repo_files(repo_id=repo, repo_type=repo_type):
+            if not repo_file.startswith(prefix + "clientmain.part"):
+                continue
+            name = repo_file[len(prefix):]
+            if name not in keep:
+                print(f"deleting stale {repo_file}")
+                api.delete_file(
+                    path_in_repo=repo_file,
+                    repo_id=repo,
+                    repo_type=repo_type,
+                    commit_message=f"clientmain: remove stale {name}",
+                )
+
+    # The Space also serves the browser shell. Deploy it with the bundle so the
+    # live site cannot keep an older game.html that hides the real Java
+    # TitleScreen behind the HTML launcher. index.html is the Space root, so it
+    # goes last: the new shell only becomes live after its parts and scripts.
+    web = os.path.join(os.getcwd(), "web")
+    shell = [
+        ("game.html", "game.html"),
+        ("play.html", "play.html"),
+        ("bridge.js", "bridge.js"),
+        ("input.js", "input.js"),
+        ("gpu/webgpu.js", "gpu/webgpu.js"),
+        ("game.html", "index.html"),
+    ]
+    uploaded = 0
+    for source, destination in shell:
+        source_path = os.path.join(web, source)
+        if not os.path.exists(source_path):
+            print(f"skipping missing shell file {source_path}")
+            continue
+        target = f"{path_in_repo}/{destination}" if path_in_repo else destination
+        print(f"uploading {source} -> {repo}:{target}")
+        api.upload_file(
+            path_or_fileobj=source_path,
+            path_in_repo=target,
+            repo_id=repo,
+            repo_type=repo_type,
+            commit_message=f"site: {destination}",
+        )
+        uploaded += 1
+    print(f"uploaded {uploaded} browser shell files to {repo}")
     return 0
 
 

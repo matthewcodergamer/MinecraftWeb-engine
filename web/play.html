@@ -51,7 +51,7 @@
 <script src="native/sdl.js"></script>
 <script src="native/shaders.js"></script>
 <script src="native/stb.js"></script>
-<script src="gpu/webgpu.js"></script>
+<script src="gpu/webgpu.js?v=20261121a"></script>
 <script src="bridge.js"></script>
 <script>
 // Host page of the browser port: loads the client jar's resources (packed from the user's own installation),
@@ -423,6 +423,10 @@ function showStats() {
     bar(0.8);
     const webgpu = await __mcWebGPU.init();
     console.log(webgpu ? 'Graphics: WebGPU (' + __mcWebGPU.adapterName + ')' : 'Graphics: WebGPU unavailable, using WebGL2');
+    if (!webgpu) {
+      throw new Error('WebGPU could not start in this browser: ' + (__mcWebGPU.error || 'unknown reason') +
+        '. Minecraft 26.3 needs WebGPU (Chrome 113+ or Safari 18+).');
+    }
     msg('Loading Minecraft…');
     bar(0.9);
     await loadBrain();

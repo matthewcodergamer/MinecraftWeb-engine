@@ -47,9 +47,9 @@
 
   /** Called by the host page before Java starts; resolves to false when WebGPU is unavailable. */
   G.init = async function () {
-    if (!navigator.gpu) return false;
+    if (!navigator.gpu) { G.error = 'navigator.gpu is missing'; return false; }
     const params = new URLSearchParams(location.search);
-    if (params.get('gpu') === 'webgl2') return false;
+    if (params.get('gpu') === 'webgl2') { G.error = 'WebGPU disabled by ?gpu=webgl2'; return false; }
     try {
       // Two WebGPU contexts on one page (the Rust body plus this Java brain) can
       // leave requestAdapter pending forever on some drivers. Never let that
@@ -58,7 +58,22 @@
       // software rasterizers (SwiftShader) can take ~20s on a busy machine.
       G.adapter = await withTimeout(navigator.gpu.requestAdapter({ powerPreference: 'high-performance' }),
         30000, 'WebGPU adapter request');
-      if (!G.adapter) return false;
+      if (!G.adapter) {
+        // Dual-GPU laptops (notably Intel Macs) can reject the high-performance
+        // request when the discrete GPU is unavailable. Try the system default
+        // and the integrated GPU before declaring WebGPU unavailable.
+        G.error = 'requestAdapter(high-performance) returned null';
+        G.adapter = await withTimeout(navigator.gpu.requestAdapter(), 10000, 'WebGPU adapter request');
+      }
+      if (!G.adapter) {
+        G.error = 'requestAdapter(default) returned null';
+        G.adapter = await withTimeout(navigator.gpu.requestAdapter({ powerPreference: 'low-power' }),
+          10000, 'WebGPU low-power adapter request');
+      }
+      if (!G.adapter) {
+        G.error = G.error + '; requestAdapter(low-power) returned null';
+        return false;
+      }
       const want = ['depth32float-stencil8', 'float32-filterable', 'rg11b10ufloat-renderable', 'indirect-first-instance'];
       const requiredFeatures = want.filter((f) => G.adapter.features.has(f));
       const L = G.adapter.limits;
@@ -95,6 +110,7 @@
       globalThis.__mcGPU = G;
       return true;
     } catch (e) {
+      G.error = String(e && e.message || e);
       console.warn('WebGPU unavailable: ' + e);
       return false;
     }

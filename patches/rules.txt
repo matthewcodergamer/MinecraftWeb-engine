@@ -5,6 +5,16 @@
 #   BODY / BODY_STATIC  replace a method body with a call to the target
 # Every rule must preserve the original method's documented behaviour (see docs/MIGRATION_MATRIX.md).
 
+# --- JS backend: EventQueue.interrupt has no JavaScript implementation ----------------------
+# TeaVM's classlib (TArrayBlockingQueue, TReferenceQueue) still references EventQueue.offer
+# in platform-guarded branches. The JS backend keeps those branches in its dependency graph
+# even though PlatformDetector.isLowLevel()/isWebAssemblyGC() are false at run time, so the
+# empty-queue path reaches the C/Wasm-only native interrupt(). There is no native fiber to
+# wake on the JavaScript event loop; Platform.postpone/Platform.schedule own scheduling there.
+# Wasm GC uses EventQueue.offerWasmGC and never reaches this method, so the no-op is safe for
+# both targets. This is a build-only fix: no client/game logic changes.
+BODY_STATIC org.teavm.runtime.EventQueue interrupt()V -> mcport.rt.patch.LibraryPatches noop
+
 # --- Browser resource-pack ZIP loading ------------------------------------------------------
 # FolderPackDetector is private; BODY_OBJECT erases only the helper receiver type, not the
 # actual runtime receiver. ZIP bytes are read through NIO and served from memory.

@@ -32,7 +32,11 @@
     }
     ok=p>0 && Date.now()-p<21600000;
   } catch(e){}
-  if(!ok){ document.documentElement.style.visibility='hidden'; location.replace('/?from=game'); }
+  // The Hugging Face Space is the public build: open it directly instead of
+  // bouncing through the ad-supported GitHub Pages launcher. The pass gate
+  // remains for the GitHub Pages deployment.
+  var hfHost=/\.hf\.space$/i.test(location.hostname)||/^huggingface\.co$/i.test(location.hostname);
+  if(!ok && !hfHost){ document.documentElement.style.visibility='hidden'; location.replace('/?from=game'); }
 })();
 </script>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
@@ -94,6 +98,35 @@
   }
   body.debug #stats { display: block; }
   body.touch-ui #stats { display: none; }
+
+  /* ------------------------------------------------------- real Java client UI
+     The HTML launcher below is only the boot shell and a fallback for browsers
+     that cannot run the Java brain. Once the real TitleScreen is ready, the
+     iframe's own canvas becomes the UI and every HTML replica is removed. */
+  body.java-ui #menu,
+  body.java-ui #splash,
+  body.java-ui #pause,
+  body.java-ui #loading,
+  body.java-ui #hud-ad,
+  body.java-ui #hotbar,
+  body.java-ui #mc-status,
+  body.java-ui #mc-hearts,
+  body.java-ui #mc-food,
+  body.java-ui #mc-hand,
+  body.java-ui #crosshair,
+  body.java-ui #mc-touch,
+  body.java-ui #mc-inv-btn,
+  body.java-ui #mc-chat-btn,
+  body.java-ui #mc-pause-btn,
+  body.java-ui #hint,
+  body.java-ui #stats { display: none !important; }
+  body.java-ui #mc-brain {
+    opacity: 1 !important;
+    z-index: 3100 !important;
+    pointer-events: auto !important;
+    background: #000;
+  }
+
   #hint {
     position: fixed; left: 50%; top: calc(50px + env(safe-area-inset-top));
     transform: translateX(-50%); z-index: 6; padding: 7px 12px; border-radius: 2px;
@@ -1209,8 +1242,9 @@
     </div>
   </div>
 
-  <!-- The Java client runs here, off-screen. It owns world state and physics.
-       Absent from this deploy, so the page runs renderer-only. -->
+  <!-- The Java client runs here. It owns world state, physics and the real
+       TitleScreen; the HTML launcher is only the boot shell. When the client
+       has no bundle the page runs renderer-only. -->
   <iframe id="mc-brain" src="about:blank" title="Minecraft Java brain"
           allow="autoplay; fullscreen"
           style="position:fixed;inset:0;width:100%;height:100%;border:0;opacity:0;z-index:0;pointer-events:none"></iframe>
@@ -1416,6 +1450,47 @@
         if (navigator.clipboard) navigator.clipboard.writeText(text).then(() => toast('Copied'));
       };
       errorActions.appendChild(copy);
+    }
+
+    /* --------------------------------------------------- real Java title UI
+       The HTML launcher is a boot shell. As soon as the Java client has built
+       its own TitleScreen, hide every HTML replica and show the real client's
+       canvas. The smoke/QA paths keep the HTML shell because they drive world
+       creation through it. */
+    let javaUiWatch = 0;
+    function watchJavaTitleScreen(frame) {
+      if (!frame || params.get('smoke-world') === '1' || params.get('screen')
+          || params.get('java') === '0' || params.get('html-ui') === '1') return;
+      clearInterval(javaUiWatch);
+      const started = performance.now();
+      javaUiWatch = setInterval(() => {
+        let mc = null;
+        try { mc = frame.contentWindow && frame.contentWindow.__mc; } catch (e) {}
+        if (mc && mc.stage === 'failed') {
+          clearInterval(javaUiWatch);
+          document.body.classList.remove('java-ui');
+          fail(new Error(String(mc.error || 'The Java client stopped while starting.')));
+          return;
+        }
+        const boot = String((mc && mc['boot-state']) || '');
+        const titleUp = boot.indexOf('screen=net.minecraft.client.gui.screens.TitleScreen') >= 0
+          && boot.indexOf('loadFinished=true') >= 0;
+        if (titleUp) {
+          clearInterval(javaUiWatch);
+          document.body.classList.add('java-ui');
+          window.__mc = Object.assign(window.__mc || {}, { stage: 'complete', ui: 'java' });
+          window.__mcLoadingFinished = true;
+          finishSplash();
+          loading.classList.add('gone');
+          try { frame.focus(); } catch (e) {}
+          console.log('Java TitleScreen is live; HTML launcher hidden.');
+          return;
+        }
+        if (performance.now() - started > 600000) {
+          clearInterval(javaUiWatch);
+          console.warn('Java TitleScreen did not appear; keeping the HTML launcher.');
+        }
+      }, 250);
     }
 
     /* ------------------------------------------------------------ asset load */
@@ -2973,8 +3048,10 @@
             }
           } catch (e) { brain = false; }
           if (brain) {
-            $('mc-brain').addEventListener('load', flushBrainQueue);
-            $('mc-brain').src = 'play.html?embedded=1&scale=0.5&stats=0' + (params.get('wasm') === '1' ? '&wasm=1' : '');
+            const frame = $('mc-brain');
+            frame.addEventListener('load', flushBrainQueue);
+            frame.src = 'play.html?embedded=1&scale=0.5&stats=0&v=20261121a' + (params.get('wasm') === '1' ? '&wasm=1' : '');
+            watchJavaTitleScreen(frame);
           } else {
             console.warn('clientmain.js not deployed — renderer-only mode');
             state.javaReady = true;
