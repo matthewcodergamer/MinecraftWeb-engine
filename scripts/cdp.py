@@ -249,6 +249,14 @@ def main():
                 "mobile": True,
             }, pump=pump)
         ws.call("Page.navigate", {"url": a.url}, pump=pump)
+        fail_js = """(() => {
+            const top = window.__mc || {};
+            const bridge = (window.mcBridge && window.mcBridge.state) || {};
+            const frame = document.getElementById('mc-brain');
+            const brain = (frame && frame.contentWindow && frame.contentWindow.__mc) || {};
+            return top.stage === 'failed' || !!top.error || !!brain.error || !!bridge.error
+                || !!window.__mcBodyError;
+        })()"""
         deadline = time.time() + a.timeout
         while time.time() < deadline:
             msg = ws.recv(0.5)
@@ -264,6 +272,14 @@ def main():
             if r.get("result", {}).get("result", {}).get("value"):
                 ok = True
                 break
+            try:
+                failed = ws.call("Runtime.evaluate", {"expression": fail_js, "returnByValue": True},
+                                 pump=pump, timeout_sec=10)
+                if failed.get("result", {}).get("result", {}).get("value"):
+                    print(f"{time.time() - t0:7.2f}s page reported failure", flush=True)
+                    break
+            except TimeoutError:
+                pass
         print(f"{time.time() - t0:7.2f}s condition {'met' if ok else 'NOT met (timeout)'}", flush=True)
         # Capture the visible page as soon as the wait condition is met: this is the
         # only direct evidence that the real client (not just its logs) rendered.
