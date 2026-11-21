@@ -18,6 +18,9 @@ public final class ClientMain {
             BrowserRuntime.report("owner-signature", OWNER_SIGNATURE);
             // Set before Netty PlatformDependent is initialized.
             System.setProperty("io.netty.noUnsafe", "true");
+            // LWJGL's per-thread MemoryStack size in KiB (default 64). Pin it explicitly so the
+            // first stack allocation (SDL_SetAppMetadataProperty) cannot hit a zero-sized stack.
+            System.setProperty("org.lwjgl.system.stackSize", "256");
             BrowserRuntime.report("stage", "client-main-enter");
 
             setOsProperties();
@@ -30,6 +33,8 @@ public final class ClientMain {
             BrowserRuntime.report("stage", "chunk-bridge-install-enter");
             mcport.bridge.ChunkBridge.install();
             BrowserRuntime.report("stage", "chunk-bridge-installed");
+
+            probeMemoryStack();
 
             BrowserRuntime.report("stage", "mojang-main-enter");
             BrowserRuntime.report("trace", "before-mojang-main-main");
@@ -96,6 +101,28 @@ public final class ClientMain {
             BrowserRuntime.report("stage", "client-fiber-watchdog-started");
         } catch (Throwable t) {
             BrowserRuntime.report("watchdog-error", BrowserRuntime.describe(t));
+        }
+    }
+
+    /**
+     * Diagnostic only: reports the state of this thread's LWJGL MemoryStack and performs one
+     * allocation, so a "Out of stack space" failure shows the stack's size/address/pointer.
+     * Never throws; a failure is reported and boot continues into the real client.
+     */
+    static void probeMemoryStack() {
+        try {
+            BrowserRuntime.report("stack-probe", "property stackSize="
+                    + System.getProperty("org.lwjgl.system.stackSize"));
+            try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+                BrowserRuntime.report("stack-probe", "size=" + stack.getSize()
+                        + " address=" + stack.getAddress()
+                        + " pointer=" + stack.getPointer());
+                java.nio.ByteBuffer text = stack.ASCII("probe", true);
+                BrowserRuntime.report("stack-probe", "alloc-ok remaining=" + text.remaining()
+                        + " pointerAfter=" + stack.getPointer());
+            }
+        } catch (Throwable t) {
+            BrowserRuntime.report("stack-probe", "FAILED: " + BrowserRuntime.describe(t));
         }
     }
 }
