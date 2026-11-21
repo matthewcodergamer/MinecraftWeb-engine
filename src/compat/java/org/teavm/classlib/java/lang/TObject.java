@@ -309,11 +309,21 @@ public class TObject {
     }
 
     static void monitorEnterWait(TObject o, int count, AsyncCallback<Void> callback) {
+        monitorEnterWait(o, count, callback, currentFiber(), currentFiberId());
+    }
+
+    /**
+     * Reacquires a monitor for the fiber that originally called Object.wait.
+     * EventQueue dispatches NotifyListenerImpl.run outside that fiber's execution
+     * context, so asking Fiber.current() there can return a different fiber (or
+     * no fiber). The listener captures the suspended fiber before parking and
+     * passes that identity through this overload.
+     */
+    private static void monitorEnterWait(TObject o, int count, AsyncCallback<Void> callback,
+            Object waiterFiber, int waiterFiberId) {
         MonitorRegistry.asyncEnterCall();
         MonitorRegistry.step("enter-wait");
         TThread thread = TThread.currentThread();
-        Object waiterFiber = currentFiber();
-        int waiterFiberId = currentFiberId();
         MonitorRegistry.step("captured");
         Monitor monitor = o.monitor;
         try {
@@ -912,10 +922,18 @@ public class TObject {
         boolean performed;
         int lockCount;
 
+        // EventQueue callbacks do not necessarily execute with the suspended
+        // waiter's Fiber.current() installed. Preserve the original identity so
+        // the monitor is reacquired by the same cooperative fiber that released it.
+        final Object waitingFiber;
+        final int waitingFiberId;
+
         NotifyListenerImpl(TObject obj, AsyncCallback<Void> callback, int lockCount) {
             this.obj = obj;
             this.callback = callback;
             this.lockCount = lockCount;
+            this.waitingFiber = currentFiber();
+            this.waitingFiberId = currentFiberId();
         }
 
         @Override
@@ -957,7 +975,7 @@ public class TObject {
                 timerId = -1;
             }
             TThread.setCurrentThread(currentThread);
-            monitorEnterWait(obj, lockCount, callback);
+            monitorEnterWait(obj, lockCount, callback, waitingFiber, waitingFiberId);
         }
 
         @Override
