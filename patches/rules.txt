@@ -319,6 +319,33 @@ TRACE 117 net.minecraft.client.Minecraft run()V
 TRACE 118 org.lwjgl.system.MemoryStack stackPush()Lorg/lwjgl/system/MemoryStack;
 TRACE 119 net.minecraft.client.gui.screens.TitleScreen <init>()V
 TRACE 120 net.minecraft.client.gui.screens.TitleScreen init()V
+# Reload apply sequence. If the client stops between two of these, the id names the exact
+# listener that never applied (or whose apply never returned) instead of the whole reload.
+TRACE 121 net.minecraft.client.Minecraft onResourceLoadFinished(Lnet/minecraft/client/GameLoadCookie;)V
+TRACE 122 net.minecraft.client.Minecraft onGameLoadFinished(Lnet/minecraft/client/GameLoadCookie;)V
+TRACE 123 net.minecraft.client.gui.Gui buildInitialScreens(Lnet/minecraft/client/GameLoadCookie;)Ljava/lang/Runnable;
+TRACE 124 net.minecraft.client.gui.font.FontManager apply(Lnet/minecraft/client/gui/font/FontManager$Preparation;Lnet/minecraft/util/profiling/ProfilerFiller;)V
+TRACE 125 net.minecraft.client.resources.GrassColorReloadListener apply([ILnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)V
+TRACE 126 net.minecraft.client.resources.FoliageColorReloadListener apply([ILnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)V
+TRACE 127 net.minecraft.client.resources.DryFoliageColorReloadListener apply([ILnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)V
+TRACE 128 net.minecraft.client.resources.model.ModelManager apply(Lnet/minecraft/client/resources/model/ModelManager$ReloadState;)V
+TRACE 129 net.minecraft.client.resources.model.EquipmentAssetManager apply(Ljava/util/Map;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)V
+TRACE 130 net.minecraft.client.resources.palette.PalettedTextureManager lambda$reload$0(Ljava/util/Map;)V
+TRACE 131 net.minecraft.client.particle.ParticleResources lambda$reload$4(Ljava/util/concurrent/CompletableFuture;Ljava/util/concurrent/CompletableFuture;Ljava/lang/Void;)V
+TRACE 132 net.minecraft.client.renderer.GameRenderer onResourceManagerReload(Lnet/minecraft/server/packs/resources/ResourceManager;)V
+TRACE 133 net.minecraft.client.renderer.extract.LevelExtractor onResourceManagerReload(Lnet/minecraft/server/packs/resources/ResourceManager;)V
+TRACE 134 net.minecraft.client.renderer.CloudRenderer apply(Ljava/util/Optional;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)V
+TRACE 135 net.minecraft.client.renderer.GpuWarnlistManager apply(Lnet/minecraft/client/renderer/GpuWarnlistManager$Preparations;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)V
+TRACE 136 net.minecraft.client.PeriodicNotificationManager apply(Ljava/util/Map;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)V
+TRACE 137 net.minecraft.client.gui.Gui registerReloadListeners(Lnet/minecraft/server/packs/resources/ReloadableResourceManager;)V
+TRACE 138 net.minecraft.server.packs.resources.SimpleReloadInstance$1 wait(Ljava/lang/Object;)Ljava/util/concurrent/CompletableFuture;
+# Frame/tick timing. At ~0.13 fps the browser spends seconds between rendered frames; these ids
+# show whether that time is a reload apply task, the ten game ticks, or rendering itself.
+TRACE 139 net.minecraft.client.Minecraft runTick(Z)V
+TRACE 140 net.minecraft.util.thread.BlockableEventLoop runAllTasks()V
+TRACE 141 net.minecraft.client.Minecraft tick()V
+TRACE 142 net.minecraft.client.gui.Gui tick()V
+TRACE 143 net.minecraft.client.gui.screens.LoadingOverlay tick()V
 # BODY replacement targets are static helpers; PortTransformer emits INVOKESTATIC and prepends the instance receiver.
 BODY com.mojang.blaze3d.platform.Window setIcon(Lnet/minecraft/server/packs/PackMetadataResources;Lcom/mojang/blaze3d/platform/IconSet;)V -> mcport.rt.WindowBrowser noopIcon
 
@@ -331,6 +358,12 @@ BODY net.minecraft.client.sounds.SoundManager prepare(Lnet/minecraft/server/pack
 BODY net.minecraft.client.sounds.SoundManager apply(Lnet/minecraft/client/sounds/SoundManager$Preparations;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)V -> net.minecraft.client.sounds.BrowserSoundManagerPatches apply
 BODY net.minecraft.client.sounds.SoundEngine loadLibrary()V -> net.minecraft.client.sounds.BrowserSoundManagerPatches loadLibrary
 BODY net.minecraft.client.sounds.SoundEngine reload()V -> net.minecraft.client.sounds.BrowserSoundManagerPatches reload
+
+# --- Browser first launch: skip the narrator onboarding screen -------------------------------
+# A fresh browser profile has onboardAccessibility=true, so vanilla inserts
+# AccessibilityOnboardingScreen before TitleScreen. The smoke world starts from TitleScreen, so
+# the client would wait on a narrator prompt forever. Browsers have no narrator.
+BODY net.minecraft.client.gui.Gui addInitialScreens(Ljava/util/List;)Z -> mcport.rt.patch.GuiPatches addInitialScreens
 
 # --- Native entry points that are unreachable in the browser ----------------------------------
 # These classes may still be reached by TeaVM dependency analysis; zeroing their native

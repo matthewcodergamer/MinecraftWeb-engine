@@ -67,6 +67,7 @@ public final class ChunkBridge {
 
     private static boolean installed;
     private static boolean firstPumpLogged;
+    private static int bootStateReports;
     private static boolean firstLevelPlayerLogged;
     private static boolean firstScanLogged;
     private static boolean firstSectionLogged;
@@ -74,7 +75,8 @@ public final class ChunkBridge {
     private static boolean worldRequested;
     private static boolean freshWorld;
     private static boolean rulesApplied;
-    private static int titleTicks;
+    /** Wall-clock time the title screen was first observed, or 0 while it is absent. */
+    private static long titleSeenAt;
     private static long lastScan;
     /** Identity of the level whose sections have already been sent. */
     private static Object lastLevel;
@@ -101,6 +103,7 @@ public final class ChunkBridge {
         freshWorld = false;
         rulesApplied = false;
         lastScan = 0L;
+        titleSeenAt = 0L;
         emitReset();
     }
 
@@ -113,6 +116,7 @@ public final class ChunkBridge {
         if (minecraft == null) {
             return;
         }
+        reportBootState(minecraft);
         maybeStartWorld(minecraft);
         if (minecraft.level == null || minecraft.player == null) {
             return;
@@ -169,6 +173,26 @@ public final class ChunkBridge {
     }
 
     /**
+     * Reports what the client is showing once per rendered frame. The browser smoke
+     * test only sees the iframe's {@code __mc.stage}; this heartbeat distinguishes
+     * "still reloading" from "reload finished but an onboarding screen is up".
+     */
+    private static void reportBootState(Minecraft minecraft) {
+        bootStateReports++;
+        if (bootStateReports > 1 && bootStateReports % 5 != 0) {
+            return;
+        }
+        Object overlay = minecraft.gui.overlay();
+        Object screen = minecraft.gui.screen();
+        BrowserRuntime.report("boot-state",
+                "overlay=" + (overlay == null ? "null" : overlay.getClass().getName())
+                        + " screen=" + (screen == null ? "null" : screen.getClass().getName())
+                        + " loadFinished=" + minecraft.isGameLoadFinished()
+                        + " worldAuto=" + worldAuto()
+                        + " worldRequested=" + hostWorldRequested());
+    }
+
+    /**
      * Creates (or opens) the local world once the title screen is idle and the
      * host page has asked for a world. Standalone play pages set
      * {@code __mcWorldAuto} so the old auto-start behaviour remains available.
@@ -181,9 +205,19 @@ public final class ChunkBridge {
             return;
         }
         if (!(minecraft.gui.screen() instanceof TitleScreen) || !minecraft.isGameLoadFinished()) {
+            titleSeenAt = 0L;
             return;
         }
-        if (++titleTicks < 20) {
+        // Let the title screen render at least one frame before replacing it with the
+        // world-loading screen. This used to count 20 frames, which is ~0.3 s at 60 fps
+        // but ~2.5 minutes in a software-rendered browser at 0.13 fps. A short wall-clock
+        // delay keeps the visual hand-off without coupling boot time to frame rate.
+        long now = System.currentTimeMillis();
+        if (titleSeenAt == 0L) {
+            titleSeenAt = now;
+            return;
+        }
+        if (now - titleSeenAt < 250L) {
             return;
         }
         worldRequested = true;
