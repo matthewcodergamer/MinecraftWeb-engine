@@ -12,6 +12,7 @@ import base64
 import json
 import os
 import shutil
+import signal
 import socket
 import struct
 import subprocess
@@ -131,6 +132,28 @@ def main():
     ok = False
     browser_errors = []
     browser_console = []
+
+    def flush_diagnostics():
+        try:
+            os.makedirs("build", exist_ok=True)
+            with open(os.path.join("build", "browser_console.log"), "w", encoding="utf-8") as console_file:
+                console_file.write("\n".join(browser_console) + ("\n" if browser_console else ""))
+            with open(os.path.join("build", "browser_error.txt"), "w", encoding="utf-8") as error_file:
+                if browser_errors:
+                    error_file.write("\n\n".join(browser_errors) + "\n")
+                else:
+                    error_file.write("No Chrome compile/runtime error was captured by CDP. "
+                                     "Check the smoke-test step output for timeout or assertion details.\n")
+        except Exception:
+            pass
+
+    def handle_cancel(signum, frame):
+        flush_diagnostics()
+        os._exit(128 + signum)
+
+    signal.signal(signal.SIGTERM, handle_cancel)
+    signal.signal(signal.SIGINT, handle_cancel)
+
     try:
         page = None
         for _ in range(600):
@@ -190,6 +213,7 @@ def main():
                     time.time() - t0, entry.get("level", "log"), message))
                 if entry.get("level") == "error" or any(token in message.lower() for token in ("webassembly.compile", "compileerror", "br_on_cast", "global.set")):
                     save_browser_error("Chrome log: " + message)
+            flush_diagnostics()
 
         failed_requests = []
         ws.call("Runtime.enable", pump=pump)
@@ -299,18 +323,9 @@ def main():
         if a.screenshot and not ok:
             print("skipping requested screenshot: page did not become responsive", flush=True)
     finally:
-        os.makedirs("build", exist_ok=True)
-        console_path = os.path.join("build", "browser_console.log")
-        with open(console_path, "w", encoding="utf-8") as console_file:
-            console_file.write("\n".join(browser_console) + ("\n" if browser_console else ""))
-        print("Full browser console -> {}".format(console_path), flush=True)
-        error_path = os.path.join("build", "browser_error.txt")
-        with open(error_path, "w", encoding="utf-8") as error_file:
-            if browser_errors:
-                error_file.write("\n\n".join(browser_errors) + "\n")
-            else:
-                error_file.write("No Chrome compile/runtime error was captured by CDP. Check the smoke-test step output for timeout or assertion details.\n")
-        print("Browser diagnostics -> {}".format(error_path), flush=True)
+        flush_diagnostics()
+        print("Full browser console -> build/browser_console.log", flush=True)
+        print("Browser diagnostics -> build/browser_error.txt", flush=True)
         chrome.kill()
         chrome.wait()
         shutil.rmtree(profile, ignore_errors=True)
