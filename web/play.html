@@ -44,14 +44,14 @@
 <body>
 <div id="boot"><div id="boot-msg">Starting…</div><div class="bar"><div id="boot-bar"></div></div><pre id="boot-err"></pre></div>
 <div id="stats"></div>
-<script src="native/layout.js?v=20261122b"></script>
-<script src="native/layout-shaders.js?v=20261122b"></script>
-<script src="native/heap.js?v=20261122b"></script>
-<script src="native/natives.js?v=20261122b"></script>
-<script src="native/sdl.js?v=20261122b"></script>
-<script src="native/shaders.js?v=20261122b"></script>
-<script src="native/stb.js?v=20261122b"></script>
-<script src="gpu/webgpu.js?v=20261122b"></script>
+<script src="native/layout.js?v=20261122c"></script>
+<script src="native/layout-shaders.js?v=20261122c"></script>
+<script src="native/heap.js?v=20261122c"></script>
+<script src="native/natives.js?v=20261122c"></script>
+<script src="native/sdl.js?v=20261122c"></script>
+<script src="native/shaders.js?v=20261122c"></script>
+<script src="native/stb.js?v=20261122c"></script>
+<script src="gpu/webgpu.js?v=20261122c"></script>
 <script src="bridge.js"></script>
 <script>
 // Host page of the browser port: loads the client jar's resources (packed from the user's own installation),
@@ -174,7 +174,10 @@ window.addEventListener('unhandledrejection', (e) => fail('REJECTION: ' + (e.rea
 async function fetchWithProgress(url, label, from, to) {
   // Shared with the host page: ./-relative, range-chunked, resumable. iOS
   // Safari cannot survive a single 31 MB arrayBuffer() when backgrounded.
-  return mcBridge.fetchAsset('./' + url, {
+  // Absolute URLs are used by the GitHub Pages shell, which keeps the large
+  // WASM/resource artifacts on the canonical Hugging Face Space.
+  const target = /^https?:\/\//i.test(url) ? url : './' + url;
+  return mcBridge.fetchAsset(target, {
     retries: 2,
     onProgress: (fraction, got, total) => {
       const mb = (n) => (n / 1048576).toFixed(0);
@@ -259,11 +262,20 @@ async function downloadPart(url, expected, onBytes) {
 }
 
 async function loadWasmBrain() {
-  await loadClassicScript('clientmain.wasm-runtime.js');
+  // The Hugging Face Space serves the module next to this page. The GitHub
+  // Pages shell intentionally keeps only the lightweight HTML/JS host and
+  // loads the same module from the canonical Space, so both URLs always run
+  // the exact same Java build instead of drifting copies.
+  try {
+    await loadClassicScript('clientmain.wasm-runtime.js');
+  } catch (error) {
+    console.warn('local WASM runtime unavailable; loading the canonical runtime', error);
+    await loadClassicScript(HF_BASE + 'clientmain.wasm-runtime.js');
+  }
   if (!window.TeaVM || !TeaVM.wasmGC || typeof TeaVM.wasmGC.load !== 'function') {
     throw new Error('TeaVM Wasm GC runtime did not expose TeaVM.wasmGC.load');
   }
-  const teavm = await TeaVM.wasmGC.load('clientmain.wasm', {
+  const options = {
     installImports(imports) {
       imports.mcHeap = {
         heapView(addr, len) {
@@ -277,7 +289,15 @@ async function loadWasmBrain() {
         },
       };
     },
-  });
+  };
+  let teavm;
+  try {
+    teavm = await TeaVM.wasmGC.load('clientmain.wasm', options);
+  } catch (localError) {
+    if (location.hostname.endsWith('.hf.space')) throw localError;
+    console.warn('local WASM module unavailable; loading the canonical module', localError);
+    teavm = await TeaVM.wasmGC.load(HF_BASE + 'clientmain.wasm', options);
+  }
   window.__mcTeaVM = teavm;
   window.__mcRunMain = () => teavm.exports.main([]);
   window.__mcEngine = 'wasm';
@@ -410,7 +430,22 @@ async function loadBrain() {
 }
 
 async function loadResources() {
-  const buf = await fetchWithProgress('client-resources.bin', 'Loading game resources', 0, 0.6);
+  // Prefer the copy next to the page (the Space and local dev server), then
+  // fall back to the canonical Space for the GitHub Pages shell. The archive is
+  // large, so it is deliberately not duplicated into the Pages repository.
+  const sources = ['client-resources.bin', HF_BASE + 'client-resources.bin'];
+  let buf = null;
+  let lastError = null;
+  for (const source of sources) {
+    try {
+      buf = await fetchWithProgress(source, 'Loading game resources', 0, 0.6);
+      break;
+    } catch (error) {
+      lastError = error;
+      console.warn('resource archive ' + source + ' failed', error);
+    }
+  }
+  if (!buf) throw lastError || new Error('could not load client-resources.bin');
   const dv = new DataView(buf);
   if (dv.getUint32(0, false) !== 0x4D435253) throw new Error('bad resource archive');
   const len = dv.getUint32(4, true);

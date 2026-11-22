@@ -180,7 +180,6 @@ fn sky_state(time: f32) -> SkyState {
 }
 
 struct Renderer {
-    instance: wgpu::Instance,
     canvas: web_sys::HtmlCanvasElement,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -222,6 +221,12 @@ struct Renderer {
     scene_view: wgpu::TextureView,
 
     stats_text: String,
+
+    /// Declared last so it is dropped after the surface and device. wgpu's web
+    /// backend reports "A valid external Instance reference no longer exists"
+    /// if the instance outlives its children, which can happen when the page
+    /// tears down or replaces the renderer.
+    instance: wgpu::Instance,
 }
 
 impl Renderer {
@@ -974,7 +979,6 @@ async fn init() -> Result<Renderer, JsValue> {
     let start_ms = js_sys::Date::now();
 
     Ok(Renderer {
-        instance,
         canvas,
         surface,
         device,
@@ -1004,6 +1008,7 @@ async fn init() -> Result<Renderer, JsValue> {
         scene_texture,
         scene_view,
         stats_text,
+        instance,
     })
 }
 

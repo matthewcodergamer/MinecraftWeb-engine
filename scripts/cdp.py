@@ -119,6 +119,10 @@ def main():
     args = [CHROME, "--headless=new", f"--remote-debugging-port={port}", f"--user-data-dir={profile}",
             "--no-proxy-server",
             "--no-first-run", "--window-size=1280,720", "--enable-unsafe-webgpu", "about:blank"]
+    # Chrome refuses to start as root with its sandbox enabled. GitHub's runner
+    # is non-root, so this only affects local/container verification.
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        args.insert(1, "--no-sandbox")
     if not a.gpu:
         # GitHub-hosted Linux runners have no physical GPU; explicitly select
         # SwiftShader's Vulkan backend for WebGPU as well as ANGLE for WebGL.

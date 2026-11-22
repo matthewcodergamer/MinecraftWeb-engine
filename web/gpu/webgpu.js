@@ -96,7 +96,11 @@
       }), 20000, 'WebGPU device request');
       G.features = new Set(requiredFeatures);
       G.queue = G.device.queue;
-      G.device.lost.then((info) => { G.lost = info; console.error('WebGPU device lost: ' + info.message); });
+      G.device.lost.then((info) => {
+        G.lost = info;
+        G.lostAt = performance.now();
+        console.error('WebGPU device lost: ' + info.message);
+      });
       G.device.addEventListener('uncapturederror', (e) => {
         if (G.errors.length < 50) G.errors.push(e.error.message);
         if (G.errors.length <= 20) console.error('WebGPU: ' + e.error.message);
@@ -107,7 +111,15 @@
       G.isFallback = !!(G.adapter.isFallbackAdapter || (info && info.isFallbackAdapter));
       G.ready = true;
       G.api = 'WebGPU';
+      // Keep every WebGPU handle reachable from the global scope. Chromium can
+      // collect a GPUAdapter/GPUDevice that only the Rust or TeaVM heap points
+      // at, which surfaces as "A valid external Instance reference no longer
+      // exists" during a long world load.
       globalThis.__mcGPU = G;
+      globalThis.__mcGpuApi = navigator.gpu;
+      globalThis.__mcGpuAdapter = G.adapter;
+      globalThis.__mcGpuDevice = G.device;
+      globalThis.__mcGpuQueue = G.queue;
       return true;
     } catch (e) {
       G.error = String(e && e.message || e);
@@ -864,22 +876,44 @@
   G.createFence = function () {
     G.submit();
     const f = { done: false };
-    G.queue.onSubmittedWorkDone().then(() => {
-      f.done = true;
-    }, (error) => {
-      // A rejected completion promise must not strand Java's Render thread.
-      // This can happen after device loss or invalid GPU command submission.
+    if (G.lost || !G.device || !G.queue) {
+      // A lost device never resolves onSubmittedWorkDone. Complete the fence
+      // immediately so Java's render thread can observe the failure instead of
+      // blocking forever.
       f.failed = true;
-      f.error = String(error && error.message || error);
+      f.error = G.lost ? String(G.lost.message || 'WebGPU device lost') : 'WebGPU device unavailable';
       f.done = true;
-      console.error('WebGPU fence completion failed: ' + f.error);
+      return put(f);
+    }
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      f.done = true;
+      if (error) {
+        // A rejected completion promise must not strand Java's Render thread.
+        // This can happen after device loss or invalid GPU command submission.
+        f.failed = true;
+        f.error = String(error && error.message || error);
+        console.error('WebGPU fence completion failed: ' + f.error);
+      }
+    };
+    // Last-resort guard for a wedged GPU process. Normal frames settle in a
+    // few milliseconds; a fence that takes 30 s means the device is gone.
+    const timer = setTimeout(() => finish('fence timed out after 30 s'), 30000);
+    G.queue.onSubmittedWorkDone().then(() => {
+      clearTimeout(timer);
+      finish();
+    }, (error) => {
+      clearTimeout(timer);
+      finish(error);
     });
     return put(f);
   };
   G.fenceDone = (id) => !G.obj[id] || G.obj[id].done;
   G.fencePromise = function (id) {
     const f = G.obj[id];
-    if (!f || f.done) return Promise.resolve();
+    if (!f || f.done || G.lost) return Promise.resolve();
     return G.queue.onSubmittedWorkDone();
   };
   G.destroyFence = (id) => release(id);

@@ -126,6 +126,10 @@
     pointer-events: auto !important;
     background: #000;
   }
+  /* The Java TitleScreen is now the only UI. Remove every other top-level
+     node, including the host canvases and ad iframes, so nothing can paint
+     over the Java pixels and their compositing layers stop costing memory. */
+  body.java-ui > :not(#mc-brain):not(script):not(style) { display: none !important; }
 
   #hint {
     position: fixed; left: 50%; top: calc(50px + env(safe-area-inset-top));
@@ -3048,12 +3052,17 @@
 
         if (params.get('java') !== '0') {
           let brain = false;
-          try {
-            brain = (await fetch('./clientmain.parts.json', { method: 'HEAD' })).ok;
-            if (!brain) {
-              brain = (await fetch('./clientmain.js', { method: 'HEAD' })).ok;
+          // WebAssembly is the primary client. Older deployments also shipped
+          // the split JavaScript bundle; accept either so a WASM-only Space
+          // still boots the real Java UI.
+          for (const probe of ['./clientmain.wasm', './clientmain.parts.json', './clientmain.js']) {
+            try {
+              brain = (await fetch(probe, { method: 'HEAD' })).ok;
+            } catch (e) {
+              brain = false;
             }
-          } catch (e) { brain = false; }
+            if (brain) break;
+          }
           if (brain) {
             const frame = $('mc-brain');
             frame.addEventListener('load', flushBrainQueue);
@@ -3063,7 +3072,7 @@
             // play.html prefers the WebAssembly client and only downloads the
             // split JavaScript bundle when WASM is unavailable. Forward the
             // explicit engine switches so QA can still force either backend.
-            let brainQuery = 'play.html?embedded=1&stats=0&v=20261122a';
+            let brainQuery = 'play.html?embedded=1&stats=0&v=20261122c';
             if (params.get('wasm') === '1') brainQuery += '&wasm=1';
             if (params.get('wasm') === '0') brainQuery += '&wasm=0';
             if (params.has('js')) brainQuery += '&js=' + encodeURIComponent(params.get('js'));

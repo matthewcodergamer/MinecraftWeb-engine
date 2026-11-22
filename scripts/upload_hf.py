@@ -19,6 +19,61 @@ import urllib.request
 
 from huggingface_hub import HfApi
 
+ARCHIVE_MAGIC = b"MCRS"
+
+
+def archive_index(path: str) -> dict:
+    """Read the small JSON index at the front of a packed resource archive."""
+    with open(path, "rb") as archive:
+        if archive.read(4) != ARCHIVE_MAGIC:
+            raise ValueError(f"{path} is not a packed Minecraft resource archive")
+        header = archive.read(4)
+        if len(header) != 4:
+            raise ValueError(f"{path} has a truncated archive header")
+        length = struct.unpack("<I", header)[0]
+        if length <= 0 or length > 64 * 1024 * 1024:
+            raise ValueError(f"{path} has an invalid archive index length {length}")
+        return json.loads(archive.read(length))
+
+
+def choose_resource_archive(resource_dir: str) -> str:
+    """Pick the newest complete archive instead of a stale 32 MB staging copy.
+
+    The full archive contains ICU4J timezone data and the complete GUI sprite
+    set. A jar-only smoke archive is missing those entries, which makes the
+    live client show fallback icons. Prefer the explicit deployment archive,
+    then the staged copy, then the ICU-merged archive produced by the build.
+    """
+    candidates = [
+        os.environ.get("HF_RESOURCES_ARCHIVE"),
+        os.path.join(resource_dir, "client-resources.bin"),
+        "/tmp/client-resources-icu-merged.bin",
+        os.path.join("build", "web", "client-resources.bin"),
+    ]
+    valid = []
+    for candidate in candidates:
+        if not candidate or not os.path.isfile(candidate):
+            continue
+        try:
+            index = archive_index(candidate)
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            print(f"ignoring resource archive {candidate}: {error}")
+            continue
+        valid.append((os.path.getsize(candidate), candidate, index))
+    if not valid:
+        raise SystemExit("no valid client-resources.bin archive was found")
+    size, path, index = max(valid, key=lambda item: item[0])
+    has_icons = any(key.endswith("textures/gui/sprites/icon/language.png") for key in index)
+    has_zoneinfo = any(key.endswith("zoneinfo64.res") for key in index)
+    print(f"selected resource archive {path}: {size:,} bytes, {len(index):,} entries, "
+          f"icons={has_icons}, icu-zoneinfo={has_zoneinfo}")
+    if (size < 50_000_000 or not has_icons or not has_zoneinfo) and os.environ.get("HF_ALLOW_SMALL_RESOURCES") != "1":
+        raise SystemExit(
+            "refusing to deploy a stale/incomplete resource archive; "
+            "set HF_RESOURCES_ARCHIVE to the full archive or HF_ALLOW_SMALL_RESOURCES=1"
+        )
+    return path
+
 
 def space_url(repo: str) -> str:
     """Public static URL for a Hugging Face Space repo id."""
@@ -155,8 +210,12 @@ def main() -> int:
     # before the shell so the Java client never starts against a stale archive
     # (the ICU4J timezone data lives here, not in the JavaScript bundle).
     resource_dir = os.path.join(os.path.dirname(src), "resources")
-    for name in ("client-resources.bin", "client-textures.bin"):
-        source_path = os.path.join(resource_dir, name)
+    resource_archive = choose_resource_archive(resource_dir)
+    resource_sources = {
+        "client-resources.bin": resource_archive,
+        "client-textures.bin": os.path.join(resource_dir, "client-textures.bin"),
+    }
+    for name, source_path in resource_sources.items():
         if not os.path.exists(source_path):
             print(f"skipping missing resource archive {source_path}")
             continue
