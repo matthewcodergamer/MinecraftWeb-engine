@@ -116,9 +116,13 @@ def main():
 
     profile = tempfile.mkdtemp()
     port = 9300 + os.getpid() % 500
-    args = [CHROME, "--headless=new", f"--remote-debugging-port={port}", f"--user-data-dir={profile}",
-            "--no-proxy-server",
-            "--no-first-run", "--window-size=1280,720", "--enable-unsafe-webgpu", "about:blank"]
+    headless = os.environ.get("CHROME_HEADLESS", "1") != "0"
+    args = [CHROME]
+    if headless:
+        args.append("--headless=new")
+    args += [f"--remote-debugging-port={port}", f"--user-data-dir={profile}",
+             "--no-proxy-server",
+             "--no-first-run", "--window-size=1280,720", "--enable-unsafe-webgpu", "about:blank"]
     # Chrome refuses to start as root with its sandbox enabled. GitHub's runner
     # is non-root, so this only affects local/container verification.
     if hasattr(os, "geteuid") and os.geteuid() == 0:
@@ -132,6 +136,9 @@ def main():
             "--disable-vulkan-surface",
             "--use-angle=swiftshader",
         ]
+    extra_flags = os.environ.get("CHROME_FLAGS", "").split()
+    if extra_flags:
+        args[1:1] = extra_flags
     chrome = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     ok = False
     browser_errors = []

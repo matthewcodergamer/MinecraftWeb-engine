@@ -1,7 +1,6 @@
 package mcport.rt.patch;
 
 import java.io.IOException;
-import java.util.zip.GZIPOutputStream;
 
 /**
  * TeaVM 0.16's {@code Deflater.deflate} throws when jzlib returns
@@ -14,7 +13,7 @@ public final class ZlibPatches {
     private ZlibPatches() {
     }
 
-    public static void gzipFlush(GZIPOutputStream stream) throws IOException {
+    public static void gzipFlush(Object stream) throws IOException {
         // Intentionally empty. GZIPOutputStream.close() -> finish() emits all
         // buffered deflate output without using the broken sync-flush path.
     }
