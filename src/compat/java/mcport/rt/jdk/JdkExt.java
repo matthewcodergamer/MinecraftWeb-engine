@@ -214,16 +214,17 @@ public final class JdkExt {
         return null;
     }
 
-    /** Class.getModule(): the browser runtime has no module layer; consumers below treat it as absent. */
-    public static Object classGetModule(Class<?> cls) {
-        return null;
+    /** Class.getModule(): the browser runtime has no module layer; return a stable probe target. */
+    public static java.lang.Module classGetModule(Class<?> cls) {
+        return java.lang.ModuleLayer.boot().modules().iterator().next();
     }
 
-    public static Object moduleGetLayer(Object module) {
-        return null;
+    public static java.lang.ModuleLayer moduleGetLayer(java.lang.Module module) {
+        return java.lang.ModuleLayer.boot();
     }
 
-    public static java.util.Optional<Object> moduleLayerFindModule(Object layer, String name) {
+    public static java.util.Optional<java.lang.Module> moduleLayerFindModule(
+            java.lang.ModuleLayer layer, String name) {
         return java.util.Optional.empty();
     }
 
