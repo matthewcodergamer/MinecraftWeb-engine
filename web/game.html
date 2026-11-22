@@ -1744,6 +1744,7 @@
         };
         state.javaStage = stage;
         state.javaBoot = Math.max(state.javaBoot, milestones[stage] || 0);
+        window.__mc = Object.assign(window.__mc || {}, { javaStage: stage });
         if (!state.done && !state.failed) status('Java startup: ' + stage.replace(/-/g, ' '));
         progress();
       } else if (data.type === 'world-upgrade-progress') {
