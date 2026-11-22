@@ -9,9 +9,87 @@ Environment fallbacks: HF_REPO, HF_PATH (default "web"), HF_REPO_TYPE (default "
 import glob
 import json
 import os
+import re
+import shutil
+import struct
+import subprocess
 import sys
+import time
+import urllib.request
 
 from huggingface_hub import HfApi
+
+
+def space_url(repo: str) -> str:
+    """Public static URL for a Hugging Face Space repo id."""
+    owner, name = repo.split("/", 1)
+    slug = re.sub(r"[^a-z0-9-]+", "-", f"{owner}-{name}".lower()).strip("-")
+    return f"https://{slug}.static.hf.space/"
+
+
+def wait_for_shell(url: str, timeout: int = 180) -> bool:
+    """Wait until the Space serves the shell that reveals the Java UI."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=30) as response:
+                body = response.read()
+            if b"java-ui" in body:
+                print(f"live shell is serving the Java UI at {url}")
+                return True
+            print("live shell is still the previous build; waiting...")
+        except Exception as error:
+            print(f"live shell not ready yet: {error}")
+        time.sleep(5)
+    return False
+
+
+def verify_live_title(url: str) -> bool:
+    """Open the public Space and prove the real Java TitleScreen is the UI."""
+    chrome = shutil.which("google-chrome") or shutil.which("chromium")
+    if not chrome:
+        print("Chrome is not installed; skipping the live TitleScreen check")
+        return True
+    os.makedirs("build", exist_ok=True)
+    command = [
+        sys.executable, "scripts/cdp.py", url,
+        "--timeout", "600",
+        "--until-js",
+        "window.__mc && window.__mc.stage === 'complete' && window.__mc.ui === 'java'",
+        "--assert-js",
+        "(() => { const f = document.getElementById('mc-brain');"
+        " const m = f && f.contentWindow && f.contentWindow.__mc;"
+        " const b = m && String(m['boot-state'] || '');"
+        " return !!(b && b.indexOf('screen=net.minecraft.client.gui.screens.TitleScreen') >= 0"
+        " && b.indexOf('loadFinished=true') >= 0); })()",
+        "--screenshot", "build/live-title.png",
+    ]
+    print("verifying the live Java TitleScreen: " + " ".join(command))
+    result = subprocess.run(command, env=dict(os.environ, CHROME=chrome))
+    if result.returncode != 0:
+        print("live TitleScreen verification failed", file=sys.stderr)
+        for name in ("build/browser_error.txt", "build/browser_console.log"):
+            try:
+                with open(name, encoding="utf-8", errors="replace") as log:
+                    print(f"--- {name} (tail) ---", file=sys.stderr)
+                    print(log.read()[-12000:], file=sys.stderr)
+            except OSError:
+                pass
+        return False
+    try:
+        with open("build/live-title.png", "rb") as screenshot:
+            data = screenshot.read()
+        if data[:8] != b"\x89PNG\r\n\x1a\n" or len(data) < 24:
+            raise ValueError("not a valid PNG")
+        width, height = struct.unpack(">II", data[16:24])
+        if width < 640 or height < 360:
+            raise ValueError(f"screenshot too small: {width}x{height}")
+        print(f"live screenshot: {width}x{height}, {len(data)} bytes")
+    except Exception as error:
+        print(f"live screenshot check failed: {error}", file=sys.stderr)
+        return False
+    print(f"live Java TitleScreen verified at {url}")
+    return True
 
 
 def main() -> int:
@@ -98,6 +176,17 @@ def main() -> int:
         )
         uploaded += 1
     print(f"uploaded {uploaded} browser shell files to {repo}")
+
+    # Prove the public default URL, not just the uploaded bytes, shows the real
+    # Java TitleScreen. Skip this when publishing to a subfolder, because the
+    # Space root then still serves a different shell.
+    if repo_type == "space" and not path_in_repo:
+        url = space_url(repo)
+        if not wait_for_shell(url):
+            print(f"the live shell at {url} did not update in time", file=sys.stderr)
+            return 1
+        if not verify_live_title(url):
+            return 1
     return 0
 
 
