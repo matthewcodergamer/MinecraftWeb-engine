@@ -138,6 +138,9 @@ const fail = (t) => {
   if (window.mcBridge) mcBridge.javaError(t);
 };
 Error.stackTraceLimit = 100;
+// Fiber/monitor tracing is useful while debugging the runtime but emits
+// thousands of CDP console events and slows world creation. Keep it opt-in.
+window.__mcVerbose = /[?&]verbose=1/.test(location.search);
 window.__mcLog = (lvl, text) => console.log('[' + lvl + '] ' + text);
 window.__mcExit = (status) => {
   msg('Minecraft exited (' + status + ')');

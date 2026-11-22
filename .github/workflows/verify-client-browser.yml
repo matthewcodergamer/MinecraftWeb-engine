@@ -29,7 +29,9 @@ permissions:
 jobs:
   client-browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # The Java->Wasm build is ~35 minutes; leave enough room for the
+    # software-WebGPU singleplayer smoke test instead of cancelling it at 60.
+    timeout-minutes: 110
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -138,8 +140,8 @@ jobs:
           SERVER_PID=$!
           trap "kill $SERVER_PID" EXIT
           sleep 2
-          python3 scripts/cdp.py "http://127.0.0.1:8765/game.html?smoke-world=1&wasm=1" \
-            --timeout 1800 \
+          python3 scripts/cdp.py "http://127.0.0.1:8765/game.html?smoke-world=1&wasm=1&diag=1" \
+            --timeout 3000 \
             --preload-js "try { sessionStorage.setItem('mw_play_pass', String(Date.now())); } catch (e) {}" \
             --screenshot build/browser_title_or_world.png \
             --until-js "window.__mc && (window.__mc.stage === 'failed' || window.__mc.javaStage === 'first-java-section-emitted')" \

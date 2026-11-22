@@ -1421,6 +1421,47 @@
       catch (_) { return 0; }
     }
 
+    /* Periodic state dump for CI and remote diagnosis. It lives on the top
+       page and reads the Java iframe through the same origin, so a stuck
+       render thread still leaves a trail of boot-state and stage reports. */
+    function installStateLogger() {
+      if (params.get('diag') !== '1' && params.get('smoke-world') !== '1') return;
+      setInterval(() => {
+        try {
+          const frame = document.getElementById('mc-brain');
+          const win = frame && frame.contentWindow;
+          const brain = (win && win.__mc) || {};
+          const top = window.__mc || {};
+          const bridge = (mcBridge && mcBridge.state) || {};
+          const canvas = win && win.__mcSDL && win.__mcSDL.canvas;
+          const gpu = win && win.__mcWebGPU;
+          let bodySections = -1;
+          try {
+            if (bridge.module && typeof bridge.module.java_section_count === 'function') {
+              bodySections = Number(bridge.module.java_section_count()) || 0;
+            }
+          } catch (_) {}
+          console.log('[MW_STATE] ' + JSON.stringify({
+            t: Math.round(performance.now()),
+            stage: top.stage || '',
+            javaStage: top.javaStage || brain.javaStage || '',
+            iframeStage: brain.stage || '',
+            boot: brain['boot-state'] || '',
+            crash: brain['crash-report'] || '',
+            error: brain.error || bridge.error || '',
+            bodyReady: !!window.__mcBodyReady,
+            frame: Number(gpu && gpu.frame) || 0,
+            canvas: canvas ? canvas.width + 'x' + canvas.height : '',
+            sections: bridge.sections || 0,
+            bodySections,
+          }));
+        } catch (e) {
+          console.log('[MW_STATE] logger failed: ' + (e && e.message || e));
+        }
+      }, 10000);
+    }
+    installStateLogger();
+
     function fail(error, detail) {
       if (state.failed) return;
       state.failed = true;
@@ -1509,9 +1550,9 @@
           reveal();
           return;
         }
-        if (performance.now() - started > 600000) {
+        if (performance.now() - started > 1200000) {
           clearInterval(javaUiWatch);
-          fail(new Error('The Java client did not render its title screen within 10 minutes.'),
+          fail(new Error('The Java client did not render its title screen within 20 minutes.'),
             'Last Java stage: ' + (state.javaStage || 'unknown'));
         }
       }, 250);
@@ -2655,9 +2696,13 @@
           seed: '26032603',
           mode: 'creative',
           difficulty: 'peaceful',
-          type: 'default',
+          // A superflat world keeps the CI smoke test focused on the
+          // Java-to-Rust handoff. Normal world generation is exercised by the
+          // real title-screen flow; the integrated server's spawn-chunk load
+          // for a normal preset is far too slow on a software WebGPU runner.
+          type: 'flat',
           commands: true,
-          structures: true,
+          structures: false,
           bonus: false,
           keepInv: false,
           daylight: true,

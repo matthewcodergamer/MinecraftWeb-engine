@@ -68,6 +68,7 @@ public final class ChunkBridge {
     private static boolean installed;
     private static boolean firstPumpLogged;
     private static int bootStateReports;
+    private static boolean firstLevelCreatedLogged;
     private static boolean firstLevelPlayerLogged;
     private static boolean firstScanLogged;
     private static boolean firstSectionLogged;
@@ -104,6 +105,9 @@ public final class ChunkBridge {
         rulesApplied = false;
         lastScan = 0L;
         titleSeenAt = 0L;
+        firstLevelCreatedLogged = false;
+        firstLevelPlayerLogged = false;
+        firstScanLogged = false;
         emitReset();
     }
 
@@ -119,6 +123,10 @@ public final class ChunkBridge {
         reportBootState(minecraft);
         maybeStartWorld(minecraft);
         if (minecraft.level == null || minecraft.player == null) {
+            if (minecraft.level != null && !firstLevelCreatedLogged) {
+                firstLevelCreatedLogged = true;
+                BrowserRuntime.report("stage", "world-level-created");
+            }
             return;
         }
         if (!firstLevelPlayerLogged) {
@@ -189,7 +197,10 @@ public final class ChunkBridge {
                         + " screen=" + (screen == null ? "null" : screen.getClass().getName())
                         + " loadFinished=" + minecraft.isGameLoadFinished()
                         + " worldAuto=" + worldAuto()
-                        + " worldRequested=" + hostWorldRequested());
+                        + " worldRequested=" + hostWorldRequested()
+                        + " level=" + (minecraft.level != null)
+                        + " player=" + (minecraft.player != null)
+                        + " sent=" + SENT.size());
     }
 
     /**

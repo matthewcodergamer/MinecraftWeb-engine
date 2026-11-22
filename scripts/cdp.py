@@ -112,6 +112,8 @@ def main():
     ap.add_argument("--dpr", type=float, default=2.0, help="device scale factor for --viewport")
     ap.add_argument("--gpu", action="store_true", help="use the real GPU instead of SwiftShader")
     ap.add_argument("--quiet", action="store_true", help="do not stream console output")
+    ap.add_argument("--state-every", type=float, default=15.0,
+                    help="log a compact page/Java state snapshot every N seconds (0 disables)")
     a = ap.parse_args()
 
     profile = tempfile.mkdtemp()
@@ -143,18 +145,23 @@ def main():
     ok = False
     browser_errors = []
     browser_console = []
+    os.makedirs("build", exist_ok=True)
+    # Keep both diagnostics files open in append mode. CI can kill the job at
+    # any moment; rewriting the whole log on every console event used to leave
+    # an empty file behind when the process died mid-write.
+    console_file = open(os.path.join("build", "browser_console.log"), "w", encoding="utf-8", buffering=1)
+    error_file = open(os.path.join("build", "browser_error.txt"), "w", encoding="utf-8", buffering=1)
+    error_count = 0
+
+    def record(line):
+        browser_console.append(line)
+        console_file.write(line + "\n")
+        console_file.flush()
 
     def flush_diagnostics():
         try:
-            os.makedirs("build", exist_ok=True)
-            with open(os.path.join("build", "browser_console.log"), "w", encoding="utf-8") as console_file:
-                console_file.write("\n".join(browser_console) + ("\n" if browser_console else ""))
-            with open(os.path.join("build", "browser_error.txt"), "w", encoding="utf-8") as error_file:
-                if browser_errors:
-                    error_file.write("\n\n".join(browser_errors) + "\n")
-                else:
-                    error_file.write("No Chrome compile/runtime error was captured by CDP. "
-                                     "Check the smoke-test step output for timeout or assertion details.\n")
+            console_file.flush()
+            error_file.flush()
         except Exception:
             pass
 
@@ -180,9 +187,13 @@ def main():
         t0 = time.time()
 
         def save_browser_error(message):
-            message = str(message).strip()
+            nonlocal error_count
+            message = str(message).strip()[:12000]
             if message and message not in browser_errors:
-                browser_errors.append(message[:12000])
+                browser_errors.append(message)
+                error_count += 1
+                error_file.write(message + "\n\n")
+                error_file.flush()
 
         def pump(msg):
             m = msg.get("method")
@@ -192,7 +203,7 @@ def main():
                 if params.get("type") == "error" or any(token in message.lower() for token in ("webassembly.compile", "compileerror", "br_on_cast", "global.set")):
                     save_browser_error("console." + params.get("type", "log") + ": " + message)
                 console_line = "{:7.2f}s console.{}: {}".format(time.time() - t0, params["type"], message)
-                browser_console.append(console_line)
+                record(console_line)
                 if not a.quiet:
                     print(console_line[:12000], flush=True)
             elif m == "Runtime.exceptionThrown":
@@ -200,7 +211,7 @@ def main():
                 detail = d.get("exception", {}).get("description", d.get("text", "Unknown page exception"))
                 save_browser_error("Uncaught browser exception: " + detail)
                 exception_line = "{:7.2f}s EXCEPTION: {}".format(time.time() - t0, detail)
-                browser_console.append(exception_line)
+                record(exception_line)
                 if not a.quiet:
                     print(exception_line[:12000], flush=True)
             elif m == "Network.responseReceived":
@@ -209,18 +220,18 @@ def main():
                 if status >= 400:
                     detail = "HTTP {} {} ({})".format(status, response.get("url", ""), response.get("statusText", ""))
                     failed_requests.append(detail)
-                    browser_console.append("{:7.2f}s NETWORK: {}".format(time.time() - t0, detail))
+                    record("{:7.2f}s NETWORK: {}".format(time.time() - t0, detail))
                     save_browser_error(detail)
             elif m == "Network.loadingFailed":
                 params = msg.get("params", {})
                 detail = "Network load failed: {} ({})".format(params.get("errorText", ""), params.get("requestId", ""))
                 failed_requests.append(detail)
-                browser_console.append("{:7.2f}s NETWORK: {}".format(time.time() - t0, detail))
+                record("{:7.2f}s NETWORK: {}".format(time.time() - t0, detail))
                 save_browser_error(detail)
             elif m == "Log.entryAdded":
                 entry = msg.get("params", {}).get("entry", {})
                 message = entry.get("text", "")
-                browser_console.append("{:7.2f}s chrome.{}: {}".format(
+                record("{:7.2f}s chrome.{}: {}".format(
                     time.time() - t0, entry.get("level", "log"), message))
                 if entry.get("level") == "error" or any(token in message.lower() for token in ("webassembly.compile", "compileerror", "br_on_cast", "global.set")):
                     save_browser_error("Chrome log: " + message)
@@ -268,12 +279,36 @@ def main():
             return top.stage === 'failed' || !!top.error || !!brain.error || !!bridge.error
                 || !!window.__mcBodyError;
         })()"""
+        state_js = """(() => {
+            const f = document.getElementById('mc-brain');
+            const w = f && f.contentWindow;
+            const b = (w && w.__mc) || {};
+            const top = window.__mc || {};
+            const bridge = (window.mcBridge && window.mcBridge.state) || {};
+            const canvas = w && w.__mcSDL && w.__mcSDL.canvas;
+            const gpu = w && w.__mcWebGPU;
+            let bodySections = -1;
+            try { if (bridge.module && bridge.module.java_section_count) bodySections = Number(bridge.module.java_section_count()) || 0; } catch (e) {}
+            return JSON.stringify({t:Math.round(performance.now()),stage:top.stage||'',javaStage:top.javaStage||b.javaStage||'',iframeStage:b.stage||'',boot:b['boot-state']||'',crash:b['crash-report']||'',error:b.error||bridge.error||'',bodyReady:!!window.__mcBodyReady,frame:Number(gpu&&gpu.frame)||0,canvas:canvas?canvas.width+'x'+canvas.height:'',sections:bridge.sections||0,bodySections});
+        })()"""
         deadline = time.time() + a.timeout
+        last_state = 0.0
         while time.time() < deadline:
             msg = ws.recv(0.5)
             if msg:
                 pump(msg)
                 continue
+            if a.state_every and time.time() - last_state >= a.state_every:
+                last_state = time.time()
+                try:
+                    r = ws.call("Runtime.evaluate", {"expression": state_js, "returnByValue": True},
+                                pump=pump, timeout_sec=5)
+                    value = r.get("result", {}).get("result", {}).get("value")
+                    line = "{:7.2f}s STATE: {}".format(time.time() - t0, value)
+                    record(line)
+                    print(line[:12000], flush=True)
+                except TimeoutError:
+                    print(f"{time.time() - t0:7.2f}s STATE: evaluate stalled; main thread may be blocked", flush=True)
             try:
                 r = ws.call("Runtime.evaluate", {"expression": f"!!({a.until_js})", "returnByValue": True},
                             pump=pump, timeout_sec=10)
@@ -351,6 +386,15 @@ def main():
             print("skipping requested screenshot: page did not become responsive", flush=True)
     finally:
         flush_diagnostics()
+        try:
+            if error_count == 0:
+                error_file.write("No Chrome compile/runtime error was captured by CDP. "
+                                 "Check the smoke-test step output for timeout or assertion details.\n")
+                error_file.flush()
+            error_file.close()
+            console_file.close()
+        except Exception:
+            pass
         print("Full browser console -> build/browser_console.log", flush=True)
         print("Browser diagnostics -> build/browser_error.txt", flush=True)
         chrome.kill()
