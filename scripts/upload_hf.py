@@ -45,7 +45,7 @@ def wait_for_shell(url: str, timeout: int = 180) -> bool:
 
 
 def verify_live_title(url: str) -> bool:
-    """Open the public Space and prove the real Java TitleScreen is the UI."""
+    """Open the public Space and prove the real Java TitleScreen uses WASM."""
     chrome = shutil.which("google-chrome") or shutil.which("chromium")
     if not chrome:
         print("Chrome is not installed; skipping the live TitleScreen check")
@@ -62,6 +62,9 @@ def verify_live_title(url: str) -> bool:
         " const b = m && String(m['boot-state'] || '');"
         " return !!(b && b.indexOf('screen=net.minecraft.client.gui.screens.TitleScreen') >= 0"
         " && b.indexOf('loadFinished=true') >= 0); })()",
+        "--assert-js",
+        "(() => { const f = document.getElementById('mc-brain');"
+        " return !!(f && f.contentWindow && f.contentWindow.__mcEngine === 'wasm'); })()",
         "--screenshot", "build/live-title.png",
     ]
     print("verifying the live Java TitleScreen: " + " ".join(command))
@@ -108,8 +111,9 @@ def main() -> int:
 
     files = sorted(glob.glob(os.path.join(src, "*")))
     if not files:
-        print(f"nothing to upload in {src}", file=sys.stderr)
-        return 2
+        # WebAssembly-only deployments have no split JavaScript parts. Keep
+        # going so the WASM module, resource archives and shell still publish.
+        print(f"no split JavaScript parts staged in {src}; continuing with WASM/resources/shell")
 
     api = HfApi(token=token)
     for f in files:
@@ -146,6 +150,46 @@ def main() -> int:
                     commit_message=f"clientmain: remove stale {name}",
                 )
 
+    # Resource archives are packed from the user's own Minecraft installation
+    # and are too large for git. When staged next to the parts, deploy them
+    # before the shell so the Java client never starts against a stale archive
+    # (the ICU4J timezone data lives here, not in the JavaScript bundle).
+    resource_dir = os.path.join(os.path.dirname(src), "resources")
+    for name in ("client-resources.bin", "client-textures.bin"):
+        source_path = os.path.join(resource_dir, name)
+        if not os.path.exists(source_path):
+            print(f"skipping missing resource archive {source_path}")
+            continue
+        target = f"{path_in_repo}/{name}" if path_in_repo else name
+        print(f"uploading {name} ({os.path.getsize(source_path):,} bytes) -> {repo}:{target}")
+        api.upload_file(
+            path_or_fileobj=source_path,
+            path_in_repo=target,
+            repo_id=repo,
+            repo_type=repo_type,
+            commit_message=f"resources: deploy {name}",
+        )
+
+    # WebAssembly is the primary client. Stage it next to the parts (the WASM
+    # probe workflow publishes these files) and upload it before the shell, so
+    # a new play.html never points at a module that is not live yet. When the
+    # files are absent, the shell's JavaScript fallback still works.
+    wasm_dir = os.path.join(os.path.dirname(src), "wasm")
+    for name in ("clientmain.wasm-runtime.js", "clientmain.wasm"):
+        source_path = os.path.join(wasm_dir, name)
+        if not os.path.exists(source_path):
+            print(f"skipping missing WASM file {source_path}")
+            continue
+        target = f"{path_in_repo}/{name}" if path_in_repo else name
+        print(f"uploading {name} ({os.path.getsize(source_path):,} bytes) -> {repo}:{target}")
+        api.upload_file(
+            path_or_fileobj=source_path,
+            path_in_repo=target,
+            repo_id=repo,
+            repo_type=repo_type,
+            commit_message=f"wasm: deploy {name}",
+        )
+
     # The Space also serves the browser shell. Deploy it with the bundle so the
     # live site cannot keep an older game.html that hides the real Java
     # TitleScreen behind the HTML launcher. index.html is the Space root, so it
@@ -157,6 +201,16 @@ def main() -> int:
         ("bridge.js", "bridge.js"),
         ("input.js", "input.js"),
         ("gpu/webgpu.js", "gpu/webgpu.js"),
+        ("native/heap.js", "native/heap.js"),
+        ("native/layout.js", "native/layout.js"),
+        ("native/layout-shaders.js", "native/layout-shaders.js"),
+        ("native/loading.js", "native/loading.js"),
+        ("native/natives.js", "native/natives.js"),
+        ("native/sdl.js", "native/sdl.js"),
+        ("native/shaders.js", "native/shaders.js"),
+        ("native/stb.js", "native/stb.js"),
+        ("site.webmanifest", "site.webmanifest"),
+        ("ui/grass_block_icon.svg", "ui/grass_block_icon.svg"),
         ("game.html", "index.html"),
     ]
     uploaded = 0

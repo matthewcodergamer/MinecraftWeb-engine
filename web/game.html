@@ -1362,6 +1362,13 @@
     const panoramaImages = [];
     let panoramaDone = false;
     function warmPanorama() {
+      // The real Java TitleScreen draws its own panorama. On a phone the HTML
+      // launcher is only a short-lived boot shell, so decoding six 1024² faces
+      // here would spend ~24 MB of the tab's memory budget for nothing.
+      if (matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window) {
+        console.log('menu panorama skipped on touch; the Java TitleScreen owns the backdrop');
+        return;
+      }
       let left = FACES.length;
       const ready = () => {
         if (panoramaDone) return;
@@ -3053,7 +3060,14 @@
             // Let the client pick its own render scale (devicePixelRatio,
             // capped at 2). Forcing scale=0.5 stretched a half-resolution
             // canvas over the viewport and clipped the GUI text.
-            frame.src = 'play.html?embedded=1&stats=0&v=20261121b' + (params.get('wasm') === '1' ? '&wasm=1' : '');
+            // play.html prefers the WebAssembly client and only downloads the
+            // split JavaScript bundle when WASM is unavailable. Forward the
+            // explicit engine switches so QA can still force either backend.
+            let brainQuery = 'play.html?embedded=1&stats=0&v=20261122a';
+            if (params.get('wasm') === '1') brainQuery += '&wasm=1';
+            if (params.get('wasm') === '0') brainQuery += '&wasm=0';
+            if (params.has('js')) brainQuery += '&js=' + encodeURIComponent(params.get('js'));
+            frame.src = brainQuery;
             watchJavaTitleScreen(frame);
           } else {
             console.warn('clientmain.js not deployed — renderer-only mode');

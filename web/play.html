@@ -44,14 +44,14 @@
 <body>
 <div id="boot"><div id="boot-msg">Starting…</div><div class="bar"><div id="boot-bar"></div></div><pre id="boot-err"></pre></div>
 <div id="stats"></div>
-<script src="native/layout.js"></script>
-<script src="native/layout-shaders.js"></script>
-<script src="native/heap.js"></script>
-<script src="native/natives.js"></script>
-<script src="native/sdl.js"></script>
-<script src="native/shaders.js"></script>
-<script src="native/stb.js"></script>
-<script src="gpu/webgpu.js?v=20261121b"></script>
+<script src="native/layout.js?v=20261122b"></script>
+<script src="native/layout-shaders.js?v=20261122b"></script>
+<script src="native/heap.js?v=20261122b"></script>
+<script src="native/natives.js?v=20261122b"></script>
+<script src="native/sdl.js?v=20261122b"></script>
+<script src="native/shaders.js?v=20261122b"></script>
+<script src="native/stb.js?v=20261122b"></script>
+<script src="gpu/webgpu.js?v=20261122b"></script>
 <script src="bridge.js"></script>
 <script>
 // Host page of the browser port: loads the client jar's resources (packed from the user's own installation),
@@ -258,35 +258,59 @@ async function downloadPart(url, expected, onBytes) {
   return chunks;
 }
 
+async function loadWasmBrain() {
+  await loadClassicScript('clientmain.wasm-runtime.js');
+  if (!window.TeaVM || !TeaVM.wasmGC || typeof TeaVM.wasmGC.load !== 'function') {
+    throw new Error('TeaVM Wasm GC runtime did not expose TeaVM.wasmGC.load');
+  }
+  const teavm = await TeaVM.wasmGC.load('clientmain.wasm', {
+    installImports(imports) {
+      imports.mcHeap = {
+        heapView(addr, len) {
+          const heap = globalThis.__mcHeap;
+          if (!heap || !heap.buffer) throw new Error('mcHeap buffer is not initialized');
+          return new Int8Array(heap.buffer, addr, len);
+        },
+        isHeapView(view) {
+          const heap = globalThis.__mcHeap;
+          return !!(heap && heap.buffer && view && view.buffer === heap.buffer);
+        },
+      };
+    },
+  });
+  window.__mcTeaVM = teavm;
+  window.__mcRunMain = () => teavm.exports.main([]);
+  window.__mcEngine = 'wasm';
+  reportBootStage('wasm-gc-module-instantiated');
+}
+
 async function loadBrain() {
   reportBootStage('client-bundle-load-enter');
-  if (params.get('wasm') === '1') {
-    await loadClassicScript('clientmain.wasm-runtime.js');
-    if (!window.TeaVM || !TeaVM.wasmGC || typeof TeaVM.wasmGC.load !== 'function') {
-      throw new Error('TeaVM Wasm GC runtime did not expose TeaVM.wasmGC.load');
+  // WebAssembly is the primary engine: the module compiles once and avoids the
+  // ~266 MiB JavaScript bundle, which is what exhausts mobile browser memory.
+  // The split JavaScript client remains as a fallback for browsers without
+  // Wasm GC (or when the WASM files are not deployed).
+  const forceWasm = params.get('wasm') === '1';
+  const forceJs = params.get('wasm') === '0' || params.has('js');
+  if (!forceJs) {
+    try {
+      await loadWasmBrain();
+      return;
+    } catch (error) {
+      if (forceWasm) throw error;
+      console.warn('WebAssembly client unavailable; falling back to JavaScript: ' +
+        (error && error.message ? error.message : error));
+      reportBootStage('wasm-gc-fallback', error && error.message ? error.message : String(error));
+      try { delete window.TeaVM; } catch (e) { /* ignore */ }
+      window.__mcTeaVM = null;
+      window.__mcRunMain = null;
+      window.__mcEngine = 'js';
     }
-    const teavm = await TeaVM.wasmGC.load('clientmain.wasm', {
-      installImports(imports) {
-        imports.mcHeap = {
-          heapView(addr, len) {
-            const heap = globalThis.__mcHeap;
-            if (!heap || !heap.buffer) throw new Error('mcHeap buffer is not initialized');
-            return new Int8Array(heap.buffer, addr, len);
-          },
-          isHeapView(view) {
-            const heap = globalThis.__mcHeap;
-            return !!(heap && heap.buffer && view && view.buffer === heap.buffer);
-          },
-        };
-      },
-    });
-    window.__mcTeaVM = teavm;
-    window.__mcRunMain = () => teavm.exports.main([]);
-    reportBootStage('wasm-gc-module-instantiated');
-    return;
+  } else {
+    window.__mcEngine = 'js';
   }
   const explicit = params.get('js');
-  if (explicit) {
+  if (explicit && explicit !== '1') {
     await loadClassicScript(explicit + '.js');
     return;
   }
