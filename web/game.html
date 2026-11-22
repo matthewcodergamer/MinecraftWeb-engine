@@ -983,8 +983,9 @@
     <div class="bar" aria-hidden="true"></div>
   </div>
 
-  <!-- 2. Main menu: rotating 26.3 panorama, logo, splash, five buttons. -->
-  <div id="menu" class="open">
+  <!-- 2. HTML fallback launcher. Hidden by default: the real Java TitleScreen
+       is the UI. Only explicit QA/renderer-only modes open this shell. -->
+  <div id="menu">
     <div class="pano" id="pano" aria-hidden="true">
       <div class="pano-cube">
         <div class="pano-face f0"></div>
@@ -1219,15 +1220,16 @@
           allow="autoplay; fullscreen"
           style="position:fixed;inset:0;width:100%;height:100%;border:0;opacity:0;z-index:0;pointer-events:none"></iframe>
 
-  <!-- 4. World-generation loading: dirt, stretched, progress bar. -->
-  <div id="loading" class="hidden">
+  <!-- 4. Boot/world loading: dirt, stretched, progress bar. Visible from the
+       first paint while the real Java WebAssembly client initializes. -->
+  <div id="loading">
     <div class="dirt-layer" aria-hidden="true"></div>
     <div class="load-scrim" aria-hidden="true"></div>
     <div id="load-title">Failed to start</div>
     <div id="progress-wrap">
       <div class="load-row">
         <div id="load-block" aria-hidden="true"></div>
-        <div id="progress-text">Loading terrain...</div>
+        <div id="progress-text">Starting Java client…</div>
       </div>
       <div id="progress"><div id="progress-fill"></div></div>
     </div>
@@ -1258,6 +1260,13 @@
     const menu = $('menu');
     const pano = $('pano');
 
+    // The HTML launcher is a QA/renderer-only fallback, not the boot UI. A
+    // normal visit waits on the dirt loading screen until Java has actually
+    // rendered its TitleScreen; the fake HTML menu is never shown as if Java
+    // had started.
+    const HTML_UI = params.get('html-ui') === '1' || params.get('java') === '0'
+      || params.get('smoke-world') === '1' || !!params.get('screen');
+
     const state = {
       rust: 0,
       java: 0,
@@ -1267,15 +1276,25 @@
       javaReady: false,
       worldAck: false,
       brainMissing: false,
+      bodyWarned: false,
+      javaUiLive: false,
       minUntil: performance.now() + 700,
       firstChunk: false,
       firstChunkAt: 0,
       failed: false,
       done: false,
-      menuOpen: true,
+      menuOpen: HTML_UI,
       booted: false,
       mode: 'survival',
     };
+    if (!HTML_UI) {
+      menu.classList.remove('open');
+      loading.classList.remove('hidden', 'done');
+      status('Starting Java client…');
+    } else {
+      menu.classList.add('open');
+      loading.classList.add('hidden');
+    }
 
     /* ------------------------------------------------------------ splash/menu */
     const menuGui = $('menu-gui');
@@ -1369,7 +1388,12 @@
       splash.classList.add('done');
       setTimeout(() => { if (splash.parentNode) splash.remove(); }, 850);
     }
-    setTimeout(warmPanorama, 1100);
+    // The Java TitleScreen owns the panorama in the normal path. Decode the
+    // HTML cube only when the HTML fallback will actually be visible.
+    if (HTML_UI) setTimeout(warmPanorama, 1100);
+    // The red Mojang card is a 1.5 s boot card, not the loading screen. Drop
+    // it early so the real Java download/init progress is visible.
+    setTimeout(finishSplash, 1600);
 
     function toast(text) {
       const el = $('mc-toast');
@@ -1435,14 +1459,15 @@
        canvas. The smoke/QA paths keep the HTML shell because they drive world
        creation through it. */
     let javaUiWatch = 0;
+    let javaUiRevealing = false;
     function watchJavaTitleScreen(frame) {
-      if (!frame || params.get('smoke-world') === '1' || params.get('screen')
-          || params.get('java') === '0' || params.get('html-ui') === '1') return;
+      if (!frame || HTML_UI) return;
       clearInterval(javaUiWatch);
       const started = performance.now();
       javaUiWatch = setInterval(() => {
-        let mc = null;
-        try { mc = frame.contentWindow && frame.contentWindow.__mc; } catch (e) {}
+        let win = null;
+        try { win = frame.contentWindow; } catch (e) {}
+        const mc = win && win.__mc;
         if (mc && mc.stage === 'failed') {
           clearInterval(javaUiWatch);
           document.body.classList.remove('java-ui');
@@ -1452,20 +1477,42 @@
         const boot = String((mc && mc['boot-state']) || '');
         const titleUp = boot.indexOf('screen=net.minecraft.client.gui.screens.TitleScreen') >= 0
           && boot.indexOf('loadFinished=true') >= 0;
-        if (titleUp) {
-          clearInterval(javaUiWatch);
-          document.body.classList.add('java-ui');
-          window.__mc = Object.assign(window.__mc || {}, { stage: 'complete', ui: 'java' });
-          window.__mcLoadingFinished = true;
-          finishSplash();
-          loading.classList.add('gone');
-          try { frame.focus(); } catch (e) {}
-          console.log('Java TitleScreen is live; HTML launcher hidden.');
+        // A boot-state string is not proof of pixels. Require the client's
+        // WebGPU surface to have completed at least one frame and the canvas
+        // to have real dimensions before the loading screen is removed.
+        const gpu = win && win.__mcWebGPU;
+        const canvas = win && win.__mcSDL && win.__mcSDL.canvas;
+        const frames = Number(gpu && gpu.frame) || 0;
+        if (titleUp && !javaUiRevealing && canvas && canvas.width > 0 && canvas.height > 0 && frames > 0) {
+          javaUiRevealing = true;
+          const reveal = () => {
+            // Wait two compositor frames so the first title-screen draw is
+            // actually presented before we swap out the loading screen.
+            win.requestAnimationFrame(() => win.requestAnimationFrame(() => {
+              if (!win.__mcWebGPU || Number(win.__mcWebGPU.frame) <= 0) {
+                javaUiRevealing = false;
+                return;
+              }
+              clearInterval(javaUiWatch);
+              state.javaUiLive = true;
+              state.menuOpen = false;
+              document.body.classList.add('java-ui');
+              window.__mc = Object.assign(window.__mc || {}, { stage: 'complete', ui: 'java' });
+              window.__mcLoadingFinished = true;
+              finishSplash();
+              loading.classList.add('gone');
+              try { frame.focus(); } catch (e) {}
+              console.log('Java TitleScreen is live; frames=' + Number(win.__mcWebGPU.frame)
+                + ' canvas=' + canvas.width + 'x' + canvas.height + '; HTML launcher hidden.');
+            }));
+          };
+          reveal();
           return;
         }
         if (performance.now() - started > 600000) {
           clearInterval(javaUiWatch);
-          console.warn('Java TitleScreen did not appear; keeping the HTML launcher.');
+          fail(new Error('The Java client did not render its title screen within 10 minutes.'),
+            'Last Java stage: ' + (state.javaStage || 'unknown'));
         }
       }, 250);
     }
@@ -2996,7 +3043,16 @@
     setInterval(() => {
       if (window.__mcBodyReady) state.bodyReady = true;
       if (mcBridge.state.javaReady) state.javaReady = true;
-      if (window.__mcBodyError) fail(new Error(window.__mcBodyError));
+      // The Rust body is the 60 FPS world renderer, but the real Java client
+      // can still build its TitleScreen without it. Do not replace that UI
+      // with a WebGPU adapter error; the Java page reports its own crash if it
+      // cannot start. Renderer-only mode has no Java fallback, so it still
+      // fails loudly there.
+      if (window.__mcBodyError && !state.bodyWarned) {
+        state.bodyWarned = true;
+        console.warn('Rust WebGPU body unavailable: ' + window.__mcBodyError);
+        if (params.get('java') === '0') fail(new Error(window.__mcBodyError));
+      }
       if (!state.firstChunk && rustSectionCount() > 0) {
         state.firstChunk = true;
         state.firstChunkAt = performance.now();
@@ -3045,15 +3101,20 @@
             if (params.has('js')) brainQuery += '&js=' + encodeURIComponent(params.get('js'));
             frame.src = brainQuery;
             watchJavaTitleScreen(frame);
-          } else {
-            console.warn('clientmain.js not deployed — renderer-only mode');
+          } else if (HTML_UI) {
+            console.warn('Java client not deployed — explicit HTML/renderer-only mode');
             state.javaReady = true;
             state.java = 1;
             state.brainMissing = true;
+            menu.classList.add('open');
+            loading.classList.add('hidden');
+            finishSplash();
+          } else {
+            throw new Error('The real Java client is not deployed (clientmain.wasm / clientmain.parts.json missing).');
           }
         }
         progress();
-        status('Starting WebGPU...');
+        if (!state.javaStage) status('Starting WebGPU...');
         progress();
 
         await init(typeof window.__mcBodyWasm === 'string' ? window.__mcBodyWasm : undefined);

@@ -87,6 +87,14 @@
       touchAction: 'none', imageRendering: 'pixelated' });
     state.canvas = c;
     resize(true);
+    // The Java Window is constructed from the launcher's requested display
+    // size (usually 854x480), not from the browser viewport. SDL normally
+    // sends a resize event when the real window is mapped; without it the
+    // client keeps the stale logical size and MouseHandler.getScaledXPos()
+    // divides by it, so the GUI cursor is offset from the pointer. Publish the
+    // real CSS and framebuffer sizes before the first frame.
+    push({ type: EV.SDL_EVENT_WINDOW_RESIZED, data1: state.cssW, data2: state.cssH });
+    push({ type: EV.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED, data1: state.pixelW, data2: state.pixelH });
     installInput(c);
     window.addEventListener('resize', () => resize(false));
     return c;
