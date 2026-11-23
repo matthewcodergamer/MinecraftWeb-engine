@@ -18,6 +18,10 @@ public final class ClientMain {
             BrowserRuntime.report("owner-signature", OWNER_SIGNATURE);
             // Set before Netty PlatformDependent is initialized.
             System.setProperty("io.netty.noUnsafe", "true");
+            // TeaVM 0.16 has no java.util.concurrent.locks.StampedLock, which Netty 4.2's
+            // default adaptive allocator needs. The browser does not benefit from pooled
+            // direct buffers, so select the unpooled allocator before ByteBufUtil's <clinit>.
+            System.setProperty("io.netty.allocator.type", "unpooled");
             BrowserRuntime.report("stage", "client-main-enter");
 
             setOsProperties();
