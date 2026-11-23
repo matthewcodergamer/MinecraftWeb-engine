@@ -227,6 +227,19 @@ public class TThread extends TObject implements TRunnable {
         return alive;
     }
 
+    public State getState() {
+        return alive ? State.RUNNABLE : State.TERMINATED;
+    }
+
+    public enum State {
+        NEW,
+        RUNNABLE,
+        BLOCKED,
+        WAITING,
+        TIMED_WAITING,
+        TERMINATED
+    }
+
     public static int activeCount() {
         return activeCount;
     }
