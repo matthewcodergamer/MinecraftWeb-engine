@@ -69,6 +69,7 @@ public final class ChunkBridge {
 
     private static boolean installed;
     private static boolean firstPumpLogged;
+    private static boolean bootOverlayCleared;
     private static boolean firstLevelCreatedLogged;
     private static boolean firstLevelPlayerLogged;
     private static boolean firstScanLogged;
@@ -135,6 +136,7 @@ public final class ChunkBridge {
             return;
         }
         reportBootState(minecraft);
+        clearBootOverlay(minecraft);
         applyPerformanceDefaults(minecraft);
         adaptQuality(minecraft);
         maybeStartWorld(minecraft);
@@ -236,6 +238,36 @@ public final class ChunkBridge {
         lastBootState = value;
         lastBootStateAt = now;
         BrowserRuntime.report("boot-state", value);
+    }
+
+    /**
+     * The Java boot overlay is only removed by its own fade-out render path.
+     * World creation can start while that fade is still pending, and then
+     * {@code Minecraft.doWorldLoad} spins on {@code gui.overlay() != null}
+     * without ever rendering the overlay again. The host page owns the one
+     * visible boot loader, so once the game reports that resources are loaded,
+     * drop the Java overlay on the normal frame path as well. This also covers
+     * worlds created by clicking through Java's own menus.
+     */
+    private static void clearBootOverlay(Minecraft minecraft) {
+        if (bootOverlayCleared || !minecraft.isGameLoadFinished()) {
+            return;
+        }
+        try {
+            Object overlay = minecraft.gui.overlay();
+            if (overlay == null) {
+                bootOverlayCleared = true;
+                return;
+            }
+            if (overlay instanceof net.minecraft.client.gui.screens.LoadingOverlay) {
+                minecraft.gui.setOverlay(null);
+                bootOverlayCleared = true;
+                BrowserRuntime.report("stage", "java-boot-overlay-cleared");
+            }
+        } catch (Throwable t) {
+            bootOverlayCleared = true;
+            BrowserRuntime.report("overlay-clear-error", t.getClass().getName());
+        }
     }
 
     /**
