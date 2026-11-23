@@ -184,6 +184,10 @@ def main():
 
     def record(line):
         browser_console.append(line)
+        # A long session emits tens of thousands of console lines. Keep the
+        # in-memory copy bounded; the file on disk remains complete.
+        if len(browser_console) > 20000:
+            del browser_console[:10000]
         console_file.write(line + "\n")
         console_file.flush()
 

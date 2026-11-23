@@ -37,7 +37,7 @@ public final class FrameLoopAsync {
             + " var f = window.__mcFrames; if (f) f.resumeAt = performance.now();"
             + " resume(); };"
             + "if (vsync || document.hidden) {"
-            + " try { requestAnimationFrame(function() { console.log('[FRAME_LOOP] raf-fired'); finish('raf'); }); }"
+            + " try { requestAnimationFrame(function() { finish('raf'); }); }"
             + " catch (e) { console.warn('[FRAME_LOOP] RAF unavailable', e); }"
             + " setTimeout(function() { finish('raf-fallback'); }, 250); return; }"
             + "var ch = window.__mcFrameChannel || (window.__mcFrameChannel = new MessageChannel());"

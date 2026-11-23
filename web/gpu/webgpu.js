@@ -253,8 +253,11 @@
   // ------------------------------------------------------------------ transient memory (ring of upload chunks)
   const CHUNK = 4 << 20;
   G.transientAlloc = function (size, alignment) {
-    alignment = Math.max(4, alignment | 0);
-    size = Math.max(4, Math.ceil(size / 4) * 4);
+    // 16-byte rounding keeps uniform slices valid when a later dynamic offset
+    // reuses the same bind-group plan: the plan rounds the WGSL struct size up
+    // to 16, so every allocation must reserve at least that much.
+    alignment = Math.max(16, alignment | 0);
+    size = Math.max(16, Math.ceil(size / 16) * 16);
     let chunk = null;
     for (const c of G.transient) {
       const off = Math.ceil(c.used / alignment) * alignment;

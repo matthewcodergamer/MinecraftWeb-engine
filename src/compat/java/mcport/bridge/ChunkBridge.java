@@ -69,12 +69,16 @@ public final class ChunkBridge {
 
     private static boolean installed;
     private static boolean firstPumpLogged;
-    private static int bootStateReports;
     private static boolean firstLevelCreatedLogged;
     private static boolean firstLevelPlayerLogged;
     private static boolean firstScanLogged;
     private static String lastScreenButtons = "";
     private static int playerPosReports;
+    private static boolean performanceDefaultsApplied;
+    private static String lastBootState = "";
+    private static long lastBootStateAt;
+    private static long lastAdaptiveAt;
+    private static int lowFpsStreak;
     private static boolean firstSectionLogged;
     private static boolean ready;
     private static boolean worldRequested;
@@ -113,6 +117,10 @@ public final class ChunkBridge {
         firstLevelPlayerLogged = false;
         firstScanLogged = false;
         lastScreenButtons = "";
+        lastBootState = "";
+        lastBootStateAt = 0L;
+        lastAdaptiveAt = 0L;
+        lowFpsStreak = 0;
         playerPosReports = 0;
         emitReset();
     }
@@ -127,6 +135,8 @@ public final class ChunkBridge {
             return;
         }
         reportBootState(minecraft);
+        applyPerformanceDefaults(minecraft);
+        adaptQuality(minecraft);
         maybeStartWorld(minecraft);
         if (minecraft.level == null || minecraft.player == null) {
             if (minecraft.level != null && !firstLevelCreatedLogged) {
@@ -202,22 +212,125 @@ public final class ChunkBridge {
      * "still reloading" from "reload finished but an onboarding screen is up".
      */
     private static void reportBootState(Minecraft minecraft) {
-        bootStateReports++;
-        if (bootStateReports > 1 && bootStateReports % 5 != 0) {
-            return;
-        }
         Object overlay = minecraft.gui.overlay();
         Object screen = minecraft.gui.screen();
-        BrowserRuntime.report("boot-state",
-                "overlay=" + (overlay == null ? "null" : overlay.getClass().getName())
-                        + " screen=" + (screen == null ? "null" : screen.getClass().getName())
-                        + " loadFinished=" + minecraft.isGameLoadFinished()
-                        + " worldAuto=" + worldAuto()
-                        + " worldRequested=" + hostWorldRequested()
-                        + " level=" + (minecraft.level != null)
-                        + " player=" + (minecraft.player != null)
-                        + " sent=" + SENT.size());
+        // Screen widgets can change without the boot state changing (tab switch,
+        // text field focus), so publish their bounds independently.
         reportScreenButtons(minecraft);
+        String value = "overlay=" + (overlay == null ? "null" : overlay.getClass().getName())
+                + " screen=" + (screen == null ? "null" : screen.getClass().getName())
+                + " loadFinished=" + minecraft.isGameLoadFinished()
+                + " worldAuto=" + worldAuto()
+                + " worldRequested=" + hostWorldRequested()
+                + " level=" + (minecraft.level != null)
+                + " player=" + (minecraft.player != null)
+                + " sent=" + SENT.size();
+        long now = System.currentTimeMillis();
+        // Publish on change at most four times a second. The old every-fifth-
+        // frame write kept a fresh string in window.__mc and in the console
+        // forever, which costs memory in a long browser session.
+        if (value.equals(lastBootState) || now - lastBootStateAt < 250) {
+            return;
+        }
+        lastBootState = value;
+        lastBootStateAt = now;
+        BrowserRuntime.report("boot-state", value);
+    }
+
+    /**
+     * Browser performance defaults. A phone has far less GPU memory and fill
+     * rate than the desktop client assumes, so start at a render distance that
+     * can actually hold 30 FPS and use the fast graphics preset. The host can
+     * override with ?rd=N (2..32).
+     */
+    private static void applyPerformanceDefaults(Minecraft minecraft) {
+        if (performanceDefaultsApplied) {
+            return;
+        }
+        performanceDefaultsApplied = true;
+        try {
+            boolean mobile = isMobileBrowser();
+            int rd = requestedRenderDistance();
+            if (rd <= 0) {
+                rd = mobile ? 8 : 12;
+            }
+            rd = Math.max(2, Math.min(32, rd));
+            if (mobile) {
+                try {
+                    net.minecraft.client.GraphicsPreset.FAST.apply(minecraft);
+                } catch (Throwable ignored) {
+                }
+                try {
+                    minecraft.options.particles().set(net.minecraft.server.level.ParticleStatus.DECREASED);
+                } catch (Throwable ignored) {
+                }
+                try {
+                    minecraft.options.entityShadows().set(Boolean.FALSE);
+                } catch (Throwable ignored) {
+                }
+                try {
+                    minecraft.options.cloudStatus().set(net.minecraft.client.CloudStatus.FAST);
+                } catch (Throwable ignored) {
+                }
+            }
+            minecraft.options.renderDistance().set(rd);
+            minecraft.options.simulationDistance().set(Math.min(rd, mobile ? 6 : 8));
+            BrowserRuntime.report("perf-defaults", "rd=" + rd + " mobile=" + mobile);
+        } catch (Throwable t) {
+            BrowserRuntime.report("perf-defaults-error", t.getClass().getName());
+        }
+    }
+
+    @JSBody(script = "try { return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)"
+            + " || (navigator.maxTouchPoints > 1 && Math.min(screen.width, screen.height) < 900); }"
+            + " catch (e) { return false; }")
+    private static native boolean isMobileBrowser();
+
+    @JSBody(script = "try { return Number(new URLSearchParams(location.search).get('rd')) || 0; }"
+            + " catch (e) { return 0; }")
+    private static native int requestedRenderDistance();
+
+    @JSBody(script = "try { return (window.__mcFrames && window.__mcFrames.fps) || 0; }"
+            + " catch (e) { return 0; }")
+    private static native double currentFps();
+
+    @JSBody(script = "try { return new URLSearchParams(location.search).get('adaptive') !== '0'; }"
+            + " catch (e) { return true; }")
+    private static native boolean adaptiveQuality();
+
+    /**
+     * Lowers render distance when the measured frame rate stays below 28 FPS.
+     * Browsers do not expose a reliable GPU tier, and a phone that is fast at
+     * the title screen can drop to single digits once chunks stream in. Three
+     * consecutive slow samples (15 s) step the distance down by one, to a floor
+     * of 4; quality never steps back up, which avoids an oscillation between
+     * "looks nice" and "playable".
+     */
+    private static void adaptQuality(Minecraft minecraft) {
+        if (minecraft.level == null || !adaptiveQuality()) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (now - lastAdaptiveAt < 5000L) {
+            return;
+        }
+        lastAdaptiveAt = now;
+        double fps = currentFps();
+        if (fps <= 0) {
+            return;
+        }
+        int rd = minecraft.options.renderDistance().get();
+        if (fps < 28 && rd > 4) {
+            if (++lowFpsStreak >= 3) {
+                lowFpsStreak = 0;
+                rd--;
+                minecraft.options.renderDistance().set(rd);
+                BrowserRuntime.report("adaptive-rd",
+                        "fps=" + Math.round(fps) + " rd=" + rd);
+            }
+        } else {
+            lowFpsStreak = 0;
+        }
     }
 
     /**

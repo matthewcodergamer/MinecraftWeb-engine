@@ -152,7 +152,7 @@ jobs:
           SERVER_PID=$!
           trap "kill $SERVER_PID" EXIT
           sleep 2
-          python3 scripts/cdp.py "http://127.0.0.1:8765/game.html?smoke-world=1&wasm=1&diag=1" \
+          python3 scripts/cdp.py "http://127.0.0.1:8765/game.html?smoke-world=1&wasm=1&diag=1&rd=6&adaptive=0" \
             --timeout 1200 \
             --soak-seconds 60 \
             --soak-screenshot build/smoke_soak.png \
@@ -178,7 +178,7 @@ jobs:
           # SelectWorldScreen and CreateWorldScreen widgets with real CDP mouse
           # events, selects Superflat through the World tab, and creates the
           # world through Java's own UI.
-          python3 scripts/cdp.py "http://127.0.0.1:8766/game.html?wasm=1&diag=1" \
+          python3 scripts/cdp.py "http://127.0.0.1:8766/game.html?wasm=1&diag=1&rd=6&adaptive=0" \
             --timeout 1800 \
             --soak-seconds 120 \
             --soak-screenshot build/title_soak.png \

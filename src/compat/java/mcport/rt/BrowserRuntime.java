@@ -23,7 +23,12 @@ public final class BrowserRuntime {
             + "  console.log('[JAVA_STAGE] ' + v + ' @' + Math.round(performance.now()) + 'ms');"
             + "  if (window.parent !== window) window.parent.postMessage({source:'mc-brain',type:'java-stage',stage:v}, '*');"
             + "}"
-            + "if (window.__mcLog) window.__mcLog('REPORT', k + ' = ' + v);")
+            // Per-frame state (boot-state, player-pos, block-below) is read from
+            // window.__mc by the host. Echoing it to the console every frame
+            // floods Chrome's console buffer and any attached DevTools session,
+            // which grows renderer memory during long sessions.
+            + "if (window.__mcLog && k !== 'boot-state' && k !== 'player-pos' && k !== 'block-below')"
+            + "  window.__mcLog('REPORT', k + ' = ' + v);")
     public static native void report(String key, String value);
 
     /** Writes straight to the host page's console, independently of the REPORT plumbing. */
