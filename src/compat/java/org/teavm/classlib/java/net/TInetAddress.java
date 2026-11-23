@@ -18,11 +18,11 @@ public class TInetAddress implements java.io.Serializable {
 
     public static TInetAddress getByName(String host) throws UnknownHostException {
         if (host == null || host.isEmpty() || host.equals("localhost")) {
-            return new TInetAddress("localhost", new byte[] {127, 0, 0, 1});
+            return new TInet4Address("localhost", new byte[] {127, 0, 0, 1});
         }
         byte[] v4 = parseV4(host);
         if (v4 != null) {
-            return new TInetAddress(null, v4);
+            return new TInet4Address(null, v4);
         }
         throw new UnknownHostException(host + ": DNS resolution is not available in the browser");
     }
@@ -32,14 +32,20 @@ public class TInetAddress implements java.io.Serializable {
     }
 
     public static TInetAddress getByAddress(String host, byte[] addr) throws UnknownHostException {
-        if (addr == null || (addr.length != 4 && addr.length != 16)) {
+        if (addr == null) {
             throw new UnknownHostException("addr is of illegal length");
         }
-        return new TInetAddress(host, addr.clone());
+        if (addr.length == 4) {
+            return new TInet4Address(host, addr.clone());
+        }
+        if (addr.length == 16) {
+            return new TInet6Address(host, addr.clone(), -1);
+        }
+        throw new UnknownHostException("addr is of illegal length");
     }
 
     public static TInetAddress getLoopbackAddress() {
-        return new TInetAddress("localhost", new byte[] {127, 0, 0, 1});
+        return new TInet4Address("localhost", new byte[] {127, 0, 0, 1});
     }
 
     public static TInetAddress getLocalHost() {
