@@ -45,11 +45,11 @@ public class TThread extends TObject implements TRunnable {
     TRunnable target;
 
     public TThread() {
-        this(null, null);
+        this((TRunnable) null, (String) null);
     }
 
     public TThread(String name) {
-        this(null, name);
+        this((TRunnable) null, name);
     }
 
     public TThread(TRunnable target) {
@@ -60,6 +60,27 @@ public class TThread extends TObject implements TRunnable {
         this.name = name;
         this.target = target;
         id = nextId++;
+    }
+
+    public TThread(ThreadGroup group, TRunnable target) {
+        this(target, null);
+    }
+
+    public TThread(ThreadGroup group, String name) {
+        this((TRunnable) null, name);
+    }
+
+    public TThread(ThreadGroup group, TRunnable target, String name) {
+        this(target, name);
+    }
+
+    public TThread(ThreadGroup group, TRunnable target, String name, long stackSize) {
+        this(target, name);
+    }
+
+    public TThread(ThreadGroup group, TRunnable target, String name, long stackSize,
+            boolean inheritThreadLocals) {
+        this(target, name);
     }
 
     public void start() {
@@ -320,6 +341,10 @@ public class TThread extends TObject implements TRunnable {
 
     public TClassLoader getContextClassLoader() {
         return TClassLoader.getSystemClassLoader();
+    }
+
+    public void setContextClassLoader(TClassLoader classLoader) {
+        // TeaVM has a single class loader; Netty's GlobalEventExecutor sets it for logging only.
     }
     
     public UncaughtExceptionHandler getUncaughtExceptionHandler() {
