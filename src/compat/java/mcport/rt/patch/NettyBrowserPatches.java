@@ -91,4 +91,14 @@ public final class NettyBrowserPatches {
     }
 
     public static boolean available() { return true; }
+
+    /**
+     * Netty's static initializers call this to suppress leak-detector stack frames for buffer
+     * wrappers. It validates the names with {@code Class.getDeclaredMethods()}, which TeaVM
+     * does not populate for these library classes, so the real implementation throws
+     * {@code IllegalArgumentException} and leaves {@code ByteBufAllocator} permanently
+     * uninitializable. The exclusions only affect leak diagnostics; skip the check.
+     */
+    public static void addExclusions(Class<?> type, String... methodNames) {
+    }
 }

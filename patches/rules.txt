@@ -289,6 +289,11 @@ BODY_STATIC io.netty.util.internal.PlatformDependent0 absolutePut(Ljava/nio/Byte
 BODY_STATIC io.netty.util.internal.PlatformDependent0 absolutePut(Ljava/nio/ByteBuffer;I[BII)Ljava/nio/ByteBuffer; -> mcport.rt.patch.NettyBrowserPatches absolutePut
 BODY_STATIC io.netty.util.internal.PlatformDependent0 allocateUninitializedArray(I)[B -> mcport.rt.patch.NettyBrowserPatches allocateUninitializedArray
 
+# Netty validates leak-detector exclusion names with Class.getDeclaredMethods(), which TeaVM
+# does not populate for library classes. Its throw leaves ByteBufAllocator permanently broken,
+# so LocalServerChannel construction fails at the integrated-server memory-channel bind.
+BODY_STATIC io.netty.util.ResourceLeakDetector addExclusions(Ljava/lang/Class;[Ljava/lang/String;)V -> mcport.rt.patch.NettyBrowserPatches addExclusions
+
 # The corresponding methods above are real browser implementations, so advertise them as available.
 BODY_STATIC io.netty.util.internal.PlatformDependent0 hasDirectBufferNoCleanerConstructor()Z -> mcport.rt.patch.NettyBrowserPatches available
 BODY_STATIC io.netty.util.internal.PlatformDependent0 hasAlignSliceMethod()Z -> mcport.rt.patch.NettyBrowserPatches available
@@ -389,6 +394,14 @@ TRACE 167 net.minecraft.client.resources.model.sprite.AtlasManager reload(Lnet/m
 TRACE 168 net.minecraft.client.resources.model.sprite.AtlasManager lambda$reload$0(Lnet/minecraft/server/packs/resources/ResourceManager;Ljava/util/concurrent/Executor;Lnet/minecraft/client/resources/model/sprite/AtlasManager$PendingStitch;)V
 TRACE 169 net.minecraft.client.renderer.texture.TextureManager reload(Lnet/minecraft/server/packs/resources/PreparableReloadListener$SharedState;Ljava/util/concurrent/Executor;Lnet/minecraft/server/packs/resources/PreparableReloadListener$PreparationBarrier;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture;
 TRACE 170 net.minecraft.client.renderer.texture.SpriteLoader loadAndStitch(Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/resources/Identifier;ILjava/util/concurrent/Executor;Ljava/util/Set;)Ljava/util/concurrent/CompletableFuture;
+# Local singleplayer handshake: the server memory-channel bind is the first network step, and the
+# client login/config/play transitions run on the event-loop fibers rather than the render thread.
+TRACE 171 net.minecraft.server.network.ServerConnectionListener startMemoryChannel()Ljava/net/SocketAddress;
+TRACE 172 net.minecraft.network.Connection connectToLocalServer(Ljava/net/SocketAddress;)Lnet/minecraft/network/Connection;
+TRACE 173 net.minecraft.network.Connection initiateServerboundPlayConnection(Ljava/lang/String;ILnet/minecraft/network/protocol/login/ClientLoginPacketListener;)V
+TRACE 174 net.minecraft.client.multiplayer.ClientHandshakePacketListenerImpl handleLoginFinished(Lnet/minecraft/network/protocol/login/ClientboundLoginFinishedPacket;)V
+TRACE 175 net.minecraft.client.multiplayer.ClientPacketListener handleLogin(Lnet/minecraft/network/protocol/game/ClientboundLoginPacket;)V
+TRACE 176 net.minecraft.client.Minecraft setLevel(Lnet/minecraft/client/multiplayer/ClientLevel;)V
 # BODY replacement targets are static helpers; PortTransformer emits INVOKESTATIC and prepends the instance receiver.
 BODY com.mojang.blaze3d.platform.Window setIcon(Lnet/minecraft/server/packs/PackMetadataResources;Lcom/mojang/blaze3d/platform/IconSet;)V -> mcport.rt.WindowBrowser noopIcon
 

@@ -6,6 +6,7 @@ import java.util.Map;
 import mcport.rt.BrowserRuntime;
 import mcport.rt.FrameLoop;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.LevelLoadingScreen;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.core.registries.Registries;
@@ -227,6 +228,7 @@ public final class ChunkBridge {
                 + " level=" + (minecraft.level != null)
                 + " player=" + (minecraft.player != null)
                 + " server=" + describeServer(minecraft)
+                + " conn=" + (minecraft.getConnection() != null)
                 + " sent=" + SENT.size();
         long now = System.currentTimeMillis();
         // Publish on change at most four times a second. The old every-fifth-
@@ -525,6 +527,16 @@ public final class ChunkBridge {
                         provider -> presetDimensions(provider, preset), null);
             }
             BrowserRuntime.report("stage", "world-start-call-return");
+            // WorldOpenFlows.createFreshLevel swallows the exception from Minecraft.doWorldLoad
+            // (it only logs "Failed to load datapacks") and restores the parent screen. A
+            // successful call always leaves the LevelLoadingScreen up with the local connection
+            // pending, so surface the failure instead of letting the smoke test time out.
+            Object after = minecraft.gui.screen();
+            if (minecraft.level == null && !(after instanceof LevelLoadingScreen)) {
+                BrowserRuntime.report("stage", "world-start-returned-without-level");
+                BrowserRuntime.report("world-start-screen",
+                        after == null ? "null" : after.getClass().getName());
+            }
         } catch (Throwable t) {
             worldRequested = false;
             BrowserRuntime.report("error", "world-start: " + BrowserRuntime.describe(t));
