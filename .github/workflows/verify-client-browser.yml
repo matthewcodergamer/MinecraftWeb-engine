@@ -161,6 +161,7 @@ jobs:
             --until-js "window.__mc && (window.__mc.stage === 'failed' || window.__mc.javaStage === 'first-java-section-emitted')" \
             --assert-js "window.__mc && window.__mc.javaStage === 'first-java-section-emitted'" \
             --assert-js "window.__mc && window.__mc.stage !== 'failed'" \
+            --assert-js "(() => { const f = document.getElementById('mc-brain'); const u = f && f.contentWindow ? String(f.contentWindow.__mcWasmUrl || '') : ''; return u.indexOf('127.0.0.1') >= 0 && u.indexOf('clientmain.wasm') >= 0; })()" \
             --assert-js "(() => { const c = document.querySelector('canvas'); return !!c && c.width > 0 && c.height > 0; })()"
           cp build/browser_console.log build/smoke_console.log
           cp build/browser_error.txt build/smoke_error.txt
@@ -189,6 +190,7 @@ jobs:
             --until-js "window.__mc && (window.__mc.stage === 'failed' || window.__mc.javaStage === 'first-java-section-emitted')" \
             --assert-js "window.__mc && window.__mc.javaStage === 'first-java-section-emitted'" \
             --assert-js "window.__mc && window.__mc.stage !== 'failed'" \
+            --assert-js "(() => { const f = document.getElementById('mc-brain'); const u = f && f.contentWindow ? String(f.contentWindow.__mcWasmUrl || '') : ''; return u.indexOf('127.0.0.1') >= 0 && u.indexOf('clientmain.wasm') >= 0; })()" \
             --assert-js "(() => { const f = document.getElementById('mc-brain'); const m = f && f.contentWindow && f.contentWindow.__mc; return !!m && String(m['world-preset'] || '').indexOf('flat') >= 0; })()"
           cp build/browser_console.log build/title_console.log
           cp build/browser_error.txt build/title_error.txt

@@ -251,9 +251,20 @@ async function loadWasmBrain() {
   // Pages shell intentionally keeps only the lightweight HTML/JS host and
   // loads the same module from the canonical Space, so both URLs always run
   // the exact same Java build instead of drifting copies.
+  //
+  // A module served from a local web server (how CI runs the smoke tests) is
+  // the build under test. Never replace it with the deployed Space build: a
+  // stale remote module made an uncompilable local build look like it had
+  // booted all the way to world generation.
+  const localHost = location.hostname === '127.0.0.1'
+    || location.hostname === 'localhost'
+    || location.hostname === '::1'
+    || location.hostname === '[::1]';
+  const mustUseLocalBuild = localHost || params.get('wasm') === '1';
   try {
     await loadClassicScript('clientmain.wasm-runtime.js');
   } catch (error) {
+    if (mustUseLocalBuild) throw error;
     console.warn('local WASM runtime unavailable; loading the canonical runtime', error);
     await loadClassicScript(HF_BASE + 'clientmain.wasm-runtime.js');
   }
@@ -278,10 +289,12 @@ async function loadWasmBrain() {
   let teavm;
   try {
     teavm = await TeaVM.wasmGC.load('clientmain.wasm', options);
+    window.__mcWasmUrl = new URL('clientmain.wasm', location.href).href;
   } catch (localError) {
-    if (location.hostname.endsWith('.hf.space')) throw localError;
+    if (mustUseLocalBuild || location.hostname.endsWith('.hf.space')) throw localError;
     console.warn('local WASM module unavailable; loading the canonical module', localError);
     teavm = await TeaVM.wasmGC.load(HF_BASE + 'clientmain.wasm', options);
+    window.__mcWasmUrl = HF_BASE + 'clientmain.wasm';
   }
   window.__mcTeaVM = teavm;
   window.__mcRunMain = () => teavm.exports.main([]);
