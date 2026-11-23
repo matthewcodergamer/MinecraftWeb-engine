@@ -35,8 +35,11 @@ public class TCompletableFuture<T> implements Future<T>, CompletionStage<T> {
 
     private static final AltResult NIL = new AltResult(null);
 
+    private static final long STUCK_WARN_MS = 10_000;
+
     private Object result;
     private List<Runnable> listeners;
+    private boolean stuckLogged;
 
     public TCompletableFuture() {
     }
@@ -246,11 +249,33 @@ public class TCompletableFuture<T> implements Future<T>, CompletionStage<T> {
         return cancelled || isCancelled();
     }
 
-    private synchronized Object waitFor() throws InterruptedException {
-        while (result == null) {
-            wait();
+    /**
+     * Waits for the result without parking on this future's monitor.
+     * Wasm-GC fibers can suspend reliably through Thread.sleep, but the
+     * Object.wait handoff can strand the waiting fiber permanently. Spurious
+     * wakeups are legal, and an interrupt is re-raised once the result is in.
+     */
+    private Object waitFor() {
+        boolean interrupted = false;
+        int emptyPolls = 0;
+        while (true) {
+            Object r = snapshot();
+            if (r != null) {
+                if (interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+                return r;
+            }
+            try {
+                Thread.sleep(pollDelay(emptyPolls++));
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
         }
-        return result;
+    }
+
+    private static long pollDelay(int emptyPolls) {
+        return Math.min(1L << Math.min(emptyPolls, 3), 8L);
     }
 
     @Override
@@ -261,16 +286,25 @@ public class TCompletableFuture<T> implements Future<T>, CompletionStage<T> {
     @Override
     public T get(long timeout, TimeUnit unit) throws InterruptedException, ExecutionException, TimeoutException {
         long deadline = System.currentTimeMillis() + unit.toMillis(timeout);
+        boolean interrupted = false;
+        int emptyPolls = 0;
         Object r;
-        synchronized (this) {
-            while (result == null) {
-                long left = deadline - System.currentTimeMillis();
-                if (left <= 0) {
-                    throw new TimeoutException();
+        while ((r = snapshot()) == null) {
+            long left = deadline - System.currentTimeMillis();
+            if (left <= 0) {
+                if (interrupted) {
+                    Thread.currentThread().interrupt();
                 }
-                wait(left);
+                throw new TimeoutException();
             }
-            r = result;
+            try {
+                Thread.sleep(Math.min(left, pollDelay(emptyPolls++)));
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
         }
         return reportGet(r);
     }
@@ -289,14 +323,27 @@ public class TCompletableFuture<T> implements Future<T>, CompletionStage<T> {
     public T join() {
         Object r;
         boolean interrupted = false;
+        int emptyPolls = 0;
+        long startedAt = System.currentTimeMillis();
         while ((r = snapshot()) == null) {
             try {
                 // Object.wait() currently strands a Wasm-GC fiber when another
                 // fiber completes this future. Thread.sleep uses the working
                 // async timer/resume path and does not hold this future's monitor.
-                Thread.sleep(1);
+                Thread.sleep(pollDelay(emptyPolls++));
             } catch (InterruptedException e) {
                 interrupted = true;
+            }
+            if (!stuckLogged && System.currentTimeMillis() - startedAt >= STUCK_WARN_MS) {
+                stuckLogged = true;
+                try {
+                    mcport.rt.BrowserRuntime.log("[MW_STUCK] CompletableFuture.join waited "
+                            + STUCK_WARN_MS + "ms; dependents=" + getNumberOfDependents());
+                    mcport.rt.BrowserRuntime.log("[MW_STUCK] "
+                            + mcport.rt.BrowserRuntime.captureStack());
+                } catch (Throwable ignored) {
+                    // diagnostics must never break the join
+                }
             }
         }
         if (interrupted) {

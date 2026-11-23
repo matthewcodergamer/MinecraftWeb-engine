@@ -13,6 +13,13 @@ import java.util.concurrent.TimeUnit;
  * ForkJoinPool on TeaVM green threads: a FIFO work queue drained by up to
  * {@code parallelism} worker threads created through the supplied factory
  * (so subclasses such as Minecraft's named workers are honoured).
+ *
+ * <p>Workers never park on {@code Object.wait}. The Wasm-GC monitor wait path
+ * can suspend a fiber permanently (the browser probe showed a worker still
+ * inside {@code ObjectAsync.waitImpl} more than ten minutes after its 60s
+ * timeout), which strands every task queued afterwards. Idle workers poll the
+ * queue through {@code Thread.sleep}, the timer path that does resume, and
+ * stay alive until shutdown so a queued task always has a worker to run it.
  */
 public class TForkJoinPool extends AbstractExecutorService {
     public interface ForkJoinWorkerThreadFactory {
@@ -21,6 +28,10 @@ public class TForkJoinPool extends AbstractExecutorService {
 
     public static final ForkJoinWorkerThreadFactory defaultForkJoinWorkerThreadFactory =
             pool -> (ForkJoinWorkerThread) (Object) new TForkJoinWorkerThread(pool) { };
+
+    private static final int IDLE_MIN_MS = 1;
+    private static final int IDLE_MAX_MS = 10;
+    private static final long STUCK_WARN_MS = 5_000;
 
     private static TForkJoinPool common;
 
@@ -31,8 +42,13 @@ public class TForkJoinPool extends AbstractExecutorService {
     private final Thread.UncaughtExceptionHandler handler;
     private int workers;
     private int idle;
+    private int active;
     private int nextIndex;
     private boolean shutdown;
+    private long oldestQueuedAt;
+    private boolean watchdogStarted;
+    private long lastStuckLogAt;
+    private int stuckLogs;
 
     public TForkJoinPool() {
         this(Math.max(1, Runtime.getRuntime().availableProcessors()));
@@ -81,50 +97,144 @@ public class TForkJoinPool extends AbstractExecutorService {
             throw new NullPointerException();
         }
         boolean spawn;
+        boolean startWatchdog;
         synchronized (lock) {
             if (shutdown) {
                 throw new RejectedExecutionException();
             }
+            if (tasks.isEmpty()) {
+                oldestQueuedAt = System.currentTimeMillis();
+            }
             tasks.addLast(task);
-            spawn = idle == 0 && workers < parallelism;
+            // An idle worker polls every few milliseconds, so it will pick the
+            // task up on its own. Create another worker only when the queued
+            // work exceeds the number of workers able to take it.
+            spawn = workers < parallelism && tasks.size() > idle;
             if (spawn) {
                 workers++;
-            } else {
-                lock.notify();
             }
+            startWatchdog = !watchdogStarted;
+            watchdogStarted = true;
         }
         if (spawn) {
-            ForkJoinWorkerThread t = factory.newThread((ForkJoinPool) (Object) this);
-            TForkJoinWorkerThread w = (TForkJoinWorkerThread) (Object) t;
+            startWorker();
+        }
+        if (startWatchdog) {
+            startWatchdog();
+        }
+    }
+
+    private void startWorker() {
+        ForkJoinWorkerThread t;
+        try {
+            t = factory.newThread((ForkJoinPool) (Object) this);
+        } catch (Throwable failure) {
             synchronized (lock) {
-                w.poolIndex = nextIndex++;
+                workers--;
             }
+            throw failure;
+        }
+        TForkJoinWorkerThread w = (TForkJoinWorkerThread) (Object) t;
+        synchronized (lock) {
+            w.poolIndex = nextIndex++;
+        }
+        try {
             t.start();
+        } catch (Throwable failure) {
+            synchronized (lock) {
+                workers--;
+            }
+            throw failure;
+        }
+    }
+
+    private void startWatchdog() {
+        Thread watchdog = new Thread(() -> {
+            while (true) {
+                try {
+                    Thread.sleep(1_000);
+                } catch (InterruptedException ignored) {
+                    // keep watching
+                }
+                reportIfStuck();
+                synchronized (lock) {
+                    if (shutdown && workers == 0) {
+                        return;
+                    }
+                }
+            }
+        }, "mc-pool-watchdog");
+        watchdog.setDaemon(true);
+        watchdog.start();
+    }
+
+    private void reportIfStuck() {
+        int queued;
+        int running;
+        int live;
+        long queuedAt;
+        synchronized (lock) {
+            queued = tasks.size();
+            running = active;
+            live = workers;
+            queuedAt = oldestQueuedAt;
+        }
+        if (queued == 0 || live == 0) {
+            return;
+        }
+        long age = System.currentTimeMillis() - queuedAt;
+        if (age < STUCK_WARN_MS) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        synchronized (lock) {
+            if (now - lastStuckLogAt < STUCK_WARN_MS || stuckLogs >= 12) {
+                return;
+            }
+            lastStuckLogAt = now;
+            stuckLogs++;
+        }
+        String message = "[MW_STUCK] pool task queued " + age + "ms"
+                + " queued=" + queued + " active=" + running + " workers=" + live
+                + " parallelism=" + parallelism;
+        try {
+            mcport.rt.BrowserRuntime.log(message);
+            mcport.rt.BrowserRuntime.log("[MW_STUCK] " + mcport.rt.BrowserRuntime.captureStack());
+        } catch (Throwable ignored) {
+            // diagnostics must never take the pool down
         }
     }
 
     void runWorker(TForkJoinWorkerThread w) {
+        int emptyPolls = 0;
         while (true) {
             Runnable task;
             synchronized (lock) {
-                while (tasks.isEmpty()) {
-                    if (shutdown) {
-                        return;
-                    }
-                    idle++;
-                    try {
-                        lock.wait(60_000);
-                    } catch (InterruptedException e) {
-                        // re-check
-                    } finally {
-                        idle--;
-                    }
-                    if (tasks.isEmpty() && !shutdown) {
-                        return;
-                    }
+                if (shutdown && tasks.isEmpty()) {
+                    return;
                 }
                 task = tasks.pollFirst();
+                if (task == null) {
+                    idle++;
+                } else {
+                    active++;
+                    if (tasks.isEmpty()) {
+                        oldestQueuedAt = System.currentTimeMillis();
+                    }
+                }
             }
+            if (task == null) {
+                try {
+                    Thread.sleep(idleDelay(emptyPolls++));
+                } catch (InterruptedException ignored) {
+                    // re-check the queue
+                }
+                synchronized (lock) {
+                    idle--;
+                }
+                continue;
+            }
+            emptyPolls = 0;
             try {
                 task.run();
             } catch (Throwable t) {
@@ -133,20 +243,46 @@ public class TForkJoinPool extends AbstractExecutorService {
                 } else {
                     t.printStackTrace();
                 }
+            } finally {
+                synchronized (lock) {
+                    active--;
+                    if (tasks.isEmpty()) {
+                        oldestQueuedAt = System.currentTimeMillis();
+                    }
+                }
             }
         }
     }
 
+    private static long idleDelay(int emptyPolls) {
+        if (emptyPolls <= 0) {
+            return IDLE_MIN_MS;
+        }
+        long delay = IDLE_MIN_MS << Math.min(emptyPolls, 4);
+        return Math.min(delay, IDLE_MAX_MS);
+    }
+
     void workerExited() {
+        boolean respawn = false;
         synchronized (lock) {
             workers--;
-            lock.notifyAll();
+            if (!shutdown && !tasks.isEmpty() && idle == 0 && workers < parallelism) {
+                workers++;
+                respawn = true;
+            }
+        }
+        if (respawn) {
+            try {
+                startWorker();
+            } catch (Throwable ignored) {
+                // startWorker already released the worker slot on failure
+            }
         }
     }
 
     public boolean isQuiescent() {
         synchronized (lock) {
-            return tasks.isEmpty() && idle == workers;
+            return tasks.isEmpty() && active == 0;
         }
     }
 
@@ -157,7 +293,6 @@ public class TForkJoinPool extends AbstractExecutorService {
         }
         synchronized (lock) {
             shutdown = true;
-            lock.notifyAll();
         }
     }
 
@@ -167,7 +302,6 @@ public class TForkJoinPool extends AbstractExecutorService {
             shutdown = true;
             List<Runnable> left = new ArrayList<>(tasks);
             tasks.clear();
-            lock.notifyAll();
             return left;
         }
     }
@@ -189,15 +323,17 @@ public class TForkJoinPool extends AbstractExecutorService {
     @Override
     public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
         long deadline = System.currentTimeMillis() + unit.toMillis(timeout);
-        synchronized (lock) {
-            while (!(shutdown && workers == 0)) {
-                long left = deadline - System.currentTimeMillis();
-                if (left <= 0) {
-                    return false;
+        while (true) {
+            synchronized (lock) {
+                if (shutdown && workers == 0) {
+                    return true;
                 }
-                lock.wait(left);
             }
-            return true;
+            long left = deadline - System.currentTimeMillis();
+            if (left <= 0) {
+                return false;
+            }
+            Thread.sleep(Math.min(left, 10));
         }
     }
 }

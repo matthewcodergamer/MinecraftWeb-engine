@@ -26,18 +26,30 @@ public class TSemaphore {
         acquire(1);
     }
 
+    private static long pollDelay(int emptyPolls) {
+        return Math.min(1L << Math.min(emptyPolls, 3), 8L);
+    }
+
     public void acquire(int count) throws InterruptedException {
         checkCount(count);
         synchronized (monitor) {
             waiters++;
-            try {
-                while (permits < count) {
-                    monitor.wait();
+        }
+        int emptyPolls = 0;
+        try {
+            while (true) {
+                synchronized (monitor) {
+                    if (permits >= count) {
+                        permits -= count;
+                        return;
+                    }
                 }
-            } finally {
+                Thread.sleep(pollDelay(emptyPolls++));
+            }
+        } finally {
+            synchronized (monitor) {
                 waiters--;
             }
-            permits -= count;
         }
     }
 
@@ -84,19 +96,26 @@ public class TSemaphore {
         long deadline = System.currentTimeMillis() + Math.max(0L, unit.toMillis(timeout));
         synchronized (monitor) {
             waiters++;
-            try {
-                while (permits < count) {
-                    long remaining = deadline - System.currentTimeMillis();
-                    if (remaining <= 0) {
-                        return false;
+        }
+        int emptyPolls = 0;
+        try {
+            while (true) {
+                synchronized (monitor) {
+                    if (permits >= count) {
+                        permits -= count;
+                        return true;
                     }
-                    monitor.wait(remaining);
                 }
-            } finally {
+                long remaining = deadline - System.currentTimeMillis();
+                if (remaining <= 0) {
+                    return false;
+                }
+                Thread.sleep(Math.min(remaining, pollDelay(emptyPolls++)));
+            }
+        } finally {
+            synchronized (monitor) {
                 waiters--;
             }
-            permits -= count;
-            return true;
         }
     }
 

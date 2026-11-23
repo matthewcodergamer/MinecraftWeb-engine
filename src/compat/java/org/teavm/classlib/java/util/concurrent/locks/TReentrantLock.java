@@ -5,7 +5,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 
-/** Reentrant mutex built on a Java monitor (works with TeaVM green threads). */
+/**
+ * Reentrant mutex for TeaVM green threads.
+ *
+ * <p>Contention is resolved by polling the owner field through
+ * {@code Thread.sleep}. Parking on a monitor is not used because the Wasm-GC
+ * {@code Object.wait} path can suspend a fiber permanently, which would wedge
+ * chunk rendering and world generation.
+ */
 public class TReentrantLock implements Lock {
     private final Object monitor = new Object();
     private Thread owner;
@@ -19,6 +26,10 @@ public class TReentrantLock implements Lock {
 
     public TReentrantLock(boolean fair) {
         this.fair = fair;
+    }
+
+    private static long pollDelay(int emptyPolls) {
+        return Math.min(1L << Math.min(emptyPolls, 3), 8L);
     }
 
     @Override
@@ -46,15 +57,26 @@ public class TReentrantLock implements Lock {
                 return;
             }
             waiters++;
-            try {
-                while (owner != null) {
-                    monitor.wait();
+        }
+        boolean locked = false;
+        int emptyPolls = 0;
+        try {
+            while (!locked) {
+                synchronized (monitor) {
+                    if (owner == null) {
+                        owner = me;
+                        holds = 1;
+                        locked = true;
+                    }
                 }
-            } finally {
+                if (!locked) {
+                    Thread.sleep(pollDelay(emptyPolls++));
+                }
+            }
+        } finally {
+            synchronized (monitor) {
                 waiters--;
             }
-            owner = me;
-            holds = 1;
         }
     }
 
@@ -85,20 +107,27 @@ public class TReentrantLock implements Lock {
                 return true;
             }
             waiters++;
-            try {
-                while (owner != null) {
-                    long left = deadline - System.currentTimeMillis();
-                    if (left <= 0) {
-                        return false;
+        }
+        int emptyPolls = 0;
+        try {
+            while (true) {
+                synchronized (monitor) {
+                    if (owner == null) {
+                        owner = me;
+                        holds = 1;
+                        return true;
                     }
-                    monitor.wait(left);
                 }
-            } finally {
+                long left = deadline - System.currentTimeMillis();
+                if (left <= 0) {
+                    return false;
+                }
+                Thread.sleep(Math.min(left, pollDelay(emptyPolls++)));
+            }
+        } finally {
+            synchronized (monitor) {
                 waiters--;
             }
-            owner = me;
-            holds = 1;
-            return true;
         }
     }
 
@@ -110,7 +139,6 @@ public class TReentrantLock implements Lock {
             }
             if (--holds == 0) {
                 owner = null;
-                monitor.notifyAll();
             }
         }
     }
@@ -186,37 +214,73 @@ public class TReentrantLock implements Lock {
         /** Releases the lock fully, waits for a signal or timeout, then re-acquires. */
         private boolean awaitMillis(long millis) throws InterruptedException {
             Thread me = Thread.currentThread();
-            boolean signalled;
+            int saved;
             synchronized (monitor) {
                 if (owner != me) {
                     throw new IllegalMonitorStateException();
                 }
-                int saved = holds;
+                saved = holds;
                 owner = null;
                 holds = 0;
                 waiting++;
-                monitor.notifyAll();
-                long deadline = millis < 0 ? Long.MAX_VALUE : System.currentTimeMillis() + millis;
-                try {
-                    while (signals == 0) {
+            }
+            boolean signalled = false;
+            boolean interrupted = false;
+            long deadline = millis < 0 ? Long.MAX_VALUE : System.currentTimeMillis() + millis;
+            int emptyPolls = 0;
+            try {
+                while (true) {
+                    synchronized (monitor) {
+                        if (signals > 0) {
+                            signals--;
+                            signalled = true;
+                            break;
+                        }
+                    }
+                    if (millis >= 0) {
                         long left = deadline - System.currentTimeMillis();
                         if (left <= 0) {
                             break;
                         }
-                        monitor.wait(millis < 0 ? 0 : left);
+                        try {
+                            Thread.sleep(Math.min(left, pollDelay(emptyPolls++)));
+                        } catch (InterruptedException e) {
+                            interrupted = true;
+                            break;
+                        }
+                    } else {
+                        try {
+                            Thread.sleep(pollDelay(emptyPolls++));
+                        } catch (InterruptedException e) {
+                            interrupted = true;
+                            break;
+                        }
                     }
-                } finally {
-                    signalled = signals > 0;
-                    if (signalled) {
-                        signals--;
-                    }
-                    waiting--;
-                    while (owner != null) {
-                        monitor.wait();
-                    }
-                    owner = me;
-                    holds = saved;
                 }
+                // Re-acquire the lock before reporting interruption, matching
+                // Condition.await semantics.
+                emptyPolls = 0;
+                while (true) {
+                    synchronized (monitor) {
+                        if (owner == null) {
+                            owner = me;
+                            holds = saved;
+                            break;
+                        }
+                    }
+                    try {
+                        Thread.sleep(pollDelay(emptyPolls++));
+                    } catch (InterruptedException e) {
+                        interrupted = true;
+                    }
+                }
+            } finally {
+                synchronized (monitor) {
+                    waiting--;
+                }
+            }
+            if (interrupted) {
+                throw new InterruptedException();
             }
             return signalled;
         }
@@ -227,7 +291,6 @@ public class TReentrantLock implements Lock {
                 if (signals < waiting) {
                     signals++;
                 }
-                monitor.notifyAll();
             }
         }
 
@@ -235,7 +298,6 @@ public class TReentrantLock implements Lock {
         public void signalAll() {
             synchronized (monitor) {
                 signals = waiting;
-                monitor.notifyAll();
             }
         }
     }

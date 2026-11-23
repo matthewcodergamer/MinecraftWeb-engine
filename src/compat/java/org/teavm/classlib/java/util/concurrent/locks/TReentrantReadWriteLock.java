@@ -22,6 +22,10 @@ public class TReentrantReadWriteLock implements ReadWriteLock {
     public TReentrantReadWriteLock(boolean fair) {
     }
 
+    private static long pollDelay(int emptyPolls) {
+        return Math.min(1L << Math.min(emptyPolls, 3), 8L);
+    }
+
     @Override
     public ReadLock readLock() {
         return readLock;
@@ -89,16 +93,23 @@ public class TReentrantReadWriteLock implements ReadWriteLock {
         private boolean acquire(long millis) throws InterruptedException {
             Thread me = Thread.currentThread();
             long deadline = millis < 0 ? Long.MAX_VALUE : System.currentTimeMillis() + millis;
-            synchronized (monitor) {
-                while (writer != null && writer != me) {
+            int emptyPolls = 0;
+            while (true) {
+                synchronized (monitor) {
+                    if (writer == null || writer == me) {
+                        readers.merge(me, 1, Integer::sum);
+                        return true;
+                    }
+                }
+                if (millis >= 0) {
                     long left = deadline - System.currentTimeMillis();
                     if (left <= 0) {
                         return false;
                     }
-                    monitor.wait(millis < 0 ? 0 : left);
+                    Thread.sleep(Math.min(left, pollDelay(emptyPolls++)));
+                } else {
+                    Thread.sleep(pollDelay(emptyPolls++));
                 }
-                readers.merge(me, 1, Integer::sum);
-                return true;
             }
         }
 
@@ -166,21 +177,28 @@ public class TReentrantReadWriteLock implements ReadWriteLock {
         private boolean acquire(long millis) throws InterruptedException {
             Thread me = Thread.currentThread();
             long deadline = millis < 0 ? Long.MAX_VALUE : System.currentTimeMillis() + millis;
-            synchronized (monitor) {
-                if (writer == me) {
-                    writeHolds++;
-                    return true;
+            int emptyPolls = 0;
+            while (true) {
+                synchronized (monitor) {
+                    if (writer == me) {
+                        writeHolds++;
+                        return true;
+                    }
+                    if (writer == null && !otherReaders(me)) {
+                        writer = me;
+                        writeHolds = 1;
+                        return true;
+                    }
                 }
-                while (writer != null || otherReaders(me)) {
+                if (millis >= 0) {
                     long left = deadline - System.currentTimeMillis();
-                    if (millis >= 0 && left <= 0) {
+                    if (left <= 0) {
                         return false;
                     }
-                    monitor.wait(millis < 0 ? 0 : left);
+                    Thread.sleep(Math.min(left, pollDelay(emptyPolls++)));
+                } else {
+                    Thread.sleep(pollDelay(emptyPolls++));
                 }
-                writer = me;
-                writeHolds = 1;
-                return true;
             }
         }
 

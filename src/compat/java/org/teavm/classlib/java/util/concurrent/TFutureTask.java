@@ -141,29 +141,58 @@ public class TFutureTask<V> implements RunnableFuture<V> {
         return state >= DONE;
     }
 
+    private synchronized int stateNow() {
+        return state;
+    }
+
+    private static long pollDelay(int emptyPolls) {
+        return Math.min(1L << Math.min(emptyPolls, 3), 8L);
+    }
+
     @Override
-    public synchronized V get() throws InterruptedException, ExecutionException {
-        while (state < DONE) {
-            wait();
+    public V get() throws InterruptedException, ExecutionException {
+        boolean interrupted = false;
+        int emptyPolls = 0;
+        while (stateNow() < DONE) {
+            try {
+                Thread.sleep(pollDelay(emptyPolls++));
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
         }
         return report();
     }
 
     @Override
-    public synchronized V get(long timeout, TimeUnit unit)
+    public V get(long timeout, TimeUnit unit)
             throws InterruptedException, ExecutionException, TimeoutException {
         long deadline = System.currentTimeMillis() + unit.toMillis(timeout);
-        while (state < DONE) {
+        boolean interrupted = false;
+        int emptyPolls = 0;
+        while (stateNow() < DONE) {
             long left = deadline - System.currentTimeMillis();
             if (left <= 0) {
+                if (interrupted) {
+                    Thread.currentThread().interrupt();
+                }
                 throw new TimeoutException();
             }
-            wait(left);
+            try {
+                Thread.sleep(Math.min(left, pollDelay(emptyPolls++)));
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
         }
         return report();
     }
 
-    private V report() throws ExecutionException {
+    private synchronized V report() throws ExecutionException {
         if (state == CANCELLED) {
             throw new CancellationException();
         }

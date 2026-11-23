@@ -53,59 +53,84 @@ public class TLinkedBlockingQueue<E> extends AbstractQueue<E> implements Blockin
         return true;
     }
 
-    @Override
-    public synchronized void put(E e) throws InterruptedException {
-        if (e == null) {
-            throw new NullPointerException();
-        }
-        while (items.size() >= capacity) {
-            wait();
-        }
-        items.addLast(e);
-        notifyAll();
+    private static long pollDelay(int emptyPolls) {
+        return Math.min(1L << Math.min(emptyPolls, 3), 8L);
     }
 
     @Override
-    public synchronized boolean offer(E e, long timeout, TimeUnit unit) throws InterruptedException {
+    public void put(E e) throws InterruptedException {
+        if (e == null) {
+            throw new NullPointerException();
+        }
+        int emptyPolls = 0;
+        while (true) {
+            synchronized (this) {
+                if (items.size() < capacity) {
+                    items.addLast(e);
+                    notifyAll();
+                    return;
+                }
+            }
+            Thread.sleep(pollDelay(emptyPolls++));
+        }
+    }
+
+    @Override
+    public boolean offer(E e, long timeout, TimeUnit unit) throws InterruptedException {
         if (e == null) {
             throw new NullPointerException();
         }
         long deadline = System.currentTimeMillis() + unit.toMillis(timeout);
-        while (items.size() >= capacity) {
+        int emptyPolls = 0;
+        while (true) {
+            synchronized (this) {
+                if (items.size() < capacity) {
+                    items.addLast(e);
+                    notifyAll();
+                    return true;
+                }
+            }
             long left = deadline - System.currentTimeMillis();
             if (left <= 0) {
                 return false;
             }
-            wait(left);
+            Thread.sleep(Math.min(left, pollDelay(emptyPolls++)));
         }
-        items.addLast(e);
-        notifyAll();
-        return true;
     }
 
     @Override
-    public synchronized E take() throws InterruptedException {
-        while (items.isEmpty()) {
-            wait();
+    public E take() throws InterruptedException {
+        int emptyPolls = 0;
+        while (true) {
+            synchronized (this) {
+                if (!items.isEmpty()) {
+                    E e = items.removeFirst();
+                    notifyAll();
+                    return e;
+                }
+            }
+            Thread.sleep(pollDelay(emptyPolls++));
         }
-        E e = items.removeFirst();
-        notifyAll();
-        return e;
     }
 
     @Override
-    public synchronized E poll(long timeout, TimeUnit unit) throws InterruptedException {
+    public E poll(long timeout, TimeUnit unit) throws InterruptedException {
         long deadline = System.currentTimeMillis() + unit.toMillis(timeout);
-        while (items.isEmpty()) {
+        int emptyPolls = 0;
+        while (true) {
+            synchronized (this) {
+                if (!items.isEmpty()) {
+                    E e = items.removeFirst();
+                    notifyAll();
+                    return e;
+                }
+            }
             long left = deadline - System.currentTimeMillis();
             if (left <= 0) {
                 return null;
             }
-            wait(left);
+            Thread.sleep(Math.min(left, pollDelay(emptyPolls++)));
         }
-        E e = items.removeFirst();
-        notifyAll();
-        return e;
     }
 
     @Override
