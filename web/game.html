@@ -3171,6 +3171,13 @@
             if (params.get('wasm') === '1') brainQuery += '&wasm=1';
             if (params.get('wasm') === '0') brainQuery += '&wasm=0';
             if (params.has('js')) brainQuery += '&js=' + encodeURIComponent(params.get('js'));
+            // Forward the render/quality switches into the Java document. The
+            // iframe has its own location.search, so without this ?rd=6 was
+            // silently ignored and the client generated at its 12-chunk
+            // desktop default, which is far too heavy for a browser tab.
+            if (params.has('rd')) brainQuery += '&rd=' + encodeURIComponent(params.get('rd'));
+            else brainQuery += '&rd=' + ((window.MCInput && MCInput.isTouch) ? 6 : 8);
+            if (params.get('adaptive') === '0') brainQuery += '&adaptive=0';
             frame.src = brainQuery;
             watchJavaTitleScreen(frame);
           } else if (HTML_UI) {

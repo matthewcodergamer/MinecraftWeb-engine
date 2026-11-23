@@ -117,11 +117,15 @@ const msg = (t) => {
   if (el) el.textContent = t;
   if (window.mcBridge) mcBridge.setProgress(window.__mcProgress || 0, t);
 };
+let barValue = 0;
 const bar = (f) => {
-  window.__mcProgress = f;
+  // Two independent downloads report progress; never let one drag the bar
+  // backwards when the other finishes first.
+  barValue = Math.max(barValue, f);
+  window.__mcProgress = barValue;
   const el = document.getElementById('boot-bar');
-  if (el) el.style.width = Math.round(f * 100) + '%';
-  if (window.mcBridge) mcBridge.setProgress(f, progressLabel);
+  if (el) el.style.width = Math.round(barValue * 100) + '%';
+  if (window.mcBridge) mcBridge.setProgress(barValue, progressLabel);
 };
 const fail = (t) => {
   // The Java client can report a fatal error more than once (crash report +
@@ -168,8 +172,9 @@ async function fetchWithProgress(url, label, from, to) {
 }
 
 function reportBootStage(stage, detail) {
-  const payload = { source: 'mc-brain', type: 'java-stage', stage, detail: detail || '' };
-  console.log('[TEAVM_BOOT] ' + stage + (detail ? ' ' + detail : ''));
+  const t = Math.round(performance.now());
+  const payload = { source: 'mc-brain', type: 'java-stage', stage, detail: detail || '', t };
+  console.log('[TEAVM_BOOT] t=' + t + ' ' + stage + (detail ? ' ' + detail : ''));
   if (window.parent !== window) window.parent.postMessage(payload, '*');
 }
 
@@ -479,21 +484,35 @@ function installMemoryWatch() {
 (async () => {
   try {
     msg('Loading game resources…');
-    await loadResources();
+    // The resource archive and the Java module are independent downloads.
+    // Running them one after the other added their full wall-clock times; on a
+    // desktop browser overlap them, while touch/low-memory devices keep the
+    // sequential path so two large buffers never coexist in the tab.
+    const deviceMemory = Number(navigator.deviceMemory) || 0;
+    const touch = (navigator.maxTouchPoints || 0) > 1
+      || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+    const parallelBoot = !touch && (deviceMemory === 0 || deviceMemory > 4);
+    const resourcesPromise = loadResources();
+    resourcesPromise.catch(() => { /* reported by the await below */ });
+    let brainPromise = null;
+    if (parallelBoot) {
+      brainPromise = loadBrain();
+      brainPromise.catch(() => { /* reported by the await below */ });
+    }
     msg('Starting shader compiler…');
-    bar(0.7);
     await __mcShaders.init('');
     msg('Starting graphics…');
-    bar(0.8);
     const webgpu = await __mcWebGPU.init();
     console.log(webgpu ? 'Graphics: WebGPU (' + __mcWebGPU.adapterName + ')' : 'Graphics: WebGPU unavailable, using WebGL2');
     if (!webgpu) {
       throw new Error('WebGPU could not start in this browser: ' + (__mcWebGPU.error || 'unknown reason') +
         '. Minecraft 26.3 needs WebGPU (Chrome 113+ or Safari 18+).');
     }
+    await resourcesPromise;
+    bar(0.75);
     msg('Loading Minecraft…');
-    bar(0.9);
-    await loadBrain();
+    if (!brainPromise) brainPromise = loadBrain();
+    await brainPromise;
     reportBootStage('client-bundle-script-executed');
     bar(1);
     showStats();

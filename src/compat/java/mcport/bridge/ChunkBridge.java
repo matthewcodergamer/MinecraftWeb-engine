@@ -224,6 +224,7 @@ public final class ChunkBridge {
                 + " worldRequested=" + hostWorldRequested()
                 + " level=" + (minecraft.level != null)
                 + " player=" + (minecraft.player != null)
+                + " server=" + describeServer(minecraft)
                 + " sent=" + SENT.size();
         long now = System.currentTimeMillis();
         // Publish on change at most four times a second. The old every-fifth-
@@ -235,6 +236,23 @@ public final class ChunkBridge {
         lastBootState = value;
         lastBootStateAt = now;
         BrowserRuntime.report("boot-state", value);
+    }
+
+    /**
+     * Server readiness is the other half of {@code Minecraft.doWorldLoad}'s wait
+     * loop. Publishing it separates "worldgen still running" from "the client
+     * never connected" when the smoke test times out.
+     */
+    private static String describeServer(Minecraft minecraft) {
+        try {
+            net.minecraft.client.server.IntegratedServer server = minecraft.getSingleplayerServer();
+            if (server == null) {
+                return "null";
+            }
+            return "ready=" + server.isReady() + " tick=" + server.getTickCount();
+        } catch (Throwable t) {
+            return "error=" + t.getClass().getSimpleName();
+        }
     }
 
     /**
@@ -419,6 +437,20 @@ public final class ChunkBridge {
         }
         if (now - titleSeenAt < 250L) {
             return;
+        }
+        // Minecraft.doWorldLoad() spins until gui.overlay() == null, and that
+        // loop never runs the normal frame path that finishes the Java loading
+        // overlay's fade-out. If world creation starts while the overlay is
+        // still up, the client waits on it forever and the server never gets a
+        // player. The host page already shows the single boot loader, so drop
+        // the Java overlay before creating the world.
+        try {
+            if (minecraft.gui.overlay() != null) {
+                minecraft.gui.setOverlay(null);
+                BrowserRuntime.report("stage", "java-boot-overlay-cleared");
+            }
+        } catch (Throwable t) {
+            BrowserRuntime.report("overlay-clear-error", t.getClass().getName());
         }
         worldRequested = true;
         BrowserRuntime.report("stage", "world-create-request-accepted");
