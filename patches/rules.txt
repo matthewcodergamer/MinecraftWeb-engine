@@ -294,6 +294,15 @@ BODY_STATIC io.netty.util.internal.PlatformDependent0 allocateUninitializedArray
 # so LocalServerChannel construction fails at the integrated-server memory-channel bind.
 BODY_STATIC io.netty.util.ResourceLeakDetector addExclusions(Ljava/lang/Class;[Ljava/lang/String;)V -> mcport.rt.patch.NettyBrowserPatches addExclusions
 
+# TeaVM's Object.wait() strands a fiber when another fiber completes the monitor. Netty's
+# promise waits use it, and Minecraft blocks the render thread on bind()/connect() of the
+# integrated server's local channel, so poll isDone() with Thread.sleep instead.
+BODY io.netty.util.concurrent.DefaultPromise await()Lio/netty/util/concurrent/Promise; -> mcport.rt.patch.NettyPromisePatches await
+BODY io.netty.util.concurrent.DefaultPromise awaitUninterruptibly()Lio/netty/util/concurrent/Promise; -> mcport.rt.patch.NettyPromisePatches awaitUninterruptibly
+BODY io.netty.util.concurrent.DefaultPromise await(JLjava/util/concurrent/TimeUnit;)Z -> mcport.rt.patch.NettyPromisePatches await
+BODY io.netty.util.concurrent.DefaultPromise awaitUninterruptibly(JLjava/util/concurrent/TimeUnit;)Z -> mcport.rt.patch.NettyPromisePatches awaitUninterruptibly
+BODY io.netty.util.concurrent.DefaultPromise awaitUninterruptibly(J)Z -> mcport.rt.patch.NettyPromisePatches awaitUninterruptibly
+
 # The corresponding methods above are real browser implementations, so advertise them as available.
 BODY_STATIC io.netty.util.internal.PlatformDependent0 hasDirectBufferNoCleanerConstructor()Z -> mcport.rt.patch.NettyBrowserPatches available
 BODY_STATIC io.netty.util.internal.PlatformDependent0 hasAlignSliceMethod()Z -> mcport.rt.patch.NettyBrowserPatches available

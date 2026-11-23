@@ -95,7 +95,27 @@ public class TInetAddress implements java.io.Serializable {
     }
 
     public boolean isLoopbackAddress() {
-        return address.length == 4 && address[0] == 127;
+        if (address.length == 4) {
+            return address[0] == 127;
+        }
+        if (address.length == 16) {
+            for (int i = 0; i < 15; i++) {
+                if (address[i] != 0) {
+                    return false;
+                }
+            }
+            return address[15] == 1;
+        }
+        return false;
+    }
+
+    public boolean isAnyLocalAddress() {
+        for (byte b : address) {
+            if (b != 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override
