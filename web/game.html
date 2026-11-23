@@ -1557,6 +1557,13 @@
               state.javaUiLive = true;
               state.menuOpen = false;
               document.body.classList.add('java-ui');
+              // The Rust body was only the boot backdrop. Java now owns the
+              // visible canvas, so stop the hidden renderer and release its
+              // GPU buffers instead of running two renderers forever.
+              try {
+                const bodyModule = mcBridge && mcBridge.state && mcBridge.state.module;
+                if (bodyModule && typeof bodyModule.pause === 'function') bodyModule.pause();
+              } catch (e) { console.warn('Rust body pause failed: ' + (e && e.message || e)); }
               window.__mc = Object.assign(window.__mc || {}, { stage: 'complete', ui: 'java' });
               window.__mcLoadingFinished = true;
               finishSplash();

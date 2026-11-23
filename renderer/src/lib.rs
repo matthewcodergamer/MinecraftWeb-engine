@@ -1061,6 +1061,24 @@ fn create_depth(
     (texture, view)
 }
 
+/// Stops the render loop and releases the Rust body's GPU resources.
+///
+/// The hybrid page starts this renderer for the boot/loading visuals. Once the
+/// real Java client has presented its own WebGPU title screen, the body is
+/// hidden and its canvas can no longer be seen. Leaving the RAF loop and the
+/// chunk buffers alive would keep a second renderer consuming GPU memory and
+/// battery for the rest of the session, which also makes Chrome's renderer
+/// process more likely to be killed under memory pressure.
+#[wasm_bindgen]
+pub fn pause() {
+    FRAME_LOOP.with(|cell| {
+        cell.borrow_mut().take();
+    });
+    RENDERER.with(|cell| {
+        cell.borrow_mut().take();
+    });
+}
+
 fn start_frame_loop() {
     let slot: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::new(RefCell::new(None));
     let weak: Weak<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::downgrade(&slot);

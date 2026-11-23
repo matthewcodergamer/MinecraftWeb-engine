@@ -443,7 +443,6 @@ def main():
                         pump(msg)
                     except Exception as exc:
                         print("SOAK pump error: {}: {}".format(type(exc).__name__, exc), flush=True)
-                    continue
                 now = time.time()
                 if now - last_sample < a.fps_window:
                     continue
