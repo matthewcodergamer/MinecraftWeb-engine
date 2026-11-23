@@ -51,7 +51,7 @@ public class TThreadPoolExecutor extends AbstractExecutorService {
             throw new RejectedExecutionException("executor shut down");
         }
         tasks.addLast(command);
-        if (idle == 0 && workers < Math.max(1, maximumPoolSize)) {
+        if ((idle == 0 || workers == 0) && workers < Math.max(1, maximumPoolSize)) {
             workers++;
             Thread t = threadFactory.newThread(this::workerLoop);
             if (t == null) {
@@ -98,6 +98,10 @@ public class TThreadPoolExecutor extends AbstractExecutorService {
                 thrown = t;
             }
             afterExecute(task, thrown);
+            // Keep-alive is an idle timeout, not a total worker lifetime: a
+            // cached-pool worker that has been busy for a while must still get
+            // a full keepAlive window before it retires.
+            deadline = System.currentTimeMillis() + keepAliveMillis;
             if (thrown != null) {
                 Thread.UncaughtExceptionHandler h = self.getUncaughtExceptionHandler();
                 if (h != null) {

@@ -258,6 +258,7 @@ public class TCompletableFuture<T> implements Future<T>, CompletionStage<T> {
     private Object waitFor() {
         boolean interrupted = false;
         int emptyPolls = 0;
+        long startedAt = System.currentTimeMillis();
         while (true) {
             Object r = snapshot();
             if (r != null) {
@@ -265,6 +266,22 @@ public class TCompletableFuture<T> implements Future<T>, CompletionStage<T> {
                     Thread.currentThread().interrupt();
                 }
                 return r;
+            }
+            if (!stuckLogged && System.currentTimeMillis() - startedAt >= STUCK_WARN_MS) {
+                stuckLogged = true;
+                try {
+                    mcport.rt.BrowserRuntime.log("[MW_STUCK] CompletableFuture.get waited "
+                            + STUCK_WARN_MS + "ms; dependents=" + getNumberOfDependents());
+                    mcport.rt.BrowserRuntime.log("[MW_STUCK] "
+                            + mcport.rt.BrowserRuntime.captureStack());
+                } catch (Throwable ignored) {
+                    // diagnostics must never break the wait
+                }
+            }
+            // A pool worker waiting here may be the only thread that can run the
+            // dependent stage queued on its own pool (worldgen does this).
+            if (TForkJoinPool.helpRunOne()) {
+                continue;
             }
             try {
                 Thread.sleep(pollDelay(emptyPolls++));
@@ -326,6 +343,9 @@ public class TCompletableFuture<T> implements Future<T>, CompletionStage<T> {
         int emptyPolls = 0;
         long startedAt = System.currentTimeMillis();
         while ((r = snapshot()) == null) {
+            if (TForkJoinPool.helpRunOne()) {
+                continue;
+            }
             try {
                 // Object.wait() currently strands a Wasm-GC fiber when another
                 // fiber completes this future. Thread.sleep uses the working
