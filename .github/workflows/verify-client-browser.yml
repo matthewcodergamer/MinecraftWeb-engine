@@ -118,6 +118,18 @@ jobs:
       - name: Build Rust WebGPU Body
         run: bash scripts/build_body.sh
 
+      - name: Upload built Java client and resources
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: minecraft-web-client
+          path: |
+            build/web/clientmain.wasm
+            build/web/clientmain.wasm-runtime.js
+            build/web/client-resources.bin
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Check browser and JavaScript syntax
         run: |
           set -euo pipefail
@@ -141,29 +153,67 @@ jobs:
           trap "kill $SERVER_PID" EXIT
           sleep 2
           python3 scripts/cdp.py "http://127.0.0.1:8765/game.html?smoke-world=1&wasm=1&diag=1" \
-            --timeout 3000 \
+            --timeout 1200 \
+            --soak-seconds 60 \
+            --soak-screenshot build/smoke_soak.png \
             --preload-js "try { sessionStorage.setItem('mw_play_pass', String(Date.now())); } catch (e) {}" \
             --screenshot build/browser_title_or_world.png \
             --until-js "window.__mc && (window.__mc.stage === 'failed' || window.__mc.javaStage === 'first-java-section-emitted')" \
             --assert-js "window.__mc && window.__mc.javaStage === 'first-java-section-emitted'" \
             --assert-js "window.__mc && window.__mc.stage !== 'failed'" \
             --assert-js "(() => { const c = document.querySelector('canvas'); return !!c && c.width > 0 && c.height > 0; })()"
+          cp build/browser_console.log build/smoke_console.log
+          cp build/browser_error.txt build/smoke_error.txt
+
+      - name: Run real Java title-screen singleplayer test
+        env:
+          CHROME: /usr/bin/google-chrome
+        run: |
+          set -euo pipefail
+          python3 -m http.server 8766 --directory build/web &
+          SERVER_PID=$!
+          trap "kill $SERVER_PID" EXIT
+          sleep 2
+          # No smoke-world here: this drives the actual Java TitleScreen,
+          # SelectWorldScreen and CreateWorldScreen widgets with real CDP mouse
+          # events, selects Superflat through the World tab, and creates the
+          # world through Java's own UI.
+          python3 scripts/cdp.py "http://127.0.0.1:8766/game.html?wasm=1&diag=1" \
+            --timeout 1800 \
+            --soak-seconds 120 \
+            --soak-screenshot build/title_soak.png \
+            --preload-js "try { sessionStorage.setItem('mw_play_pass', String(Date.now())); } catch (e) {}" \
+            --actions "wait=window.__mc && document.body.classList.contains('java-ui');shot=build/title_screen.png;click=Singleplayer@TitleScreen;shot=build/select_world.png;click=Create New World@SelectWorldScreen;shot=build/create_world.png;click=World@CreateWorldScreen;cycle=World Type*|Superflat;shot=build/world_tab_superflat.png;click=Create New World@CreateWorldScreen" \
+            --actions-timeout 900 \
+            --screenshot build/browser_title_world.png \
+            --until-js "window.__mc && (window.__mc.stage === 'failed' || window.__mc.javaStage === 'first-java-section-emitted')" \
+            --assert-js "window.__mc && window.__mc.javaStage === 'first-java-section-emitted'" \
+            --assert-js "window.__mc && window.__mc.stage !== 'failed'" \
+            --assert-js "(() => { const f = document.getElementById('mc-brain'); const m = f && f.contentWindow && f.contentWindow.__mc; return !!m && String(m['world-preset'] || '').indexOf('flat') >= 0; })()"
+          cp build/browser_console.log build/title_console.log
+          cp build/browser_error.txt build/title_error.txt
 
       - name: Assert browser boot completed and a real screenshot was captured
         run: |
           set -euo pipefail
           test -s build/browser_title_or_world.png
+          test -s build/browser_title_world.png
+          test -s build/title_screen.png
+          test -s build/smoke_soak.png
+          test -s build/title_soak.png
           python3 - <<'PY'
           import struct
           from pathlib import Path
-          p = Path("build/browser_title_or_world.png")
-          data = p.read_bytes()
-          if data[:8] != b"\\x89PNG\\r\\n\\x1a\\n" or len(data) < 24:
-              raise SystemExit("Screenshot is not a valid PNG")
-          width, height = struct.unpack(">II", data[16:24])
-          if width < 640 or height < 360:
-              raise SystemExit(f"Screenshot dimensions too small: {width}x{height}")
-          print(f"Verified rendered browser screenshot: {width}x{height} ({len(data)} bytes)")
+          for name in ("browser_title_or_world.png", "browser_title_world.png", "title_screen.png",
+                       "smoke_soak.png", "title_soak.png"):
+              p = Path("build") / name
+              data = p.read_bytes()
+              if data[:8] != b"\\x89PNG\\r\\n\\x1a\\n" or len(data) < 24:
+                  raise SystemExit(f"{name}: not a valid PNG")
+              width, height = struct.unpack(">II", data[16:24])
+              if width < 640 or height < 360:
+                  raise SystemExit(f"{name}: dimensions too small: {width}x{height}")
+              print(f"Verified rendered browser screenshot: {name} {width}x{height} ({len(data)} bytes)")
           PY
 
       - name: Preserve full Chrome browser console and error diagnostics
@@ -175,5 +225,16 @@ jobs:
             build/browser_console.log
             build/browser_error.txt
             build/browser_title_or_world.png
+            build/browser_title_world.png
+            build/title_screen.png
+            build/select_world.png
+            build/create_world.png
+            build/world_tab_superflat.png
+            build/smoke_soak.png
+            build/title_soak.png
+            build/smoke_console.log
+            build/smoke_error.txt
+            build/title_console.log
+            build/title_error.txt
           if-no-files-found: warn
           retention-days: 14

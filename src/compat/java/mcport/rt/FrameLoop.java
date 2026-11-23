@@ -44,6 +44,8 @@ public final class FrameLoop {
     @JSBody(script = ""
             + "var s = window.__mcFrames || (window.__mcFrames = {count: 0, last: performance.now(), fps: 0, frameMs: 0});"
             + "var now = performance.now(); s.count++;"
+            + "if (s.resumeAt) { var w = now - s.resumeAt; s.workMs = w;"
+            + "  s.workAvg = s.workAvg ? s.workAvg * 0.9 + w * 0.1 : w; s.resumeAt = 0; }"
             + "if (now - s.last >= 1000) { s.fps = s.count * 1000 / (now - s.last); s.count = 0; s.last = now;"
             + "  if (window.__mcOnFps) window.__mcOnFps(s.fps); }")
     private static native void frameStats();

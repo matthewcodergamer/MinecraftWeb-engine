@@ -21,7 +21,9 @@ import net.minecraft.world.level.levelgen.presets.WorldPresets;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
+import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.chunk.DataLayer;
 import net.minecraft.world.level.chunk.LevelChunk;
@@ -71,6 +73,8 @@ public final class ChunkBridge {
     private static boolean firstLevelCreatedLogged;
     private static boolean firstLevelPlayerLogged;
     private static boolean firstScanLogged;
+    private static String lastScreenButtons = "";
+    private static int playerPosReports;
     private static boolean firstSectionLogged;
     private static boolean ready;
     private static boolean worldRequested;
@@ -108,6 +112,8 @@ public final class ChunkBridge {
         firstLevelCreatedLogged = false;
         firstLevelPlayerLogged = false;
         firstScanLogged = false;
+        lastScreenButtons = "";
+        playerPosReports = 0;
         emitReset();
     }
 
@@ -132,6 +138,16 @@ public final class ChunkBridge {
         if (!firstLevelPlayerLogged) {
             firstLevelPlayerLogged = true;
             BrowserRuntime.report("stage", "world-level-and-player-ready");
+        }
+
+        playerPosReports++;
+        if (playerPosReports % 20 == 1) {
+            BrowserRuntime.report("player-pos",
+                    minecraft.player.getX() + "," + minecraft.player.getY() + "," + minecraft.player.getZ()
+                            + "," + minecraft.player.getYRot() + "," + minecraft.player.getXRot());
+            BlockPos below = minecraft.player.blockPosition().below();
+            BrowserRuntime.report("block-below",
+                    minecraft.level.getBlockState(below) + "@" + below.getX() + "," + below.getY() + "," + below.getZ());
         }
 
         // Options that are not part of LevelSettings/WorldOptions are applied
@@ -201,6 +217,66 @@ public final class ChunkBridge {
                         + " level=" + (minecraft.level != null)
                         + " player=" + (minecraft.player != null)
                         + " sent=" + SENT.size());
+        reportScreenButtons(minecraft);
+    }
+
+    /**
+     * Publishes the real Java menu widgets and their GUI coordinates. The CDP
+     * test uses these bounds to click the actual Singleplayer/Create World
+     * buttons instead of guessing a pixel position.
+     */
+    private static void reportScreenButtons(Minecraft minecraft) {
+        Object screen = minecraft.gui.screen();
+        if (!(screen instanceof net.minecraft.client.gui.screens.Screen)) {
+            return;
+        }
+        String name = screen.getClass().getName();
+        if (!(screen instanceof TitleScreen)
+                && !name.endsWith("SelectWorldScreen")
+                && !name.endsWith("CreateWorldScreen")) {
+            return;
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("screen=").append(name);
+        try {
+            com.mojang.blaze3d.platform.Window window = minecraft.getWindow();
+            sb.append(" scale=").append(window.getGuiScale());
+            // getScreenWidth()/getScreenHeight() are the logical (CSS pixel)
+            // window size. getWidth()/getHeight() are framebuffer pixels.
+            sb.append(" window=").append(window.getScreenWidth()).append('x').append(window.getScreenHeight());
+            sb.append(" gui=").append(window.getGuiScaledWidth()).append('x').append(window.getGuiScaledHeight());
+            collectWidgets(screen, sb, 0);
+        } catch (Throwable t) {
+            sb.append(" error=").append(t.getClass().getName());
+        }
+        String value = sb.toString();
+        if (!value.equals(lastScreenButtons)) {
+            lastScreenButtons = value;
+            BrowserRuntime.report("screen-buttons", value);
+        }
+    }
+
+    /**
+     * Walks container widgets (tab bars, scroll areas) as well as the screen's
+     * direct children, so tab buttons and tab content are clickable by label.
+     */
+    private static void collectWidgets(Object node, StringBuilder sb, int depth) {
+        if (depth > 8) {
+            return;
+        }
+        if (node instanceof AbstractWidget) {
+            AbstractWidget widget = (AbstractWidget) node;
+            sb.append(" | ").append(widget.getMessage().getString().replace('|', '/'))
+                    .append('@').append(widget.getX()).append(',').append(widget.getY())
+                    .append(',').append(widget.getWidth()).append(',').append(widget.getHeight());
+        }
+        if (node instanceof net.minecraft.client.gui.components.events.ContainerEventHandler) {
+            for (Object child : ((net.minecraft.client.gui.components.events.ContainerEventHandler) node).children()) {
+                if (child != node) {
+                    collectWidgets(child, sb, depth + 1);
+                }
+            }
+        }
     }
 
     /**
@@ -300,6 +376,10 @@ public final class ChunkBridge {
 
     private static WorldDimensions presetDimensions(HolderLookup.Provider provider, ResourceKey<WorldPreset> preset) {
         BrowserRuntime.report("stage", "world-preset-dimensions-enter");
+        try {
+            BrowserRuntime.report("world-preset", preset.identifier().toString());
+        } catch (Throwable ignored) {
+        }
         if (preset == WorldPresets.NORMAL) {
             return WorldPresets.createNormalWorldDimensions(provider);
         }

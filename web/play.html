@@ -451,6 +451,31 @@ function showStats() {
   };
 }
 
+/**
+ * Long-session diagnostics. Chrome's renderer can be killed for running out
+ * of memory without raising a JS exception, so log heap and GPU resource
+ * counts continuously; cdp.py's soak mode reads the same snapshot.
+ */
+function installMemoryWatch() {
+  if (window.__mcMemWatch) return;
+  const snapshot = () => {
+    const F = window.__mcFrames || {};
+    const G = window.__mcWebGPU;
+    return {
+      t: Math.round(performance.now()),
+      fps: Math.round(F.fps || 0),
+      workMs: +(F.workAvg || 0).toFixed(2),
+      heapMB: performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : -1,
+      totalHeapMB: performance.memory ? Math.round(performance.memory.totalJSHeapSize / 1048576) : -1,
+      gpu: G && G.snapshot ? G.snapshot() : null,
+    };
+  };
+  window.__mcSnapshot = snapshot;
+  window.__mcMemWatch = setInterval(() => {
+    try { console.log('[MW_MEM] ' + JSON.stringify(snapshot())); } catch (e) { /* diagnostics must not break the game */ }
+  }, 10000);
+}
+
 (async () => {
   try {
     msg('Loading game resources…');
@@ -472,6 +497,7 @@ function showStats() {
     reportBootStage('client-bundle-script-executed');
     bar(1);
     showStats();
+    installMemoryWatch();
     // The Minecraft window (the canvas) appears when the client creates it; hide the boot screen then.
     const waitCanvas = setInterval(() => {
       if (window.__mcSDL && __mcSDL.canvas && window.__mcWebGPU && __mcWebGPU.frame > 0) {

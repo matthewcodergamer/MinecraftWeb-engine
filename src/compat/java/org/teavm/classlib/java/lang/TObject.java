@@ -53,6 +53,12 @@ public class TObject {
         int count;
         int id;
         int traceId;
+        // Incremented by notify/notifyAll. Object.wait polls this instead of
+        // parking on a monitor callback: the callback path can strand a
+        // Wasm-GC fiber when the timer and notify race, which wedged the
+        // render thread inside LockSupport.parkNanos during world load.
+        int waitGeneration;
+        int waiting;
         MonitorRegistry.Entry entry;
         Object ownerFiber;
         int ownerFiberId = -1;
@@ -579,6 +585,7 @@ public class TObject {
             return true;
         }
         if (monitor.owner == null
+                && monitor.waiting == 0
                 && (monitor.enteringThreads == null || monitor.enteringThreads.isEmpty())
                 && (monitor.notifyListeners == null || monitor.notifyListeners.isEmpty())) {
             deleteMonitor();
@@ -780,6 +787,7 @@ public class TObject {
         if (!holdsLock(this)) {
             throw new TIllegalMonitorStateException();
         }
+        monitor.waitGeneration++;
         var listeners = monitor.notifyListeners;
         if (listeners == null) {
             return;
@@ -805,6 +813,7 @@ public class TObject {
         if (!holdsLock(this)) {
             throw new TIllegalMonitorStateException();
         }
+        monitor.waitGeneration++;
         var listeners = monitor.notifyListeners;
         if (listeners == null) {
             return;
@@ -845,49 +854,70 @@ public class TObject {
 
     final void waitImpl(long timeout, int nanos, AsyncCallback<Void> callback) {
         Monitor monitor = this.monitor;
-        var listener = new NotifyListenerImpl(this, callback, monitor.count);
+        int lockCount = monitor.count;
+        int generation = monitor.waitGeneration;
+        boolean timed = timeout > 0 || nanos > 0;
+        long deadline = timed
+                ? System.currentTimeMillis() + (timeout > 0 ? timeout : 0L) + (nanos > 0 ? 1L : 0L)
+                : 0L;
+        boolean interrupted = false;
+        Throwable failure = null;
+
+        // Keep the monitor object alive for the whole wait. Without this the
+        // owner's release can delete the monitor while the waiter is polling,
+        // and the notifier would then bump a brand-new monitor's generation.
+        ++monitor.waiting;
         try {
-            if (monitor.notifyListeners == null) {
-                monitor.notifyListeners = new WaitQueue<>();
-            }
-            monitor.notifyListeners.add(listener);
-            TThread.currentThread().interruptHandler = listener;
-            if (timeout > 0 || nanos > 0) {
-                int timeoutToSchedule = timeout >= Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) timeout;
-                listener.timerId = PlatformDetector.isLowLevel() || PlatformDetector.isWebAssemblyGC()
-                        ? EventQueue.offer(listener, timeoutToSchedule + System.currentTimeMillis())
-                        : Platform.schedule(listener, timeoutToSchedule);
-            }
-            monitorExit(this, monitor.count);
+            monitorExit(this, lockCount);
         } catch (Throwable t) {
-            // A failure while parking must never leave the monitor owned: every other
-            // fiber that needs this lock would wait for a release that can no longer
-            // happen (the parked fiber is already dead by the time the exception
-            // unwinds the async body).
-            try {
-                listener.performed = true;
-                if (listener.timerId >= 0) {
-                    if (PlatformDetector.isLowLevel() || PlatformDetector.isWebAssemblyGC()) {
-                        EventQueue.kill(listener.timerId);
-                    } else {
-                        Platform.killSchedule(listener.timerId);
-                    }
-                    listener.timerId = -1;
-                }
-            } catch (Throwable ignored) {
-            }
-            try {
-                if (monitor.notifyListeners != null) {
-                    monitor.notifyListeners.remove(listener);
-                }
-            } catch (Throwable ignored) {
-            }
+            --monitor.waiting;
             abandonMonitor(this);
             try {
-                MonitorRegistry.callbackError("wait " + errorText(t));
+                MonitorRegistry.callbackError("wait exit " + errorText(t));
             } catch (Throwable ignored) {
             }
             callback.error(t);
+            return;
+        }
+
+        try {
+            // Poll the notify generation instead of parking on a monitor
+            // callback. TeaVM's Wasm-GC Object.wait timer/notify handoff can
+            // lose the resume and leave the render thread suspended forever
+            // (seen in LockSupport.parkNanos during world load). Thread.sleep
+            // uses the working async timer path; spurious wakeups are legal.
+            while (monitor.waitGeneration == generation) {
+                if (timed) {
+                    long left = deadline - System.currentTimeMillis();
+                    if (left <= 0) {
+                        break;
+                    }
+                    TThread.sleep(left > 2 ? 2 : left);
+                } else {
+                    TThread.sleep(2);
+                }
+            }
+        } catch (TInterruptedException e) {
+            interrupted = true;
+        } catch (Throwable t) {
+            failure = t;
+        }
+
+        --monitor.waiting;
+        try {
+            monitorEnter(this, lockCount);
+        } catch (Throwable t) {
+            abandonMonitor(this);
+            callback.error(t);
+            return;
+        }
+
+        if (failure != null) {
+            callback.error(failure);
+        } else if (interrupted) {
+            callback.error(new TInterruptedException());
+        } else {
+            callback.complete(null);
         }
     }
 

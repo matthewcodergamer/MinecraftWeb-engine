@@ -15,6 +15,11 @@
   const G = {
     adapter: null, device: null, queue: null, context: null, canvasFormat: null,
     obj: [null], free: [],
+    nextSerial: 0,
+    pipelines: new Set(),
+    planTotal: 0,
+    presentMs: 0, presentAvg: 0, intervalMs: 0, intervalAvg: 0,
+    lastPresentAt: 0,
     encoder: null,               // current GPUCommandEncoder (lazily created)
     pass: null,                  // current GPURenderPassEncoder
     passState: null,
@@ -23,17 +28,28 @@
     readbacksInFlight: 0,
     frame: 0,
     errors: [],
-    stats: { draws: 0, passes: 0, submits: 0, bindGroups: 0, pipelines: 0 },
+    stats: { draws: 0, passes: 0, submits: 0, bindGroups: 0, pipelines: 0,
+      liveBuffers: 0, liveTextures: 0, liveViews: 0, liveSamplers: 0, livePipelines: 0,
+      transientBytes: 0, transientChunks: 0 },
   };
   globalThis.__mcWebGPU = G;
 
+  function countLive(kind, delta) {
+    if (kind === 'buffer') G.stats.liveBuffers += delta;
+    else if (kind === 'texture') G.stats.liveTextures += delta;
+    else if (kind === 'view') G.stats.liveViews += delta;
+    else if (kind === 'sampler') G.stats.liveSamplers += delta;
+    else if (kind === 'pipeline') G.stats.livePipelines += delta;
+  }
   function put(o) {
+    o.serial = ++G.nextSerial;
+    countLive(o.kind, 1);
     if (G.free.length) { const i = G.free.pop(); G.obj[i] = o; return i; }
     G.obj.push(o);
     return G.obj.length - 1;
   }
   function release(i) {
-    if (i > 0 && G.obj[i]) { G.obj[i] = null; G.free.push(i); }
+    if (i > 0 && G.obj[i]) { countLive(G.obj[i].kind, -1); G.obj[i] = null; G.free.push(i); }
   }
 
   /** Rejects if `promise` does not settle in `ms`; the timer is always cleared. */
@@ -248,12 +264,15 @@
       const csize = Math.max(CHUNK, Math.ceil(size / CHUNK) * CHUNK);
       const buf = G.device.createBuffer({ size: csize, label: 'transient',
         usage: GU.COPY_DST | GU.COPY_SRC | GU.VERTEX | GU.INDEX | GU.UNIFORM | GU.INDIRECT | GU.STORAGE });
-      chunk = { buf, size: csize, used: 0, dirtyFrom: 0, shadow: H().malloc(csize, 256) };
+      chunk = { buf, size: csize, used: 0, dirtyFrom: 0, shadow: H().malloc(csize, 256), lastUsed: G.frame };
       chunk.id = put({ kind: 'buffer', buf, size: csize, usage: -1, shadow: chunk.shadow, transient: true });
       G.transient.push(chunk);
+      G.stats.transientBytes += csize;
+      G.stats.transientChunks = G.transient.length;
     }
     const off = Math.ceil(chunk.used / alignment) * alignment;
     chunk.used = off + size;
+    chunk.lastUsed = G.frame;
     G.lastTransient = chunk;
     return off;   // with G.lastTransient: Java reads id and address next
   };
@@ -456,39 +475,74 @@
   };
 
   // ------------------------------------------------------------------ clears
+  /** Cache single-layer / single-mip views used by clears instead of creating one per frame. */
+  function clearView(t, layer) {
+    t.clearViews ||= {};
+    const key = String(layer | 0);
+    let v = t.clearViews[key];
+    if (!v) {
+      v = t.tex.createView({ dimension: '2d', baseMipLevel: 0, mipLevelCount: 1, baseArrayLayer: layer | 0, arrayLayerCount: 1 });
+      t.clearViews[key] = v;
+    }
+    return v;
+  }
+
   G.clearColor = function (texId, r, g, b, a) {
     const t = G.obj[texId];
     endPass();
     for (let layer = 0; layer < t.layers; layer++) {
-      const view = t.tex.createView({ dimension: '2d', baseMipLevel: 0, mipLevelCount: 1, baseArrayLayer: layer, arrayLayerCount: 1 });
-      encoder().beginRenderPass({ colorAttachments: [{ view, loadOp: 'clear', storeOp: 'store', clearValue: { r, g, b, a } }] }).end();
+      encoder().beginRenderPass({ colorAttachments: [{ view: clearView(t, layer), loadOp: 'clear', storeOp: 'store', clearValue: { r, g, b, a } }] }).end();
     }
   };
 
   G.clearDepth = function (texId, depth) {
     const t = G.obj[texId];
     endPass();
-    const view = t.tex.createView({ dimension: '2d', baseMipLevel: 0, mipLevelCount: 1 });
-    const att = { view, depthLoadOp: 'clear', depthStoreOp: 'store', depthClearValue: depth };
+    const att = { view: clearView(t, 0), depthLoadOp: 'clear', depthStoreOp: 'store', depthClearValue: depth };
     if (hasStencil(t.format)) Object.assign(att, { stencilLoadOp: 'clear', stencilStoreOp: 'store', stencilClearValue: 0 });
     encoder().beginRenderPass({ colorAttachments: [], depthStencilAttachment: att }).end();
   };
+
+  // A ring of 32-byte uniform buffers. Reusing one buffer for several clears
+  // in the same frame would make every draw observe the last write, because
+  // queue.writeBuffer is ordered before the whole command buffer.
+  const clearUniformPool = [];
+  let clearUniformUsed = 0;
+  const clearBindGroupCache = new Map();
+  function clearUniform() {
+    const slot = clearUniformUsed++;
+    let u = clearUniformPool[slot];
+    if (!u) {
+      u = G.device.createBuffer({ size: 32, usage: GU.UNIFORM | GU.COPY_DST });
+      clearUniformPool.push(u);
+    }
+    return u;
+  }
+  function clearBindGroup(slot, colorFormat, depthFormat, buffer) {
+    const key = slot + '|' + colorFormat + '|' + depthFormat;
+    let bg = clearBindGroupCache.get(key);
+    if (!bg) {
+      bg = G.device.createBindGroup({ layout: clearPipeline(colorFormat, depthFormat).getBindGroupLayout(0),
+        entries: [{ binding: 0, resource: { buffer } }] });
+      clearBindGroupCache.set(key, bg);
+    }
+    return bg;
+  }
 
   G.clearColorDepthRegion = function (colorId, r, g, b, a, depthId, depth, x, y, w, h) {
     // partial clear: a render pass that loads, with a scissored full-screen clear draw
     const c = G.obj[colorId], d = G.obj[depthId];
     endPass();
     const pass = encoder().beginRenderPass({
-      colorAttachments: [{ view: c.tex.createView({ dimension: '2d', mipLevelCount: 1, arrayLayerCount: 1 }), loadOp: 'load', storeOp: 'store' }],
-      depthStencilAttachment: Object.assign({ view: d.tex.createView({ dimension: '2d', mipLevelCount: 1 }), depthLoadOp: 'load', depthStoreOp: 'store' },
+      colorAttachments: [{ view: clearView(c, 0), loadOp: 'load', storeOp: 'store' }],
+      depthStencilAttachment: Object.assign({ view: clearView(d, 0), depthLoadOp: 'load', depthStoreOp: 'store' },
         hasStencil(d.format) ? { stencilLoadOp: 'load', stencilStoreOp: 'store' } : {}),
     });
     pass.setScissorRect(x, y, w, h);
     pass.setPipeline(clearPipeline(c.format, d.format));
-    const ub = new Float32Array([r, g, b, a, depth, 0, 0, 0]);
-    const u = G.device.createBuffer({ size: 32, usage: GU.UNIFORM | GU.COPY_DST });
-    G.queue.writeBuffer(u, 0, ub);
-    pass.setBindGroup(0, G.device.createBindGroup({ layout: pass.__layout || clearPipeline(c.format, d.format).getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: u } }] }));
+    const u = clearUniform();
+    G.queue.writeBuffer(u, 0, new Float32Array([r, g, b, a, depth, 0, 0, 0]));
+    pass.setBindGroup(0, clearBindGroup(clearUniformUsed - 1, c.format, d.format, u));
     pass.draw(3);
     pass.end();
   };
@@ -562,10 +616,24 @@
       console.warn('pipeline ' + desc.name + ' unavailable: ' + p.error);
     }
     G.stats.pipelines++;
+    G.pipelines.add(p);
     return put(p);
   };
   G.pipelineError = (id) => G.obj[id].error || '';
-  G.destroyPipeline = (id) => release(id);
+  G.destroyPipeline = function (id) {
+    const p = G.obj[id];
+    if (!p) return;
+    // Drop the pipeline and everything it retains (shader modules, layouts,
+    // bind groups) as soon as Java destroys it. Keeping destroyed pipelines in
+    // a global list leaked GPU memory across resource reloads and dimensions.
+    G.pipelines.delete(p);
+    p.plans = null;
+    p.planCount = 0;
+    p.variants = null;
+    p.modules = null;
+    p.desc = null;
+    release(id);
+  };
 
   /** Pipeline variant for the bound texture sample types (depth / unfilterable textures need other layouts). */
   function pipelineVariant(p, sampleKinds, indexFormat, passDepthFormat) {
@@ -648,8 +716,14 @@
   /**
    * colors: [[viewId, layer, clear?, r,g,b,a] | null], depth: [viewId, clear?, value] | null, area [x,y,w,h]
    */
+  const beginPassCache = new Map();
   G.beginPass = function (json) {
-    const d = JSON.parse(json);
+    let d = beginPassCache.get(json);
+    if (!d) {
+      d = JSON.parse(json);
+      if (beginPassCache.size > 512) beginPassCache.clear();
+      beginPassCache.set(json, d);
+    }
     endPass();
     const colorAttachments = d.colors.map((c) => {
       if (!c) return null;
@@ -710,20 +784,39 @@
     G.pass.setScissorRect(r[0], r[1], r[2], r[3]);
   };
 
-  // Uniform values for the next draw: per binding [kind, a, b, c]: 1 = buffer(id, offset, size), 2 = view+sampler(viewId, samplerId)
-  const uniformState = [];
-  G.setUniformBuffer = function (index, bufId, offset, size) { uniformState[index] = [1, bufId, offset, size]; };
-  G.setUniformTexture = function (index, viewId, samplerId) { uniformState[index] = [2, viewId, samplerId]; };
-  G.clearUniforms = function (count) { uniformState.length = count; for (let i = 0; i < count; i++) uniformState[i] = null; };
+  // Uniform values for the next draw. Flat typed arrays keep the hot path
+  // allocation-free: kind 1 = buffer(id, offset, size), 2 = texture(viewId, samplerId).
+  const MAX_UNIFORMS = 64;
+  const uniformKind = new Int32Array(MAX_UNIFORMS);
+  const uniformA = new Int32Array(MAX_UNIFORMS);
+  const uniformB = new Float64Array(MAX_UNIFORMS);
+  const uniformC = new Float64Array(MAX_UNIFORMS);
+  let uniformCount = 0;
+  G.setUniformBuffer = function (index, bufId, offset, size) {
+    if (index < 0 || index >= MAX_UNIFORMS) return;
+    uniformKind[index] = 1; uniformA[index] = bufId; uniformB[index] = offset; uniformC[index] = size;
+    if (index >= uniformCount) uniformCount = index + 1;
+  };
+  G.setUniformTexture = function (index, viewId, samplerId) {
+    if (index < 0 || index >= MAX_UNIFORMS) return;
+    uniformKind[index] = 2; uniformA[index] = viewId; uniformB[index] = samplerId;
+    if (index >= uniformCount) uniformCount = index + 1;
+  };
+  G.clearUniforms = function (count) {
+    uniformCount = Math.min(MAX_UNIFORMS, count | 0);
+    uniformKind.fill(0, 0, uniformCount);
+  };
 
-  const bindGroupCache = new Map();
   function sampleKindOf(view) {
+    if (view.sampleKind) return view.sampleKind;
     const f = view.tex.format;
-    if (isDepth(f)) return 'depth';
-    if (/uint/.test(f)) return 'uint';
-    if (/sint/.test(f)) return 'sint';
-    if (/32float/.test(f) && !G.features.has('float32-filterable')) return 'unfilterable-float';
-    return 'float';
+    let kind = 'float';
+    if (isDepth(f)) kind = 'depth';
+    else if (/uint/.test(f)) kind = 'uint';
+    else if (/sint/.test(f)) kind = 'sint';
+    else if (/32float/.test(f) && !G.features.has('float32-filterable')) kind = 'unfilterable-float';
+    view.sampleKind = kind;
+    return kind;
   }
 
   function viewForShaderDimension(view, dimension) {
@@ -743,68 +836,124 @@
     return view.bindingViews['2d'];
   }
 
-  function bindAndValidate() {
-    const s = G.passState, p = s.pipeline;
-    if (!p || p.error || !p.modules.vertex) return false;
-    const d = p.desc;
-    const kinds = d.uniforms.map((u, i) => {
-      if (u.type !== 'COMBINED_IMAGE_SAMPLER') return '';
-      const val = uniformState[i];
-      return val && G.obj[val[1]] ? sampleKindOf(G.obj[val[1]]) : 'float';
-    });
-    const indexed = s.drawIndexed ? s.indexFormat : '';
-    let v;
-    try {
-      v = pipelineVariant(p, kinds, indexed, s.depthFormat);
-    } catch (e) {
-      p.error = String(e.message || e);
-      console.warn('pipeline ' + d.name + ': ' + p.error);
-      return false;
+  /**
+   * A plan is a complete bind-group set for one pipeline + resource binding.
+   * Comparison uses numeric fields only: building a string key for every draw
+   * allocated in the hottest path (hundreds of chunk draws per frame).
+   */
+  function planMatches(plan, indexed, depthFormat, obj) {
+    if (plan.indexed !== indexed || plan.depthFormat !== depthFormat) return false;
+    const sig = plan.sig;
+    for (let i = 0, j = 0; i < sig.length; i += 4, j++) {
+      const k = uniformKind[j];
+      if (sig[i] !== k || sig[i + 1] !== uniformA[j]) return false;
+      const o = obj[uniformA[j]];
+      if (!o || sig[i + 2] !== o.serial) return false;
+      if (sig[i + 3] !== (k === 1 ? uniformC[j] : uniformB[j])) return false;
     }
-    if (s.variant !== v) {
-      G.pass.setPipeline(v.pipeline);
-      s.variant = v;
-    }
-    // group 0: buffers (dynamic offsets) and textures; group 1: samplers
-    const e0 = [], e1 = [], offsets = [];
-    let key0 = '', key1 = '';
-    for (let i = 0; i < d.uniforms.length; i++) {
-      const u = d.uniforms[i], val = uniformState[i];
-      if (!val) { return false; }
-      if (u.type === 'UNIFORM_BUFFER' || u.type === 'TEXEL_BUFFER') {
-        const b = G.obj[val[1]];
-        // WGSL struct sizes are rounded up to 16 bytes; std140 data may end earlier (e.g. a trailing vec3)
-        const size = Math.min(Math.ceil(val[3] / 16) * 16, b.buf.size - val[2]);
-        e0.push({ binding: i, resource: { buffer: b.buf, offset: 0, size } });
-        offsets.push(val[2]);
-        key0 += 'b' + val[1] + ':' + size + ',';
-      } else {
-        const view = G.obj[val[1]], smp = G.obj[val[2]];
-        const dimension = p.textureDimensions[i] || (u.cube ? 'cube' : '2d');
-        e0.push({ binding: i, resource: viewForShaderDimension(view, dimension) });
-        key0 += 't' + val[1] + ',';
-        if (p.samplerBindings.has(i)) {
-          e1.push({ binding: i, resource: kinds[i] === 'float' ? smp.s : smp.nonFiltering });
-          key1 += val[2] + (kinds[i] === 'float' ? 'f' : 'n') + ',';
-        }
-      }
-    }
-    G.pass.setBindGroup(0, cachedBindGroup(v.layouts[0], key0, e0), offsets);
-    G.pass.setBindGroup(1, cachedBindGroup(v.layouts[1], key1, e1));
     return true;
   }
 
-  function cachedBindGroup(layout, key, entries) {
-    let m = bindGroupCache.get(layout);
-    if (!m) { m = new Map(); bindGroupCache.set(layout, m); }
-    let bg = m.get(key);
-    if (!bg) {
-      bg = G.device.createBindGroup({ layout, entries });
-      m.set(key, bg);
-      G.stats.bindGroups++;
-      if (m.size > 4096) m.clear();
+  function bindAndValidate() {
+    const s = G.passState, p = s.pipeline;
+    if (!p || p.error || !p.modules || !p.modules.vertex) return false;
+    const d = p.desc;
+    const obj = G.obj;
+    const n = d.uniforms.length;
+    const indexed = !!s.drawIndexed;
+    const depthFormat = s.depthFormat || '';
+    let hash = Math.imul(indexed ? 0x27d4eb2d : 0x165667b1, 31) ^ depthFormat.length;
+    for (let i = 0; i < n; i++) {
+      const k = uniformKind[i];
+      if (!k) return false;
+      const o = obj[uniformA[i]];
+      if (!o) return false;
+      // Include the handle serial: Java reuses freed handle slots, and a plan
+      // keyed only by the slot would keep a bind group pointing at the old
+      // buffer/texture after a delete.
+      hash = (Math.imul(hash ^ k, 0x85ebca6b) + uniformA[i]) | 0;
+      hash = (Math.imul(hash ^ o.serial, 0xc2b2ae35)
+          + (k === 1 ? uniformC[i] : uniformB[i])) | 0;
     }
-    return bg;
+    let plan = null;
+    let bucket = p.plans && p.plans.get(hash);
+    if (bucket) {
+      for (let j = 0; j < bucket.length; j++) {
+        if (planMatches(bucket[j], indexed, depthFormat, obj)) {
+          plan = bucket[j];
+          break;
+        }
+      }
+    }
+    if (!plan) {
+      const kinds = new Array(n).fill('');
+      const e0 = [], e1 = [], offsets = [], sig = new Float64Array(n * 4);
+      for (let i = 0, j = 0; i < n; i++, j += 4) {
+        const u = d.uniforms[i], k = uniformKind[i], id = uniformA[i];
+        sig[j] = k;
+        sig[j + 1] = id;
+        sig[j + 2] = obj[id].serial;
+        if (k === 1) {
+          const b = obj[id];
+          const size = Math.min(Math.ceil(uniformC[i] / 16) * 16, b.buf.size - uniformB[i]);
+          e0.push({ binding: i, resource: { buffer: b.buf, offset: 0, size } });
+          offsets.push(uniformB[i]);
+          sig[j + 3] = uniformC[i];
+        } else {
+          const view = obj[id], smp = obj[uniformB[i]];
+          const dimension = p.textureDimensions[i] || (u.cube ? 'cube' : '2d');
+          e0.push({ binding: i, resource: viewForShaderDimension(view, dimension) });
+          const kind = sampleKindOf(view);
+          kinds[i] = kind;
+          if (p.samplerBindings.has(i)) {
+            e1.push({ binding: i, resource: kind === 'float' ? smp.s : smp.nonFiltering });
+          }
+          sig[j + 3] = uniformB[i];
+        }
+      }
+      let variant;
+      try {
+        variant = pipelineVariant(p, kinds, s.drawIndexed ? s.indexFormat : '', s.depthFormat);
+      } catch (e) {
+        p.error = String(e.message || e);
+        console.warn('pipeline ' + d.name + ': ' + p.error);
+        return false;
+      }
+      plan = {
+        variant,
+        bg0: G.device.createBindGroup({ layout: variant.layouts[0], entries: e0 }),
+        bg1: G.device.createBindGroup({ layout: variant.layouts[1], entries: e1 }),
+        offsets, sig, indexed, depthFormat,
+      };
+      G.stats.bindGroups++;
+      // Bound the bind-group cache in both dimensions. A plan references live
+      // GPU objects, so clearing the whole cache is the only safe global cap;
+      // the per-pipeline cap keeps one shader-heavy frame from evicting every
+      // other pipeline's plans.
+      if (++G.planTotal > 4096) {
+        for (const q of G.pipelines) {
+          if (q.plans) { q.plans.clear(); q.planCount = 0; }
+        }
+        G.planTotal = 0;
+      }
+      if (!p.plans) p.plans = new Map();
+      else if (p.planCount >= 512) {
+        G.planTotal -= p.planCount;
+        p.plans.clear();
+        p.planCount = 0;
+      }
+      bucket = p.plans.get(hash);
+      if (!bucket) p.plans.set(hash, bucket = []);
+      bucket.push(plan);
+      p.planCount = (p.planCount || 0) + 1;
+    }
+    if (s.variant !== plan.variant) {
+      G.pass.setPipeline(plan.variant.pipeline);
+      s.variant = plan.variant;
+    }
+    G.pass.setBindGroup(0, plan.bg0, plan.offsets);
+    G.pass.setBindGroup(1, plan.bg1);
+    return true;
   }
 
   G.draw = function (vertexCount, instanceCount, firstVertex, firstInstance) {
@@ -860,6 +1009,7 @@
       G.encoder = null;
       G.stats.submits++;
     }
+    clearUniformUsed = 0;
     if (G.deferred.length) {
       const list = G.deferred;
       G.deferred = [];
@@ -953,18 +1103,86 @@
         fragment: { module, entryPoint: 'fs', targets: [{ format: G.canvasFormat }] }, primitive: { topology: 'triangle-list' } });
       blitSampler = G.device.createSampler({ minFilter: 'linear', magFilter: 'linear' });
     }
+    // The source view and its bind group are stable for a given Java texture
+    // view; recreating them every frame showed up as a steady GPU/JS allocation.
+    if (!v.blitView) {
+      v.blitView = v.tex.tex.createView({ dimension: '2d', baseMipLevel: v.baseMip, mipLevelCount: 1, baseArrayLayer: 0, arrayLayerCount: 1 });
+      v.blitBindGroup = G.device.createBindGroup({ layout: blitPipeline.getBindGroupLayout(0),
+        entries: [{ binding: 0, resource: v.blitView }, { binding: 1, resource: blitSampler }] });
+    }
     const target = G.context.getCurrentTexture();
     const pass = encoder().beginRenderPass({ colorAttachments: [{ view: target.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }] });
     pass.setPipeline(blitPipeline);
-    pass.setBindGroup(0, G.device.createBindGroup({ layout: blitPipeline.getBindGroupLayout(0),
-      entries: [{ binding: 0, resource: v.tex.tex.createView({ dimension: '2d', baseMipLevel: v.baseMip, mipLevelCount: 1, baseArrayLayer: 0, arrayLayerCount: 1 }) },
-        { binding: 1, resource: blitSampler }] }));
+    pass.setBindGroup(0, v.blitBindGroup);
     pass.draw(3);
     pass.end();
   };
 
+  G.snapshot = function () {
+    const s = G.stats;
+    return {
+      frame: G.frame,
+      draws: s.draws, passes: s.passes, submits: s.submits, bindGroups: s.bindGroups,
+      pipelines: s.pipelines, livePipelines: s.livePipelines, liveBuffers: s.liveBuffers,
+      liveTextures: s.liveTextures, liveViews: s.liveViews, liveSamplers: s.liveSamplers,
+      transientBytes: s.transientBytes, transientChunks: G.transient.length,
+      objSlots: G.obj.length, freeSlots: G.free.length, planTotal: G.planTotal,
+      presentAvg: +G.presentAvg.toFixed(2), intervalAvg: +G.intervalAvg.toFixed(2),
+      heapMB: performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : -1,
+      lost: G.lost ? String(G.lost.message || 'device lost') : '',
+      errors: G.errors.slice(-3),
+    };
+  };
+
+  /**
+   * Reclaims caches at a frame boundary. Bind groups and pipeline plans are
+   * pure caches; dropping them is safe and returns GPU/JS memory after a
+   * resource reload. Upload chunks are only released after 120 frames so a
+   * submitted command buffer can no longer reference them.
+   */
+  function trimCaches() {
+    if (G.planTotal > 2048) {
+      for (const q of G.pipelines) {
+        if (q.plans) { q.plans.clear(); q.planCount = 0; }
+      }
+      G.planTotal = 0;
+    }
+    if (beginPassCache.size > 256) beginPassCache.clear();
+    if (clearBindGroupCache.size > 256) clearBindGroupCache.clear();
+    let bytes = 0;
+    for (const c of G.transient) bytes += c.size;
+    if (bytes > (64 << 20)) {
+      const idle = G.transient
+        .filter((c) => !c.dead && G.frame - (c.lastUsed || 0) >= 120)
+        .sort((a, b) => (a.lastUsed || 0) - (b.lastUsed || 0));
+      for (const c of idle) {
+        if (bytes <= (48 << 20)) break;
+        bytes -= c.size;
+        c.dead = true;
+        release(c.id);
+        const shadow = c.shadow;
+        G.deferred.push(() => { if (shadow) H().free(shadow); c.buf.destroy(); });
+        G.stats.transientBytes -= c.size;
+      }
+      if (idle.length) {
+        G.transient = G.transient.filter((c) => !c.dead);
+        G.stats.transientChunks = G.transient.length;
+      }
+    }
+  }
+
   G.present = function () {
+    const t0 = performance.now();
     G.submit();
+    const t1 = performance.now();
     G.frame++;
+    G.presentMs = t1 - t0;
+    G.presentAvg = G.presentAvg ? G.presentAvg * 0.9 + G.presentMs * 0.1 : G.presentMs;
+    if (G.lastPresentAt) {
+      G.intervalMs = t1 - G.lastPresentAt;
+      G.intervalAvg = G.intervalAvg ? G.intervalAvg * 0.9 + G.intervalMs * 0.1 : G.intervalMs;
+    }
+    G.lastPresentAt = t1;
+    if ((G.frame & 511) === 0) trimCaches();
   };
 })();

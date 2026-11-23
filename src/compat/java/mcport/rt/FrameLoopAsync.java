@@ -34,6 +34,7 @@ public final class FrameLoopAsync {
     @JSBody(params = {"vsync", "resume"}, script = ""
             + "var done = false; var finish = function(source) { if (done) return; done = true;"
             + " if (source === 'raf-fallback') console.warn('[FRAME_LOOP] RAF stalled; resumed via fallback');"
+            + " var f = window.__mcFrames; if (f) f.resumeAt = performance.now();"
             + " resume(); };"
             + "if (vsync || document.hidden) {"
             + " try { requestAnimationFrame(function() { console.log('[FRAME_LOOP] raf-fired'); finish('raf'); }); }"
