@@ -50,16 +50,27 @@ public class ClassInitializerInsertionTransformer {
         // Minecraft relies on that order: SynchedEntityData.defineId assigns ids from a registry
         // shared by the whole hierarchy, so initializing LivingEntity before Entity makes both
         // classes claim id 0 and the first spawned player dies with "Duplicate id value for 0!".
-        // Initialize the superclass first, from inside <clinit>, to restore the required order.
-        if (method.getName().equals("<clinit>") && cls.getParent() != null) {
-            String parentName = cls.getParent();
-            ClassReader parent = classes.get(parentName);
-            if (parent != null && parent.getMethod(clinitDescriptor) != null
-                    && classInitializerInfo.isDynamicInitializer(parentName)) {
-                BasicBlock entryBlock = program.basicBlockAt(0);
-                InitClassInstruction initInsn = new InitClassInstruction();
-                initInsn.setClassName(parentName);
-                entryBlock.addFirst(initInsn);
+        // Initialize the nearest superclass that actually has a static initializer, from inside
+        // <clinit>, to restore the required order. Walking the chain matters because Minecraft
+        // has several intermediate classes without a <clinit> (for example Mob -> PathfinderMob
+        // -> AgeableMob), and those subclasses also call defineId in their own initializers.
+        if (method.getName().equals("<clinit>")) {
+            String ancestorName = cls.getParent();
+            while (ancestorName != null) {
+                ClassReader ancestor = classes.get(ancestorName);
+                if (ancestor == null) {
+                    break;
+                }
+                if (ancestor.getMethod(clinitDescriptor) != null) {
+                    if (classInitializerInfo.isDynamicInitializer(ancestorName)) {
+                        BasicBlock entryBlock = program.basicBlockAt(0);
+                        InitClassInstruction initInsn = new InitClassInstruction();
+                        initInsn.setClassName(ancestorName);
+                        entryBlock.addFirst(initInsn);
+                    }
+                    break;
+                }
+                ancestorName = ancestor.getParent();
             }
         }
 
