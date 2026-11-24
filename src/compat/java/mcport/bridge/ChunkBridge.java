@@ -11,10 +11,13 @@ import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.Difficulty;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.LevelSettings;
 import net.minecraft.world.level.WorldDataConfiguration;
+import net.minecraft.world.level.chunk.ChunkGenerator;
+import net.minecraft.world.level.levelgen.FlatLevelSource;
 import net.minecraft.world.level.levelgen.WorldOptions;
 import net.minecraft.world.level.levelgen.WorldDimensions;
 import net.minecraft.world.level.levelgen.presets.WorldPreset;
@@ -91,6 +94,8 @@ public final class ChunkBridge {
     private static long lastScan;
     /** Identity of the level whose sections have already been sent. */
     private static Object lastLevel;
+    /** Identity of the level whose actual generator has already been reported. */
+    private static Object lastPresetLevel;
 
     private ChunkBridge() {
     }
@@ -111,6 +116,7 @@ public final class ChunkBridge {
         SENT_LIGHT.clear();
         PALETTE.clear();
         lastLevel = null;
+        lastPresetLevel = null;
         freshWorld = false;
         rulesApplied = false;
         lastScan = 0L;
@@ -151,6 +157,17 @@ public final class ChunkBridge {
         if (!firstLevelPlayerLogged) {
             firstLevelPlayerLogged = true;
             BrowserRuntime.report("stage", "world-level-and-player-ready");
+        }
+
+        // Worlds created through Java's own menus never pass through
+        // presetDimensions(), so report what the integrated server actually
+        // generated. This is the end-to-end signal the title-screen test uses
+        // to prove that selecting Superflat in CreateWorldScreen produced a
+        // flat world rather than merely changing a button label.
+        if (minecraft.level != lastPresetLevel) {
+            if (reportActualPreset(minecraft)) {
+                lastPresetLevel = minecraft.level;
+            }
         }
 
         playerPosReports++;
@@ -560,6 +577,40 @@ public final class ChunkBridge {
             minecraft.player.connection.sendUnattendedCommand(command, null);
         } catch (Throwable ignored) {
             // The host may have created the world without command permission.
+        }
+    }
+
+    /**
+     * Reports the preset of the world the integrated server actually created.
+     * {@code ClientChunkCache} does not expose a generator, so read the
+     * authoritative {@link ServerLevel}. This runs once per level and lets the
+     * real-title-screen test distinguish "the Superflat button was clicked"
+     * from "the server is generating a flat world".
+     */
+    private static boolean reportActualPreset(Minecraft minecraft) {
+        try {
+            net.minecraft.client.server.IntegratedServer server = minecraft.getSingleplayerServer();
+            if (server == null || minecraft.level == null) {
+                return false;
+            }
+            ServerLevel level = server.getLevel(minecraft.level.dimension());
+            if (level == null) {
+                return false;
+            }
+            ChunkGenerator generator = level.getChunkSource().getGenerator();
+            String preset;
+            if (generator instanceof FlatLevelSource) {
+                preset = WorldPresets.FLAT.identifier().toString();
+            } else if (generator instanceof net.minecraft.world.level.levelgen.DebugLevelSource) {
+                preset = WorldPresets.DEBUG.identifier().toString();
+            } else {
+                preset = WorldPresets.NORMAL.identifier().toString();
+            }
+            BrowserRuntime.report("world-preset", preset);
+            BrowserRuntime.report("world-generator", generator.getClass().getName());
+            return true;
+        } catch (Throwable t) {
+            return false;
         }
     }
 

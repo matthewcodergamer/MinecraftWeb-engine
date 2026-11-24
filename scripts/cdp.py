@@ -140,7 +140,8 @@ def main():
         kind, _, value = raw.partition("=")
         kind = kind.strip().lower()
         if kind in ("click", "cycle", "shot", "wait"):
-            actions.append({"kind": kind, "value": value.strip(), "clicks": 0, "done": False})
+            actions.append({"kind": kind, "value": value.strip(), "clicks": 0, "done": False,
+                            "last_raw": "", "next_click_at": 0.0})
         else:
             raise SystemExit("unknown --actions step: " + raw)
 
@@ -557,6 +558,19 @@ def main():
                         print("action cycle done: " + act["value"], flush=True)
                         act["done"] = True
                         continue
+                    # The Java UI publishes widget text only after it renders a
+                    # frame. Software WebGPU renders slowly (about ten seconds
+                    # per frame on CI), so a fixed settle delay would queue
+                    # several clicks into one frame and cycle straight past the
+                    # requested value. Wait for screen-buttons to change after
+                    # each click, with a timeout fallback in case the value
+                    # repeats.
+                    raw = str(raw or "")
+                    now = time.time()
+                    if act["clicks"] and now < act["next_click_at"]:
+                        if raw == act["last_raw"]:
+                            return False
+                        act["next_click_at"] = 0.0
                     spec = prefix + "*"
                     try:
                         found = js_value(find_button_js % json.dumps(spec))
@@ -564,14 +578,16 @@ def main():
                         return False
                     if not found:
                         return False
-                    if act["clicks"] >= 8:
-                        print("action cycle gave up after 8 clicks: " + act["value"], flush=True)
+                    if act["clicks"] >= 16:
+                        print("action cycle gave up after 16 clicks: " + act["value"], flush=True)
                         act["done"] = True
                         continue
                     click_at(found["x"], found["y"])
                     act["clicks"] += 1
+                    act["last_raw"] = raw
+                    act["next_click_at"] = now + 30.0
                     action_hold_until = time.time() + a.action_settle
-                    print("action cycle click {}/8 {} at {:.1f},{:.1f}".format(
+                    print("action cycle click {}/16 {} at {:.1f},{:.1f}".format(
                         act["clicks"], found["label"], found["x"], found["y"]), flush=True)
                     return False
                 # click
