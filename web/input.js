@@ -184,10 +184,20 @@
         event.preventDefault();
         canvas.focus();
         if (document.pointerLockElement !== canvas) {
+          // Pointer lock is best-effort: browsers reject it when the iframe or
+          // document is not focused (and headless CI never allows it). Swallow
+          // both the options request and the plain retry so a rejected lock
+          // cannot surface as an unhandled rejection and fail the client.
+          const lock = (options) => {
+            try {
+              const p = options ? canvas.requestPointerLock(options) : canvas.requestPointerLock();
+              if (p && p.catch) p.catch(() => {});
+            } catch (e) { /* retried on the next click */ }
+          };
           try {
             const p = canvas.requestPointerLock({ unadjustedMovement: true });
-            if (p && p.catch) p.catch(() => { try { canvas.requestPointerLock(); } catch (e) {} });
-          } catch (e) { /* retried on the next click */ }
+            if (p && p.catch) p.catch(() => lock());
+          } catch (e) { lock(); }
         }
         this.sendButton(event.button, true);
       });

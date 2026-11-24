@@ -414,6 +414,13 @@ TRACE 176 net.minecraft.client.Minecraft setLevel(Lnet/minecraft/client/multipla
 # BODY replacement targets are static helpers; PortTransformer emits INVOKESTATIC and prepends the instance receiver.
 BODY com.mojang.blaze3d.platform.Window setIcon(Lnet/minecraft/server/packs/PackMetadataResources;Lcom/mojang/blaze3d/platform/IconSet;)V -> mcport.rt.WindowBrowser noopIcon
 
+# --- Browser auto-screenshot: the VFS is read-only, and vanilla treats it as fatal ----------
+# GameRenderer.tryTakeScreenshotIfNeeded writes screenshots/<level>.png once a local world has
+# rendered enough sections. NativeImage.writeToFile throws RuntimeException on the read-only
+# browser VFS, which the IO worker reports as a fatal crash. The screenshot is only the save
+# list's world icon; skip the attempt instead of crashing gameplay.
+BODY net.minecraft.client.renderer.GameRenderer tryTakeScreenshotIfNeeded()V -> mcport.rt.patch.GameRendererPatches tryTakeScreenshotIfNeeded
+
 # --- Browser audio is unavailable: skip sounds.json preparation (TeaVM illegal-cast trap) ---
 # Keep this rule active in both browser and TeaVM probe builds.
 BODY net.minecraft.client.sounds.SoundManager prepare(Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)Lnet/minecraft/client/sounds/SoundManager$Preparations; -> net.minecraft.client.sounds.BrowserSoundManagerPatches prepare

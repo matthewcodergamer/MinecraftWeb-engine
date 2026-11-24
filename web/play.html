@@ -153,7 +153,18 @@ window.__mcExit = (status) => {
   if (window.mcBridge && status) mcBridge.javaError('Minecraft exited (' + status + ')');
 };
 window.addEventListener('error', (e) => fail('ERROR: ' + e.message));
-window.addEventListener('unhandledrejection', (e) => fail('REJECTION: ' + (e.reason && e.reason.stack || e.reason)));
+window.addEventListener('unhandledrejection', (e) => {
+  // Browsers reject pointer lock in iframes, without a user gesture, or when
+  // the document lost focus. The client is fully playable without it, so a
+  // lock rejection must not be classified as a fatal Java crash.
+  const text = String((e.reason && (e.reason.name + ': ' + e.reason.message)) || e.reason || '');
+  if (/pointer\s*lock|user activation|document is not focused/i.test(text)) {
+    console.warn('Ignoring non-fatal pointer lock rejection: ' + text);
+    e.preventDefault();
+    return;
+  }
+  fail('REJECTION: ' + (e.reason && e.reason.stack || e.reason));
+});
 
 async function fetchWithProgress(url, label, from, to) {
   // Shared with the host page: ./-relative, range-chunked, resumable. iOS

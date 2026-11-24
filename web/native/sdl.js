@@ -170,10 +170,18 @@
   function requestLock() {
     const c = state.canvas;
     if (!c || document.pointerLockElement === c) return;
+    // Never let pointer-lock rejection become an unhandled rejection: headless
+    // CI and unfocused iframes reject it, but the game still runs without it.
+    const lock = (options) => {
+      try {
+        const q = options ? c.requestPointerLock(options) : c.requestPointerLock();
+        if (q && q.catch) q.catch(() => {});
+      } catch (e) { /* needs a user gesture */ }
+    };
     try {
       const p = c.requestPointerLock({ unadjustedMovement: true });
-      if (p && p.catch) p.catch(() => { try { c.requestPointerLock(); } catch (e) { /* needs a user gesture */ } });
-    } catch (e) { /* retried on the next click */ }
+      if (p && p.catch) p.catch(() => lock());
+    } catch (e) { lock(); }
   }
 
   function installInput(c) {

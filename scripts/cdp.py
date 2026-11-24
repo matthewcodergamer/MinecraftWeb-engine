@@ -20,6 +20,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+import zlib
 
 CHROME = os.environ.get("CHROME", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 
@@ -104,6 +105,72 @@ class WS:
                 return msg
             if pump:
                 pump(msg)
+
+
+def png_has_visible_pixels(data):
+    """True when a PNG contains at least one non-transparent pixel.
+
+    Page.captureScreenshot returns a fully transparent image when the only
+    visible content lives in the Java iframe (Chrome's software compositor does
+    not include that frame in this configuration). Decode cheaply enough to
+    tell the difference instead of silently shipping an empty artifact.
+    """
+    try:
+        if not data or data[:8] != b"\x89PNG\r\n\x1a\n":
+            return bool(data)
+        pos = 8
+        width = height = bit_depth = color_type = 0
+        idat = bytearray()
+        while pos + 8 <= len(data):
+            length = struct.unpack(">I", data[pos:pos + 4])[0]
+            ctype = data[pos + 4:pos + 8]
+            body = data[pos + 8:pos + 8 + length]
+            pos += 12 + length
+            if ctype == b"IHDR":
+                width, height, bit_depth, color_type = struct.unpack(">IIBB", body[:10])
+            elif ctype == b"IDAT":
+                idat += body
+            elif ctype == b"IEND":
+                break
+        # Unknown layouts are treated as visible so a real capture is never
+        # discarded just because it cannot be decoded here.
+        if not width or not height or bit_depth != 8 or color_type not in (4, 6):
+            return True
+        channels = 4 if color_type == 6 else 2
+        stride = width * channels
+        raw = zlib.decompress(bytes(idat))
+        if len(raw) < height * (stride + 1):
+            return True
+        prev = bytearray(stride)
+        p = 0
+        for _ in range(height):
+            filt = raw[p]
+            p += 1
+            line = bytearray(raw[p:p + stride])
+            p += stride
+            for i in range(stride):
+                a = line[i - channels] if i >= channels else 0
+                b = prev[i]
+                c = prev[i - channels] if i >= channels else 0
+                if filt == 1:
+                    line[i] = (line[i] + a) & 255
+                elif filt == 2:
+                    line[i] = (line[i] + b) & 255
+                elif filt == 3:
+                    line[i] = (line[i] + ((a + b) >> 1)) & 255
+                elif filt == 4:
+                    pa = abs(b - c)
+                    pb = abs(a - c)
+                    pc = abs(a + b - 2 * c)
+                    pred = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                    line[i] = (line[i] + pred) & 255
+            for i in range(channels - 1, stride, channels):
+                if line[i] > 8:
+                    return True
+            prev = line
+        return False
+    except Exception:
+        return True
 
 
 def main():
@@ -395,6 +462,61 @@ def main():
                         pump=pump, timeout_sec=timeout_sec)
             return r.get("result", {}).get("result", {}).get("value")
 
+        iframe_canvas_js = """(() => {
+            const f = document.getElementById('mc-brain');
+            const w = f && f.contentWindow;
+            if (!w) return '';
+            const c = (w.__mcSDL && w.__mcSDL.canvas) || w.document.querySelector('canvas');
+            if (!c || !c.width || !c.height) return '';
+            try { return c.toDataURL('image/png'); } catch (e) { return ''; }
+        })()"""
+
+        def capture(path, timeout_sec=60):
+            """Save the best available pixels for the current shell mode.
+
+            In java-ui mode the top page contains only the Java iframe, and
+            Page.captureScreenshot can come back fully transparent. Capture the
+            Java canvas itself in that case so title/world screenshots are real
+            evidence instead of empty 4 KB PNGs.
+            """
+            top_png = b""
+            try:
+                r = ws.call("Page.captureScreenshot", {"format": "png"},
+                            pump=pump, timeout_sec=timeout_sec)
+                top_png = base64.b64decode(r.get("result", {}).get("data") or "")
+            except Exception as exc:
+                print("page screenshot failed: {}: {}".format(type(exc).__name__, exc), flush=True)
+            try:
+                java_ui = bool(js_value(
+                    "document.body.classList.contains('java-ui')", timeout_sec=10))
+            except Exception:
+                java_ui = False
+            frame_png = b""
+            try:
+                url = js_value(iframe_canvas_js, timeout_sec=min(30, timeout_sec))
+                if isinstance(url, str) and url.startswith("data:image/png;base64,"):
+                    frame_png = base64.b64decode(url.split(",", 1)[1])
+            except Exception:
+                pass
+            top_ok = bool(top_png) and png_has_visible_pixels(top_png)
+            frame_ok = bool(frame_png) and png_has_visible_pixels(frame_png)
+            if frame_ok and (java_ui or not top_ok):
+                chosen, source = frame_png, "java-canvas"
+            elif top_ok:
+                chosen, source = top_png, "page"
+            elif frame_ok:
+                chosen, source = frame_png, "java-canvas"
+            elif top_png:
+                chosen, source = top_png, "page-blank"
+            else:
+                raise RuntimeError("no screenshot data")
+            with open(path, "wb") as f:
+                f.write(chosen)
+            print("screenshot -> {} ({}, {} bytes{})".format(
+                path, source, len(chosen),
+                "" if (top_ok or frame_ok) else ", capture is transparent"), flush=True)
+            return True
+
         def click_at(x, y):
             try:
                 ws.call("Input.dispatchMouseEvent",
@@ -511,11 +633,7 @@ def main():
                 time.time() - t0, len(samples), measured), flush=True)
             if a.soak_screenshot:
                 try:
-                    shot = ws.call("Page.captureScreenshot", {"format": "png"},
-                                   pump=pump, timeout_sec=60)
-                    with open(a.soak_screenshot, "wb") as f:
-                        f.write(base64.b64decode(shot["result"]["data"]))
-                    print("soak screenshot -> " + a.soak_screenshot, flush=True)
+                    capture(a.soak_screenshot)
                 except Exception as exc:
                     print("soak screenshot failed: {}: {}".format(type(exc).__name__, exc), flush=True)
             if a.min_fps > 0 and measured < a.min_fps:
@@ -548,10 +666,7 @@ def main():
                     return False
                 if act["kind"] == "shot":
                     try:
-                        shot = ws.call("Page.captureScreenshot", {"format": "png"},
-                                       pump=pump, timeout_sec=60)
-                        with open(act["value"], "wb") as f:
-                            f.write(base64.b64decode(shot["result"]["data"]))
+                        capture(act["value"])
                         print("action screenshot -> " + act["value"], flush=True)
                         act["done"] = True
                     except Exception as exc:
@@ -565,6 +680,10 @@ def main():
                     return False
                 if act["kind"] == "cycle":
                     prefix, _, target = act["value"].partition("|")
+                    # The action syntax already implies prefix matching: accept
+                    # both "World Type" and "World Type*" so a stray star in a
+                    # workflow does not turn into a literal "World Type*" match.
+                    prefix = prefix.rstrip("*")
                     try:
                         raw = js_value("(() => { const f = document.getElementById('mc-brain');"
                                        " const w = f && f.contentWindow;"
@@ -594,6 +713,13 @@ def main():
                     except TimeoutError:
                         return False
                     if not found:
+                        # Stay quiet for the first attempts, then report why the
+                        # action cannot progress instead of burning the action
+                        # deadline without a single line in the log.
+                        if now - act.get("last_miss", 0.0) >= 30.0:
+                            print("action cycle: no button matching {!r} on {}".format(
+                                spec, raw.split(" | ")[0][:120]), flush=True)
+                            act["last_miss"] = now
                         return False
                     if act["clicks"] >= 16:
                         print("action cycle gave up after 16 clicks: " + act["value"], flush=True)
@@ -698,13 +824,7 @@ def main():
         # only direct evidence that the real client (not just its logs) rendered.
         if a.screenshot and ok:
             try:
-                r = ws.call("Page.captureScreenshot", {"format": "png"}, pump=pump, timeout_sec=60)
-                data = r.get("result", {}).get("data")
-                if not data:
-                    raise RuntimeError("CDP returned no screenshot data")
-                with open(a.screenshot, "wb") as f:
-                    f.write(base64.b64decode(data))
-                print(f"screenshot -> {a.screenshot}")
+                capture(a.screenshot)
             except Exception as exc:
                 print(f"screenshot unavailable: {type(exc).__name__}: {exc}", flush=True)
         if not ok:
@@ -719,9 +839,7 @@ def main():
                 save_browser_error("Could not read timeout page state: " + type(exc).__name__ + ": " + str(exc))
             diagnostic_path = a.screenshot or "cdp-timeout.png"
             try:
-                shot = ws.call("Page.captureScreenshot", {"format": "png"}, pump=pump, timeout_sec=60)
-                with open(diagnostic_path, "wb") as f:
-                    f.write(base64.b64decode(shot["result"]["data"]))
+                capture(diagnostic_path)
                 print(f"timeout screenshot -> {diagnostic_path}", flush=True)
             except Exception as exc:
                 print(f"timeout screenshot unavailable: {type(exc).__name__}: {exc}", flush=True)

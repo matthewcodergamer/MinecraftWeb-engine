@@ -1562,7 +1562,19 @@
               // GPU buffers instead of running two renderers forever.
               try {
                 const bodyModule = mcBridge && mcBridge.state && mcBridge.state.module;
-                if (bodyModule && typeof bodyModule.pause === 'function') bodyModule.pause();
+                if (bodyModule && typeof bodyModule.pause === 'function') {
+                  // We are inside the Rust body's animation callback. Calling
+                  // back into wasm here re-enters a closure that is being
+                  // dropped and throws "closure invoked recursively or after
+                  // being dropped". Let the callback return first.
+                  setTimeout(() => {
+                    try {
+                      bodyModule.pause();
+                    } catch (e) {
+                      console.warn('Rust body pause failed: ' + (e && e.message || e));
+                    }
+                  }, 0);
+                }
               } catch (e) { console.warn('Rust body pause failed: ' + (e && e.message || e)); }
               window.__mc = Object.assign(window.__mc || {}, { stage: 'complete', ui: 'java' });
               window.__mcLoadingFinished = true;
