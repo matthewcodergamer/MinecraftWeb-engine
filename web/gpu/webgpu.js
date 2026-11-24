@@ -297,6 +297,21 @@
   G.writeBufferStaged = function (dst, dstOffset, srcAddr, size) {
     if (size <= 0) return;
     const b = G.obj[dst];
+    if (G.passState) {
+      // Mapped ring buffers (dynamic uniforms, cloud meshes) are flushed from
+      // writeData() while a render pass is open. queue.writeBuffer is not an
+      // encoder command, so writing directly keeps the pass and its recorded
+      // draws alive; ending the pass here used to null passState and crash the
+      // next setPipeline.
+      if (!b.shadow) b.shadow = H().calloc(Math.max(4, b.size));
+      if (!(srcAddr >= b.shadow && srcAddr < b.shadow + b.size)) {
+        H().u8.copyWithin(b.shadow + dstOffset, srcAddr, srcAddr + size);
+      }
+      const start = dstOffset & ~3, pre = dstOffset - start;
+      const n = Math.min(Math.ceil((pre + size) / 4) * 4, Math.max(4, b.buf.size - start));
+      G.queue.writeBuffer(b.buf, start, H().u8, b.shadow + start, n);
+      return;
+    }
     if (dstOffset % 4) {
       // unaligned destination: flush everything recorded so far and write directly through the queue
       G.submit();
@@ -765,17 +780,21 @@
 
   G.setPipeline = function (id) {
     const s = G.passState;
+    if (!s) return;
     s.pipeline = G.obj[id];
     s.variant = null;
   };
 
   G.setVertexBuffer = function (slot, bufId, offset) {
-    G.passState.vertex[slot] = bufId ? [G.obj[bufId].buf, offset] : null;
+    const s = G.passState;
+    if (!s) return;
+    s.vertex[slot] = bufId ? [G.obj[bufId].buf, offset] : null;
     if (bufId) G.pass.setVertexBuffer(slot, G.obj[bufId].buf, offset);
   };
 
   G.setIndexBuffer = function (bufId, is32) {
     const s = G.passState;
+    if (!s) return;
     s.indexFormat = is32 ? 'uint32' : 'uint16';
     s.index = bufId ? G.obj[bufId].buf : null;
     if (bufId) G.pass.setIndexBuffer(s.index, s.indexFormat);
@@ -783,6 +802,7 @@
 
   G.setScissor = function (enabled, x, y, w, h) {
     const s = G.passState;
+    if (!s) return;
     const r = enabled ? clampRect([x, y, w, h], s.width, s.height) : clampRect(s.area, s.width, s.height);
     G.pass.setScissorRect(r[0], r[1], r[2], r[3]);
   };
@@ -961,6 +981,7 @@
 
   G.draw = function (vertexCount, instanceCount, firstVertex, firstInstance) {
     const s = G.passState;
+    if (!s) return;
     s.drawIndexed = false;
     if (!bindAndValidate()) return;
     G.pass.draw(vertexCount, instanceCount, firstVertex, firstInstance);
@@ -969,6 +990,7 @@
 
   G.drawIndexed = function (indexCount, instanceCount, firstIndex, baseVertex, firstInstance) {
     const s = G.passState;
+    if (!s) return;
     s.drawIndexed = true;
     if (!s.index || !bindAndValidate()) return;
     G.pass.drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance);
@@ -978,6 +1000,7 @@
   /** multiDraw: drawParams in the heap as [firstIndex/firstVertex, count, baseVertex] triples (see Java). */
   G.multiDrawIndexed = function (addr, drawCount) {
     const s = G.passState;
+    if (!s) return;
     s.drawIndexed = true;
     if (!s.index || !bindAndValidate()) return;
     const dv = H().dv;
@@ -990,6 +1013,7 @@
 
   G.drawIndexedIndirect = function (bufId, offset, drawCount) {
     const s = G.passState;
+    if (!s) return;
     s.drawIndexed = true;
     if (!s.index || !bindAndValidate()) return;
     for (let i = 0; i < drawCount; i++) G.pass.drawIndexedIndirect(G.obj[bufId].buf, offset + i * 20);
@@ -998,6 +1022,7 @@
 
   G.drawIndirect = function (bufId, offset, drawCount) {
     const s = G.passState;
+    if (!s) return;
     s.drawIndexed = false;
     if (!bindAndValidate()) return;
     for (let i = 0; i < drawCount; i++) G.pass.drawIndirect(G.obj[bufId].buf, offset + i * 16);

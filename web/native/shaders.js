@@ -49,9 +49,12 @@
     Name: 5, MemberName: 6, EntryPoint: 15, TypeVoid: 19, TypeBool: 20, TypeInt: 21, TypeFloat: 22, TypeVector: 23,
     TypeMatrix: 24, TypeImage: 25, TypeSampler: 26, TypeSampledImage: 27, TypeArray: 28, TypeRuntimeArray: 29,
     TypeStruct: 30, TypePointer: 32, TypeFunction: 33, Constant: 43, Function: 54, FunctionParameter: 55,
-    FunctionEnd: 56, FunctionCall: 57, Variable: 59, Load: 61, Decorate: 71, MemberDecorate: 72, SampledImage: 86,
+    FunctionEnd: 56, FunctionCall: 57, Variable: 59, Load: 61, AccessChain: 65, Decorate: 71, MemberDecorate: 72,
+    CompositeExtract: 81, CopyObject: 83, SampledImage: 86, ImageFetch: 95, Image: 100,
+    ShiftRightLogical: 194, ShiftLeftLogical: 196, BitwiseAnd: 199,
   };
-  const Dec = { Block: 2, BufferBlock: 3, ArrayStride: 6, MatrixStride: 7, BuiltIn: 11, Location: 30, Binding: 33, DescriptorSet: 34, Offset: 35 };
+  const Dec = { Block: 2, BufferBlock: 3, ArrayStride: 6, MatrixStride: 7, BuiltIn: 11, NonWritable: 24, Location: 30,
+    Binding: 33, DescriptorSet: 34, Offset: 35 };
   const SC = { UniformConstant: 0, Input: 1, Uniform: 2, Output: 3, PushConstant: 9, StorageBuffer: 12 };
 
   function str(words, i, end) {
@@ -1067,9 +1070,140 @@
     return { words: new Uint32Array(flat), samplers };
   }
 
+  /**
+   * WGSL has no buffer textures (SPIR-V OpTypeImage Dim=Buffer). The vanilla cloud shader is the only user:
+   * `uniform isamplerBuffer CloudFaces` is bound by Java as a TEXEL_BUFFER (one signed byte per element).
+   * Lower the sampled buffer to a read-only storage buffer of i32 words and turn every texelFetch(...).r
+   * into a byte extraction, so Tint can translate the module instead of failing with "invalid dimension: 5".
+   */
+  function lowerTexelBuffers(words) {
+    const m = parse(words);
+    const bufVars = [];
+    for (const v of m.vars) {
+      if (v.storage !== SC.UniformConstant) continue;
+      const ptr = m.types[v.type];
+      if (!ptr || ptr.kind !== 'pointer') continue;
+      const pointee = m.types[ptr.pointee];
+      const image = pointee && pointee.kind === 'sampledImage' ? m.types[pointee.image] : pointee;
+      if (image && image.kind === 'image' && image.dim === 5) bufVars.push({ v, image });
+    }
+    if (!bufVars.length) return words;
+
+    const insts = [];
+    let bound = words[3];
+    for (let i = 5; i < words.length;) {
+      const wc = words[i] >>> 16;
+      insts.push(Array.from(words.subarray(i, i + wc)));
+      i += wc;
+    }
+    const fresh = () => bound++;
+    const mk = (op, args) => [((args.length + 1) << 16) | op, ...args];
+    const opOf = (ins) => ins[0] & 0xffff;
+
+    let intType = 0, ptrInt = 0, zeroId = 0, twoId = 0, threeId = 0, mask255Id = 0;
+    for (const id in m.types) {
+      const t = m.types[id];
+      if (t.kind === 'int' && t.width === 32 && t.signed) intType = +id;
+    }
+    const newTypes = [], newDecor = [];
+    if (!intType) { intType = fresh(); newTypes.push(mk(Op.TypeInt, [intType, 32, 1])); }
+    const consts = new Map();
+    for (const ins of insts) {
+      if (opOf(ins) === Op.Constant && ins[1] === intType) consts.set(ins[3] >>> 0, ins[2]);
+    }
+    const constInt = (value) => {
+      const key = value >>> 0;
+      if (consts.has(key)) return consts.get(key);
+      const id = fresh();
+      newTypes.push(mk(Op.Constant, [intType, id, key]));
+      consts.set(key, id);
+      return id;
+    };
+    zeroId = constInt(0); twoId = constInt(2); threeId = constInt(3); mask255Id = constInt(255);
+    ptrInt = fresh();
+    newTypes.push(mk(Op.TypePointer, [ptrInt, SC.StorageBuffer, intType]));
+
+    // One block struct with a runtime i32 array per buffer texture.
+    const varInfo = new Map();
+    for (const { v } of bufVars) {
+      const ra = fresh(), block = fresh(), ptrBlock = fresh();
+      newTypes.push(mk(Op.TypeRuntimeArray, [ra, intType]));
+      newTypes.push(mk(Op.TypeStruct, [block, ra]));
+      newTypes.push(mk(Op.TypePointer, [ptrBlock, SC.StorageBuffer, block]));
+      newDecor.push(mk(Op.Decorate, [ra, Dec.ArrayStride, 4]));
+      newDecor.push(mk(Op.Decorate, [block, Dec.Block]));
+      newDecor.push(mk(Op.MemberDecorate, [block, 0, Dec.Offset, 0]));
+      newDecor.push(mk(Op.MemberDecorate, [block, 0, Dec.NonWritable]));
+      varInfo.set(v.id, { ptrBlock });
+    }
+
+    // Rewrite every fetch: load sampled image -> image -> OpImageFetch -> extract component 0.
+    const loadInfo = new Map(), imageBase = new Map(), fetchValue = new Map(), remap = new Map();
+    const out = [];
+    let inFunction = false;
+    for (const ins of insts) {
+      const op = opOf(ins);
+      if (op === Op.Function) inFunction = true;
+      if (op === Op.FunctionEnd) inFunction = false;
+      if (inFunction && op === Op.Load && varInfo.has(ins[3])) {
+        loadInfo.set(ins[2], { ptrBlock: varInfo.get(ins[3]).ptrBlock });
+        out.push(mk(Op.CopyObject, [varInfo.get(ins[3]).ptrBlock, ins[2], ins[3]]));
+        continue;
+      }
+      if (inFunction && op === Op.Image && loadInfo.has(ins[3])) {
+        imageBase.set(ins[2], ins[3]);
+        continue;
+      }
+      const mapped = ins.map((w, i) => (inFunction && i > 0 && remap.has(w)) ? remap.get(w) : w);
+      if (inFunction && op === Op.ImageFetch && imageBase.has(mapped[3])) {
+        const base = imageBase.get(mapped[3]), coord = mapped[4];
+        const wordIndex = fresh(), ptrWord = fresh(), word = fresh();
+        const low = fresh(), shift = fresh(), shifted = fresh();
+        out.push(mk(Op.ShiftRightLogical, [intType, wordIndex, coord, twoId]));
+        out.push(mk(Op.AccessChain, [ptrInt, ptrWord, base, zeroId, wordIndex]));
+        out.push(mk(Op.Load, [intType, word, ptrWord]));
+        out.push(mk(Op.BitwiseAnd, [intType, low, coord, threeId]));
+        out.push(mk(Op.ShiftLeftLogical, [intType, shift, low, threeId]));
+        out.push(mk(Op.ShiftRightLogical, [intType, shifted, word, shift]));
+        out.push(mk(Op.BitwiseAnd, [intType, mapped[2], shifted, mask255Id]));
+        fetchValue.set(mapped[2], true);
+        continue;
+      }
+      if (inFunction && op === Op.CompositeExtract && fetchValue.has(mapped[3]) && mapped[4] === 0) {
+        remap.set(ins[2], mapped[3]);
+        continue;
+      }
+      out.push(mapped);
+    }
+
+    // Types must precede the first global variable; decorations go right after the last existing decoration.
+    let firstVar = out.findIndex((ins) => opOf(ins) === Op.Variable);
+    if (firstVar < 0) firstVar = out.findIndex((ins) => opOf(ins) === Op.Function);
+    if (firstVar < 0) firstVar = out.length;
+    let lastDecor = -1;
+    out.forEach((ins, i) => {
+      const op = opOf(ins);
+      if (op === Op.Decorate || op === Op.MemberDecorate) lastDecor = i;
+    });
+    if (lastDecor >= 0) out.splice(lastDecor + 1, 0, ...newDecor);
+    else newDecor.length = 0;
+    out.splice(firstVar + newDecor.length, 0, ...newTypes);
+
+    for (const ins of out) {
+      if (opOf(ins) === Op.Variable && varInfo.has(ins[2])) {
+        ins[1] = varInfo.get(ins[2]).ptrBlock;
+        ins[3] = SC.StorageBuffer;
+      }
+    }
+
+    const flat = [words[0], words[1], words[2], bound, words[4]];
+    for (const ins of out) for (const w of ins) flat.push(w >>> 0);
+    return new Uint32Array(flat);
+  }
+
   /** SPIR-V words -> { code: WGSL, samplers: [{name, binding, set}] } for the WebGPU backend. */
   S.toWGSL = function (words, samplerGroup) {
-    const split = splitCombinedSamplers(words, samplerGroup);
+    const split = splitCombinedSamplers(lowerTexelBuffers(words), samplerGroup);
     const msgs = S.capture = [];
     let code;
     try {
