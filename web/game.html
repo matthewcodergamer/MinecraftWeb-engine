@@ -3167,7 +3167,7 @@
             // play.html prefers the WebAssembly client and only downloads the
             // split JavaScript bundle when WASM is unavailable. Forward the
             // explicit engine switches so QA can still force either backend.
-            let brainQuery = 'play.html?embedded=1&stats=0&v=20261122c';
+            let brainQuery = 'play.html?embedded=1&stats=0&v=20261124a';
             if (params.get('wasm') === '1') brainQuery += '&wasm=1';
             if (params.get('wasm') === '0') brainQuery += '&wasm=0';
             if (params.has('js')) brainQuery += '&js=' + encodeURIComponent(params.get('js'));

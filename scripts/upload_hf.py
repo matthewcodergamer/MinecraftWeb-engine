@@ -298,8 +298,9 @@ def main() -> int:
 
     # Prove the public default URL, not just the uploaded bytes, shows the real
     # Java TitleScreen. Skip this when publishing to a subfolder, because the
-    # Space root then still serves a different shell.
-    if repo_type == "space" and not path_in_repo:
+    # Space root then still serves a different shell, and when the deploy host
+    # has no WebGPU adapter (the files are already live at that point).
+    if repo_type == "space" and not path_in_repo and os.environ.get("HF_SKIP_LIVE_VERIFY") != "1":
         url = space_url(repo)
         if not wait_for_shell(url):
             print(f"the live shell at {url} did not update in time", file=sys.stderr)
