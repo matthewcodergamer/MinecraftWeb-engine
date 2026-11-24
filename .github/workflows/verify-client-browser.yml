@@ -177,16 +177,19 @@ jobs:
           SERVER_PID=$!
           trap "kill $SERVER_PID" EXIT
           sleep 2
-          # No smoke-world here: this drives the actual Java TitleScreen,
-          # SelectWorldScreen and CreateWorldScreen widgets with real CDP mouse
-          # events, selects Superflat through the World tab, and creates the
-          # world through Java's own UI.
+          # No smoke-world here: this drives the actual Java TitleScreen and
+          # CreateWorldScreen widgets with real CDP mouse events, selects
+          # Superflat through the World tab, and creates the world through
+          # Java's own UI. On a fresh profile the save list is empty, and
+          # WorldSelectionList.handleNewLevels opens CreateWorldScreen directly
+          # instead of stopping at SelectWorldScreen, so do not wait for a
+          # SelectWorldScreen button that 26.3 never shows in this case.
           python3 scripts/cdp.py "http://127.0.0.1:8766/game.html?wasm=1&diag=1&rd=6&adaptive=0" \
             --timeout 1800 \
             --soak-seconds 120 \
             --soak-screenshot build/title_soak.png \
             --preload-js "try { sessionStorage.setItem('mw_play_pass', String(Date.now())); } catch (e) {}" \
-            --actions "wait=window.__mc && document.body.classList.contains('java-ui');shot=build/title_screen.png;click=Singleplayer@TitleScreen;shot=build/select_world.png;click=Create New World@SelectWorldScreen;shot=build/create_world.png;click=World@CreateWorldScreen;cycle=World Type*|Superflat;shot=build/world_tab_superflat.png;click=Create New World@CreateWorldScreen" \
+            --actions "wait=window.__mc && document.body.classList.contains('java-ui');shot=build/title_screen.png;click=Singleplayer@TitleScreen;shot=build/create_world.png;click=World@CreateWorldScreen;cycle=World Type*|Superflat;shot=build/world_tab_superflat.png;click=Create New World@CreateWorldScreen" \
             --actions-timeout 900 \
             --screenshot build/browser_title_world.png \
             --until-js "window.__mc && (window.__mc.stage === 'failed' || window.__mc.javaStage === 'first-java-section-emitted')" \
