@@ -89,8 +89,15 @@ class WS:
         self.next_id += 1
         mid = self.next_id
         self.send({"id": mid, "method": method, "params": params or {}})
+        # A socket timeout only bounds each individual read. A steady stream of
+        # console/heartbeat events would otherwise keep resetting it and let a
+        # command that never replies block the whole run forever.
+        deadline = time.time() + timeout_sec
         while True:
-            msg = self.recv(timeout_sec)
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise TimeoutError(method)
+            msg = self.recv(remaining)
             if msg is None:
                 raise TimeoutError(method)
             if msg.get("id") == mid:
@@ -344,7 +351,7 @@ def main():
             let bodySections = -1;
             try { if (bridge.module && bridge.module.java_section_count) bodySections = Number(bridge.module.java_section_count()) || 0; } catch (e) {}
             const st = gpu && gpu.stats;
-            return JSON.stringify({t:Math.round(performance.now()),stage:top.stage||'',javaStage:top.javaStage||b.javaStage||'',iframeStage:b.stage||'',boot:b['boot-state']||'',buttons:b['screen-buttons']||'',crash:b['crash-report']||'',error:b.error||bridge.error||'',bodyReady:!!window.__mcBodyReady,frame:Number(gpu&&gpu.frame)||0,fps:Number(frames.fps)||0,workMs:Number((frames.workAvg||0).toFixed(2)),canvas:canvas?canvas.width+'x'+canvas.height:'',sections:bridge.sections||0,bodySections,draws:st?st.draws:-1,passes:st?st.passes:-1,bindGroups:st?st.bindGroups:-1,pipelines:st?st.pipelines:-1,liveBuffers:st?st.liveBuffers:-1,liveTextures:st?st.liveTextures:-1,liveViews:st?st.liveViews:-1,livePipelines:st?st.livePipelines:-1,planTotal:gpu?gpu.planTotal:-1,objSlots:gpu?gpu.obj.length:-1,transientMB:st?Math.round(st.transientBytes/1048576):-1,transientChunks:st?st.transientChunks:-1,heapMB:performance.memory?Math.round(performance.memory.usedJSHeapSize/1048576):-1,lost:gpu&&gpu.lost?String(gpu.lost.message||'lost'):'',queue:win&&win.__mcSDL&&win.__mcSDL.queue?win.__mcSDL.queue.length:-1});
+            return JSON.stringify({t:Math.round(performance.now()),stage:top.stage||'',javaStage:top.javaStage||b.javaStage||'',iframeStage:b.stage||'',boot:b['boot-state']||'',buttons:b['screen-buttons']||'',crash:b['crash-report']||'',error:b.error||bridge.error||'',bodyReady:!!window.__mcBodyReady,frame:Number(gpu&&gpu.frame)||0,fps:Number(frames.fps)||0,workMs:Number((frames.workAvg||0).toFixed(2)),canvas:canvas?canvas.width+'x'+canvas.height:'',sections:bridge.sections||0,bodySections,draws:st?st.draws:-1,passes:st?st.passes:-1,bindGroups:st?st.bindGroups:-1,pipelines:st?st.pipelines:-1,liveBuffers:st?st.liveBuffers:-1,liveTextures:st?st.liveTextures:-1,liveViews:st?st.liveViews:-1,livePipelines:st?st.livePipelines:-1,planTotal:gpu?gpu.planTotal:-1,objSlots:gpu?gpu.obj.length:-1,transientMB:st?Math.round(st.transientBytes/1048576):-1,transientChunks:st?st.transientChunks:-1,heapMB:performance.memory?Math.round(performance.memory.usedJSHeapSize/1048576):-1,lost:gpu&&gpu.lost?String(gpu.lost.message||'lost'):'',queue:w&&w.__mcSDL&&w.__mcSDL.queue?w.__mcSDL.queue.length:-1});
         })()"""
         find_button_js = """(() => {
             const f = document.getElementById('mc-brain');
@@ -500,7 +507,7 @@ def main():
             if a.soak_screenshot:
                 try:
                     shot = ws.call("Page.captureScreenshot", {"format": "png"},
-                                   pump=pump, timeout_sec=15)
+                                   pump=pump, timeout_sec=60)
                     with open(a.soak_screenshot, "wb") as f:
                         f.write(base64.b64decode(shot["result"]["data"]))
                     print("soak screenshot -> " + a.soak_screenshot, flush=True)
@@ -537,7 +544,7 @@ def main():
                 if act["kind"] == "shot":
                     try:
                         shot = ws.call("Page.captureScreenshot", {"format": "png"},
-                                       pump=pump, timeout_sec=15)
+                                       pump=pump, timeout_sec=60)
                         with open(act["value"], "wb") as f:
                             f.write(base64.b64decode(shot["result"]["data"]))
                         print("action screenshot -> " + act["value"], flush=True)
@@ -679,7 +686,7 @@ def main():
         # only direct evidence that the real client (not just its logs) rendered.
         if a.screenshot and ok:
             try:
-                r = ws.call("Page.captureScreenshot", {"format": "png"}, pump=pump, timeout_sec=10)
+                r = ws.call("Page.captureScreenshot", {"format": "png"}, pump=pump, timeout_sec=60)
                 data = r.get("result", {}).get("data")
                 if not data:
                     raise RuntimeError("CDP returned no screenshot data")
@@ -700,7 +707,7 @@ def main():
                 save_browser_error("Could not read timeout page state: " + type(exc).__name__ + ": " + str(exc))
             diagnostic_path = a.screenshot or "cdp-timeout.png"
             try:
-                shot = ws.call("Page.captureScreenshot", {"format": "png"}, pump=pump, timeout_sec=10)
+                shot = ws.call("Page.captureScreenshot", {"format": "png"}, pump=pump, timeout_sec=60)
                 with open(diagnostic_path, "wb") as f:
                     f.write(base64.b64decode(shot["result"]["data"]))
                 print(f"timeout screenshot -> {diagnostic_path}", flush=True)

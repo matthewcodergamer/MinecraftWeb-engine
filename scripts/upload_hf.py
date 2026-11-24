@@ -210,24 +210,30 @@ def main() -> int:
     # before the shell so the Java client never starts against a stale archive
     # (the ICU4J timezone data lives here, not in the JavaScript bundle).
     resource_dir = os.path.join(os.path.dirname(src), "resources")
-    resource_archive = choose_resource_archive(resource_dir)
-    resource_sources = {
-        "client-resources.bin": resource_archive,
-        "client-textures.bin": os.path.join(resource_dir, "client-textures.bin"),
-    }
-    for name, source_path in resource_sources.items():
-        if not os.path.exists(source_path):
-            print(f"skipping missing resource archive {source_path}")
-            continue
-        target = f"{path_in_repo}/{name}" if path_in_repo else name
-        print(f"uploading {name} ({os.path.getsize(source_path):,} bytes) -> {repo}:{target}")
-        api.upload_file(
-            path_or_fileobj=source_path,
-            path_in_repo=target,
-            repo_id=repo,
-            repo_type=repo_type,
-            commit_message=f"resources: deploy {name}",
-        )
+    if not os.path.isdir(resource_dir):
+        # A clientmain-only deploy keeps the resource archives already on the
+        # Space. This is important when the staged archive is a trimmed CI
+        # pack: replacing the richer live archive would drop fonts and icons.
+        print(f"no staged resource directory {resource_dir}; keeping the live archives")
+    else:
+        resource_archive = choose_resource_archive(resource_dir)
+        resource_sources = {
+            "client-resources.bin": resource_archive,
+            "client-textures.bin": os.path.join(resource_dir, "client-textures.bin"),
+        }
+        for name, source_path in resource_sources.items():
+            if not os.path.exists(source_path):
+                print(f"skipping missing resource archive {source_path}")
+                continue
+            target = f"{path_in_repo}/{name}" if path_in_repo else name
+            print(f"uploading {name} ({os.path.getsize(source_path):,} bytes) -> {repo}:{target}")
+            api.upload_file(
+                path_or_fileobj=source_path,
+                path_in_repo=target,
+                repo_id=repo,
+                repo_type=repo_type,
+                commit_message=f"resources: deploy {name}",
+            )
 
     # WebAssembly is the primary client. Stage it next to the parts (the WASM
     # probe workflow publishes these files) and upload it before the shell, so
