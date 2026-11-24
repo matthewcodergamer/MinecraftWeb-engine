@@ -150,7 +150,48 @@ public final class JdkExt {
             // Synthesize a valid parameterized token for every Gson TypeToken descendant.
             return new SimpleParameterizedType(com.google.gson.reflect.TypeToken.class, Object.class);
         }
+        Type nettyCodecSuperclass = nettyCodecSuperclass(cls, superclass);
+        if (nettyCodecSuperclass != null) {
+            return nettyCodecSuperclass;
+        }
         return superclass;
+    }
+
+    // Netty resolves a codec's message type from Class.getGenericSuperclass() through
+    // ReflectionUtil.resolveTypeParameter() when it builds a TypeParameterMatcher. TeaVM keeps
+    // no Signature attributes, so this method would return the raw superclass and Netty's
+    // matcher would degrade to Object, accepting every message. The client pipeline then feeds
+    // an UnconfiguredPipelineHandler configuration task to PacketEncoder, whose Packet cast
+    // traps. Reconstruct the erased type argument for each codec the client installs. Other
+    // subclasses keep the old fallback so handlers such as LegacyServerPinger are unaffected.
+    private static Type nettyCodecSuperclass(Class<?> cls, Class<?> superclass) {
+        if (superclass == io.netty.handler.codec.MessageToByteEncoder.class) {
+            if (cls == net.minecraft.network.PacketEncoder.class) {
+                return new SimpleParameterizedType(superclass, net.minecraft.network.protocol.Packet.class);
+            }
+            if (cls == net.minecraft.network.CipherEncoder.class
+                    || cls == net.minecraft.network.CompressionEncoder.class
+                    || cls == net.minecraft.network.Varint21LengthFieldPrepender.class) {
+                return new SimpleParameterizedType(superclass, io.netty.buffer.ByteBuf.class);
+            }
+        }
+        if (superclass == io.netty.handler.codec.MessageToMessageEncoder.class
+                && cls == net.minecraft.network.PacketBundleUnpacker.class) {
+            return new SimpleParameterizedType(superclass, net.minecraft.network.protocol.Packet.class);
+        }
+        if (superclass == io.netty.handler.codec.MessageToMessageDecoder.class) {
+            if (cls == net.minecraft.network.PacketBundlePacker.class) {
+                return new SimpleParameterizedType(superclass, net.minecraft.network.protocol.Packet.class);
+            }
+            if (cls == net.minecraft.network.CipherDecoder.class) {
+                return new SimpleParameterizedType(superclass, io.netty.buffer.ByteBuf.class);
+            }
+        }
+        if (superclass == io.netty.channel.SimpleChannelInboundHandler.class
+                && cls == net.minecraft.network.Connection.class) {
+            return new SimpleParameterizedType(superclass, net.minecraft.network.protocol.Packet.class);
+        }
+        return null;
     }
 
     private static final class SimpleParameterizedType implements ParameterizedType {
