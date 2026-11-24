@@ -390,20 +390,25 @@ def main():
         actions_deadline = time.time() + a.actions_timeout
         action_hold_until = 0.0
 
-        def js_value(expr, timeout_sec=10):
+        def js_value(expr, timeout_sec=20):
             r = ws.call("Runtime.evaluate", {"expression": expr, "returnByValue": True},
                         pump=pump, timeout_sec=timeout_sec)
             return r.get("result", {}).get("result", {}).get("value")
 
         def click_at(x, y):
-            ws.call("Input.dispatchMouseEvent",
-                    {"type": "mouseMoved", "x": x, "y": y}, pump=pump, timeout_sec=10)
-            ws.call("Input.dispatchMouseEvent",
-                    {"type": "mousePressed", "x": x, "y": y, "button": "left",
-                     "buttons": 1, "clickCount": 1}, pump=pump, timeout_sec=10)
-            ws.call("Input.dispatchMouseEvent",
-                    {"type": "mouseReleased", "x": x, "y": y, "button": "left",
-                     "buttons": 0, "clickCount": 1}, pump=pump, timeout_sec=10)
+            try:
+                ws.call("Input.dispatchMouseEvent",
+                        {"type": "mouseMoved", "x": x, "y": y}, pump=pump, timeout_sec=20)
+                ws.call("Input.dispatchMouseEvent",
+                        {"type": "mousePressed", "x": x, "y": y, "button": "left",
+                         "buttons": 1, "clickCount": 1}, pump=pump, timeout_sec=20)
+                ws.call("Input.dispatchMouseEvent",
+                        {"type": "mouseReleased", "x": x, "y": y, "button": "left",
+                         "buttons": 0, "clickCount": 1}, pump=pump, timeout_sec=20)
+                return True
+            except TimeoutError as exc:
+                print("input click timed out: " + str(exc), flush=True)
+                return False
 
         soak_js = """(() => {
             const f = document.getElementById('mc-brain');
@@ -550,8 +555,13 @@ def main():
                         print("action screenshot -> " + act["value"], flush=True)
                         act["done"] = True
                     except Exception as exc:
-                        print("action screenshot failed: " + type(exc).__name__ + ": " + str(exc),
+                        # Screenshots are evidence, not a precondition for the
+                        # next UI action. A busy software-WebGPU compositor can
+                        # refuse a capture request; retrying it forever would
+                        # starve the actual clicks.
+                        print("action screenshot failed (continuing): " + type(exc).__name__ + ": " + str(exc),
                               flush=True)
+                        act["done"] = True
                     return False
                 if act["kind"] == "cycle":
                     prefix, _, target = act["value"].partition("|")
@@ -589,7 +599,8 @@ def main():
                         print("action cycle gave up after 16 clicks: " + act["value"], flush=True)
                         act["done"] = True
                         continue
-                    click_at(found["x"], found["y"])
+                    if not click_at(found["x"], found["y"]):
+                        return False
                     act["clicks"] += 1
                     act["last_raw"] = raw
                     act["next_click_at"] = now + 30.0
@@ -604,7 +615,8 @@ def main():
                     return False
                 if not found:
                     return False
-                click_at(found["x"], found["y"])
+                if not click_at(found["x"], found["y"]):
+                    return False
                 print("action click '{}' on {} at {:.1f},{:.1f}".format(
                     found["label"], found["screen"].split('.')[-1], found["x"], found["y"]),
                     flush=True)
