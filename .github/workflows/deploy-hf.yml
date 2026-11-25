@@ -4,6 +4,11 @@ name: Deploy verified client to Hugging Face
 # workflow. The HF write token stays in repository secrets and is never printed,
 # checked in, or passed through this workflow's inputs.
 on:
+  push:
+    branches:
+      - feat/client-headless-webgpu-boot
+    paths:
+      - ".github/workflows/deploy-hf.yml"
   workflow_dispatch:
     inputs:
       run_id:
@@ -27,6 +32,10 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    env:
+      RUN_ID: ${{ github.event.inputs.run_id || '45597544527' }}
+      HF_REPO: ${{ github.event.inputs.hf_repo || 'matthewcodergamer/minecraft-browser' }}
+      HF_PATH: ${{ github.event.inputs.hf_path || '' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -42,7 +51,6 @@ jobs:
       - name: Download the verified WebAssembly build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RUN_ID: ${{ inputs.run_id }}
         run: |
           set -euo pipefail
           rm -rf build/ci
@@ -93,9 +101,7 @@ jobs:
       - name: Publish to Hugging Face
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_REPO: ${{ inputs.hf_repo }}
           HF_REPO_TYPE: space
-          HF_PATH: ${{ inputs.hf_path }}
           # The runner has software WebGPU, but leave the live visual check to
           # the deployment host. The upload itself is the authoritative step.
           HF_SKIP_LIVE_VERIFY: "1"
