@@ -1,0 +1,104 @@
+name: Deploy verified client to Hugging Face
+
+# Publishes the exact WebAssembly artifact produced by the browser verification
+# workflow. The HF write token stays in repository secrets and is never printed,
+# checked in, or passed through this workflow's inputs.
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Verify real Minecraft client in browser run id
+        required: true
+        default: "45597544527"
+      hf_repo:
+        description: Hugging Face Space repo id
+        required: true
+        default: "matthewcodergamer/minecraft-browser"
+      hf_path:
+        description: Destination folder inside the Space (empty = repo root)
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the Hugging Face client
+        run: python3 -m pip install --upgrade huggingface_hub
+
+      - name: Download the verified WebAssembly build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -euo pipefail
+          rm -rf build/ci
+          gh run download "$RUN_ID" \
+            --repo "${{ github.repository }}" \
+            --name minecraft-web-client \
+            --dir build/ci
+          test -s build/ci/minecraft-java-edition-v26.3.wasm
+          test -s build/ci/minecraft-java-edition-v26.3.wasm-runtime.js
+          test -s build/ci/minecraft-java-edition-v26.3-assets.bin
+          ls -lh build/ci
+
+      - name: Stage production names
+        run: |
+          set -euo pipefail
+          rm -rf deploy
+          mkdir -p deploy/wasm deploy/resources deploy/parts
+          cp build/ci/minecraft-java-edition-v26.3.wasm deploy/wasm/
+          cp build/ci/minecraft-java-edition-v26.3.wasm-runtime.js deploy/wasm/
+          cp build/ci/minecraft-java-edition-v26.3-assets.bin deploy/resources/
+
+      - name: Fetch the complete live asset archive
+        run: |
+          set -euo pipefail
+          # The CI pack is intentionally jar-only and skips external sounds and
+          # languages. Keep the complete archive already served by the Space so
+          # tutorial toasts, achievements, fonts, and sound metadata stay intact.
+          curl -fL --retry 5 --retry-delay 3 \
+            https://matthewcodergamer-minecraft-browser.static.hf.space/client-resources.bin \
+            -o deploy/resources/minecraft-java-edition-v26.3-assets.bin
+          python3 - <<'PY'
+          import json, struct
+          from pathlib import Path
+          path = Path("deploy/resources/minecraft-java-edition-v26.3-assets.bin")
+          with path.open("rb") as archive:
+              assert archive.read(4) == b"MCRS", "bad archive magic"
+              length = struct.unpack("<I", archive.read(4))[0]
+              index = json.loads(archive.read(length))
+          for key in (
+              "assets/minecraft/textures/gui/sprites/toast/tutorial.png",
+              "assets/minecraft/textures/gui/sprites/toast/advancement.png",
+              "assets/minecraft/sounds.json",
+          ):
+              assert key in index, f"missing {key}"
+          print(f"asset archive: {path.stat().st_size:,} bytes, {len(index):,} entries")
+          PY
+
+      - name: Publish to Hugging Face
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_REPO: ${{ inputs.hf_repo }}
+          HF_REPO_TYPE: space
+          HF_PATH: ${{ inputs.hf_path }}
+          # The runner has software WebGPU, but leave the live visual check to
+          # the deployment host. The upload itself is the authoritative step.
+          HF_SKIP_LIVE_VERIFY: "1"
+        run: |
+          set -euo pipefail
+          python3 scripts/upload_hf.py deploy/parts "$HF_REPO" "$HF_PATH"
