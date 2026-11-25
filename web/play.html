@@ -25,9 +25,45 @@
   html.embedded, html.embedded body { background: #000; }
   #stats { position: fixed; right: 6px; top: 4px; color: #fff; font: 11px monospace; text-shadow: 1px 1px #000;
     z-index: 5; pointer-events: none; }
+  /* Small Buy Me a Coffee badge, shown only while Java's TitleScreen is up. */
+  #bmc {
+    position: fixed;
+    top: max(10px, env(safe-area-inset-top));
+    right: max(10px, env(safe-area-inset-right));
+    z-index: 60;
+    width: 46px;
+    height: 46px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: #ffdd00;
+    border: 2px solid rgba(0, 0, 0, .35);
+    box-shadow: 0 3px 12px rgba(0, 0, 0, .45);
+    text-decoration: none;
+    transition: transform .15s ease, filter .15s ease;
+  }
+  #bmc:hover { transform: translateY(-2px) scale(1.04); filter: brightness(1.05); }
+  #bmc img { width: 22px; height: 31px; display: block; }
+  #bmc[hidden] { display: none; }
 </style>
 </head>
 <body>
+<a id="bmc" href="https://buymeacoffee.com/gamerstripd" target="_blank" rel="noopener"
+   aria-label="Buy me a coffee" title="Buy me a coffee"><img src="ui/bmc.svg" alt=""></a>
+<script>
+  // The badge belongs to the home screen, not the world HUD. Java publishes
+  // its current screen in __mc['boot-state']; keep the icon only on TitleScreen.
+  (function () {
+    var badge = document.getElementById('bmc');
+    var title = 'screen=net.minecraft.client.gui.screens.TitleScreen';
+    function syncBadge() {
+      var boot = String((window.__mc && window.__mc['boot-state']) || '');
+      badge.hidden = boot.indexOf(title) < 0;
+    }
+    syncBadge();
+    setInterval(syncBadge, 500);
+  })();
+</script>
 <div id="boot"><div id="boot-msg">Starting…</div><div class="bar"><div id="boot-bar"></div></div><pre id="boot-err"></pre></div>
 <div id="stats"></div>
 <script src="native/layout.js?v=20261124b"></script>

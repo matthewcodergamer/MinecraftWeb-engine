@@ -283,6 +283,7 @@ def main() -> int:
         ("native/stb.js", "native/stb.js"),
         ("site.webmanifest", "site.webmanifest"),
         ("ui/grass_block_icon.svg", "ui/grass_block_icon.svg"),
+        ("ui/bmc.svg", "ui/bmc.svg"),
         ("game.html", "index.html"),
     ]
     uploaded = 0
