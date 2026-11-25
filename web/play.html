@@ -49,6 +49,10 @@ const embedded = params.get('embedded') === '1';
 // All game parts live on the Hugging Face Space. The same files are also
 // available next to this page, which is used as an offline fallback.
 const HF_BASE = 'https://matthewcodergamer-minecraft-browser.static.hf.space/';
+// Bumped on every deployed client build. The Space CDN caches the module and
+// its runtime for a long time, so an unversioned URL can keep serving an old
+// wasm build after a deployment.
+const MC_BUILD = '20261125b';
 if (embedded) document.documentElement.classList.add('embedded');
 
 // World handshake with the page that owns the menus. Java's ChunkBridge reads
@@ -273,11 +277,11 @@ async function loadWasmBrain() {
     || location.hostname === '[::1]';
   const mustUseLocalBuild = localHost || params.get('wasm') === '1';
   try {
-    await loadClassicScript('clientmain.wasm-runtime.js');
+    await loadClassicScript('minecraft-java-edition-v26.3.wasm-runtime.js?v=' + MC_BUILD);
   } catch (error) {
     if (mustUseLocalBuild) throw error;
     console.warn('local WASM runtime unavailable; loading the canonical runtime', error);
-    await loadClassicScript(HF_BASE + 'clientmain.wasm-runtime.js');
+    await loadClassicScript(HF_BASE + 'minecraft-java-edition-v26.3.wasm-runtime.js?v=' + MC_BUILD);
   }
   if (!window.TeaVM || !TeaVM.wasmGC || typeof TeaVM.wasmGC.load !== 'function') {
     throw new Error('TeaVM Wasm GC runtime did not expose TeaVM.wasmGC.load');
@@ -299,13 +303,13 @@ async function loadWasmBrain() {
   };
   let teavm;
   try {
-    teavm = await TeaVM.wasmGC.load('clientmain.wasm', options);
-    window.__mcWasmUrl = new URL('clientmain.wasm', location.href).href;
+    teavm = await TeaVM.wasmGC.load('minecraft-java-edition-v26.3.wasm?v=' + MC_BUILD, options);
+    window.__mcWasmUrl = new URL('minecraft-java-edition-v26.3.wasm?v=' + MC_BUILD, location.href).href;
   } catch (localError) {
     if (mustUseLocalBuild || location.hostname.endsWith('.hf.space')) throw localError;
     console.warn('local WASM module unavailable; loading the canonical module', localError);
-    teavm = await TeaVM.wasmGC.load(HF_BASE + 'clientmain.wasm', options);
-    window.__mcWasmUrl = HF_BASE + 'clientmain.wasm';
+    teavm = await TeaVM.wasmGC.load(HF_BASE + 'minecraft-java-edition-v26.3.wasm?v=' + MC_BUILD, options);
+    window.__mcWasmUrl = HF_BASE + 'minecraft-java-edition-v26.3.wasm?v=' + MC_BUILD;
   }
   window.__mcTeaVM = teavm;
   window.__mcRunMain = () => teavm.exports.main([]);
@@ -442,7 +446,7 @@ async function loadResources() {
   // Prefer the copy next to the page (the Space and local dev server), then
   // fall back to the canonical Space for the GitHub Pages shell. The archive is
   // large, so it is deliberately not duplicated into the Pages repository.
-  const sources = ['client-resources.bin', HF_BASE + 'client-resources.bin'];
+  const sources = ['minecraft-java-edition-v26.3-assets.bin', HF_BASE + 'minecraft-java-edition-v26.3-assets.bin'];
   let buf = null;
   let lastError = null;
   for (const source of sources) {
@@ -454,7 +458,7 @@ async function loadResources() {
       console.warn('resource archive ' + source + ' failed', error);
     }
   }
-  if (!buf) throw lastError || new Error('could not load client-resources.bin');
+  if (!buf) throw lastError || new Error('could not load minecraft-java-edition-v26.3-assets.bin');
   const dv = new DataView(buf);
   if (dv.getUint32(0, false) !== 0x4D435253) throw new Error('bad resource archive');
   const len = dv.getUint32(4, true);

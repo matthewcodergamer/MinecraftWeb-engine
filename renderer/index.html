@@ -120,7 +120,7 @@
       console.error(error);
     };
 
-    const ARCHIVE_CANDIDATES = ['client-textures.bin', 'client-resources.bin', '../build/web/client-textures.bin', '../build/web/client-resources.bin'];
+    const ARCHIVE_CANDIDATES = ['client-textures.bin', 'minecraft-java-edition-v26.3-assets.bin', '../build/web/client-textures.bin', '../build/web/minecraft-java-edition-v26.3-assets.bin'];
 
     async function loadArchive() {
       for (const url of ARCHIVE_CANDIDATES) {
@@ -139,7 +139,7 @@
           console.warn('resource archive ' + url + ':', error);
         }
       }
-      throw new Error('client-resources.bin not found (run scripts/serve.sh)');
+      throw new Error('minecraft-java-edition-v26.3-assets.bin not found (run scripts/serve.sh)');
     }
 
     (async () => {

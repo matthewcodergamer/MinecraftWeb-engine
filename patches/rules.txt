@@ -430,6 +430,9 @@ BODY net.minecraft.client.sounds.SoundManager prepare(Lnet/minecraft/server/pack
 BODY net.minecraft.client.sounds.SoundManager apply(Lnet/minecraft/client/sounds/SoundManager$Preparations;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)V -> net.minecraft.client.sounds.BrowserSoundManagerPatches apply
 BODY net.minecraft.client.sounds.SoundEngine loadLibrary()V -> net.minecraft.client.sounds.BrowserSoundManagerPatches loadLibrary
 BODY net.minecraft.client.sounds.SoundEngine reload()V -> net.minecraft.client.sounds.BrowserSoundManagerPatches reload
+# Report a successful start for every sound while mixing nothing. Returning
+# NOT_STARTED made the client believe the sound device was unavailable.
+BODY net.minecraft.client.sounds.SoundEngine play(Lnet/minecraft/client/resources/sounds/SoundInstance;)Lnet/minecraft/client/sounds/SoundEngine$PlayResult; -> net.minecraft.client.sounds.BrowserSoundManagerPatches play
 
 # --- Browser first launch: skip the narrator onboarding screen -------------------------------
 # A fresh browser profile has onboardAccessibility=true, so vanilla inserts

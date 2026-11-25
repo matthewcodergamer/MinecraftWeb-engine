@@ -18,8 +18,8 @@
 
   async function loadResources() {
     const t0 = performance.now();
-    const res = await fetch('client-resources.bin');
-    if (!res.ok) { window.__mcLog('BOOT', 'no client-resources.bin (' + res.status + ')'); return; }
+    const res = await fetch('minecraft-java-edition-v26.3-assets.bin');
+    if (!res.ok) { window.__mcLog('BOOT', 'no minecraft-java-edition-v26.3-assets.bin (' + res.status + ')'); return; }
     const buf = await res.arrayBuffer();
     const dv = new DataView(buf);
     if (dv.getUint32(0, false) !== 0x4D435253) throw new Error('bad resource archive magic');

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Repack a client-resources.bin (MCRS) archive for web deployment.
+"""Repack a minecraft-java-edition-v26.3-assets.bin (MCRS) archive for web deployment.
 
 The full Java resource archive is ~477 MB: 247 MB of music, 87 MB of
 translations, 112 MB of SFX and ~29 MB of everything the client actually

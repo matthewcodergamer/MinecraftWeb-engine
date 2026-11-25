@@ -10,7 +10,7 @@ shift $(( $# >= 2 ? 2 : 1 ))
 PORT="${PORT:-8765}"
 cp -R web/. build/web/
 MC_JAR="${MC_JAR:-$HOME/Library/Application Support/minecraft/versions/26.3/26.3.jar}"
-[ -f build/web/client-resources.bin ] || python3 scripts/pack_resources.py "$MC_JAR" build/web/client-resources.bin
+[ -f build/web/minecraft-java-edition-v26.3-assets.bin ] || python3 scripts/pack_resources.py "$MC_JAR" build/web/minecraft-java-edition-v26.3-assets.bin
 python3 -m http.server "$PORT" --bind 127.0.0.1 --directory build/web >/dev/null 2>&1 &
 SERVER=$!
 trap 'kill $SERVER 2>/dev/null' EXIT

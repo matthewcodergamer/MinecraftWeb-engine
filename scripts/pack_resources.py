@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pack the *whole* vanilla game resource set into build/web/client-resources.bin.
+"""Pack the *whole* vanilla game resource set into build/web/minecraft-java-edition-v26.3-assets.bin.
 
 What goes in
 ------------
@@ -22,11 +22,11 @@ build/ (git-ignored) and must never be committed or published.
 Usage
 -----
     # defaults: ~/Library/Application Support/minecraft, version 26.3,
-    #           output build/web/client-resources.bin
+    #           output build/web/minecraft-java-edition-v26.3-assets.bin
     python3 scripts/pack_resources.py
 
     python3 scripts/pack_resources.py --mc-dir "$HOME/Library/Application Support/minecraft" \\
-        --version 26.3 --out build/web/client-resources.bin
+        --version 26.3 --out build/web/minecraft-java-edition-v26.3-assets.bin
 
     # old two-argument form still works
     python3 scripts/pack_resources.py <version.jar> <output.bin>
@@ -54,7 +54,7 @@ from typing import Iterable
 MAGIC = b"MCRS"
 DEFAULT_MC_DIR = Path.home() / "Library" / "Application Support" / "minecraft"
 DEFAULT_VERSION = "26.3"
-DEFAULT_OUT = Path("build/web/client-resources.bin")
+DEFAULT_OUT = Path("build/web/minecraft-java-edition-v26.3-assets.bin")
 
 
 @dataclass(frozen=True)
@@ -185,7 +185,7 @@ def icu_resource_entries(mc_dir: Path, meta: dict, already: set[str], temp_dir: 
     """Expose ICU4J's bundled timezone/locale data through ClasspathResources.
 
     Minecraft's ICU classes are loaded from a library jar, but browser resource
-    lookups are redirected to client-resources.bin. Pack ICU's .res data from
+    lookups are redirected to minecraft-java-edition-v26.3-assets.bin. Pack ICU's .res data from
     the declared Java libraries so UResourceBundle can resolve zoneinfo64.
     """
     out: list[Entry] = []

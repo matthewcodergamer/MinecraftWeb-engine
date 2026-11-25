@@ -5,7 +5,7 @@ from PIL import Image
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 
-ARCHIVE = os.environ.get('MC_ARCHIVE', 'build/web/client-resources.bin')
+ARCHIVE = os.environ.get('MC_ARCHIVE', 'build/web/minecraft-java-edition-v26.3-assets.bin')
 OUT = 'web/ui/font/minecraft.woff'
 GLYPH = 8            # pixels per cell
 PIXEL = 16           # font units per source pixel

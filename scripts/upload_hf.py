@@ -46,8 +46,10 @@ def choose_resource_archive(resource_dir: str) -> str:
     """
     candidates = [
         os.environ.get("HF_RESOURCES_ARCHIVE"),
-        os.path.join(resource_dir, "client-resources.bin"),
+        os.path.join(resource_dir, "minecraft-java-edition-v26.3-assets.bin"),
+        "/tmp/minecraft-java-edition-v26.3-assets-icu-merged.bin",
         "/tmp/client-resources-icu-merged.bin",
+        os.path.join("build", "web", "minecraft-java-edition-v26.3-assets.bin"),
         os.path.join("build", "web", "client-resources.bin"),
     ]
     valid = []
@@ -61,7 +63,7 @@ def choose_resource_archive(resource_dir: str) -> str:
             continue
         valid.append((os.path.getsize(candidate), candidate, index))
     if not valid:
-        raise SystemExit("no valid client-resources.bin archive was found")
+        raise SystemExit("no valid minecraft-java-edition-v26.3-assets.bin archive was found")
     size, path, index = max(valid, key=lambda item: item[0])
     has_icons = any(key.endswith("textures/gui/sprites/icon/language.png") for key in index)
     has_zoneinfo = any(key.endswith("zoneinfo64.res") for key in index)
@@ -218,7 +220,7 @@ def main() -> int:
     else:
         resource_archive = choose_resource_archive(resource_dir)
         resource_sources = {
-            "client-resources.bin": resource_archive,
+            "minecraft-java-edition-v26.3-assets.bin": resource_archive,
             "client-textures.bin": os.path.join(resource_dir, "client-textures.bin"),
         }
         for name, source_path in resource_sources.items():
@@ -240,10 +242,15 @@ def main() -> int:
     # a new play.html never points at a module that is not live yet. When the
     # files are absent, the shell's JavaScript fallback still works.
     wasm_dir = os.path.join(os.path.dirname(src), "wasm")
-    for name in ("clientmain.wasm-runtime.js", "clientmain.wasm"):
-        source_path = os.path.join(wasm_dir, name)
-        if not os.path.exists(source_path):
-            print(f"skipping missing WASM file {source_path}")
+    wasm_sources = [
+        ("minecraft-java-edition-v26.3.wasm-runtime.js", ("minecraft-java-edition-v26.3.wasm-runtime.js", "clientmain.wasm-runtime.js")),
+        ("minecraft-java-edition-v26.3.wasm", ("minecraft-java-edition-v26.3.wasm", "clientmain.wasm")),
+    ]
+    for name, candidates in wasm_sources:
+        source_path = next((os.path.join(wasm_dir, candidate) for candidate in candidates
+                            if os.path.exists(os.path.join(wasm_dir, candidate))), None)
+        if source_path is None:
+            print(f"skipping missing WASM file {os.path.join(wasm_dir, name)}")
             continue
         target = f"{path_in_repo}/{name}" if path_in_repo else name
         print(f"uploading {name} ({os.path.getsize(source_path):,} bytes) -> {repo}:{target}")

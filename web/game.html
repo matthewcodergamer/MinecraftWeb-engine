@@ -1613,7 +1613,7 @@
       // that download is what used to kill the iPhone tab right after
       // `client-textures.bin` failed once.
       const candidates = ['./client-textures.bin'];
-      if (params.get('full') === '1') candidates.push('./client-resources.bin');
+      if (params.get('full') === '1') candidates.push('./minecraft-java-edition-v26.3-assets.bin');
       let lastError = null;
       for (const url of candidates) {
         try {
@@ -1753,6 +1753,9 @@
         difficulty: w.difficulty, type: w.type,
         commands: !!w.commands, structures: w.structures !== false, bonus: !!w.bonus,
         keepInv: !!w.keepInv, daylight: w.daylight !== false, coords: !!w.coords,
+        // Optional test/QA loadout: Java gives these items to the joining
+        // player so the hotbar exercises the real 3D item renderer.
+        hotbar: Array.isArray(w.hotbar) ? w.hotbar : undefined,
         version: w.version, source: w.source, folder: w.folder || ('mc-' + w.id),
       };
     }
@@ -2745,6 +2748,14 @@
           keepInv: false,
           daylight: true,
           coords: true,
+          // Exercise the full GUI item path: block cubes, cutout blocks,
+          // flat sprites and a 3D-ish bucket model, one per hotbar slot.
+          hotbar: [
+            'minecraft:grass_block', 'minecraft:oak_log', 'minecraft:glass',
+            'minecraft:torch', 'minecraft:iron_sword', 'minecraft:apple',
+            'minecraft:diamond_pickaxe', 'minecraft:oak_sapling',
+            'minecraft:water_bucket',
+          ],
         });
       };
       setTimeout(launchSmokeWorld, 500);
@@ -3161,8 +3172,8 @@
           // the split JavaScript bundle; accept either so a WASM-only Space
           // still boots the real Java UI.
           const hfBase = 'https://matthewcodergamer-minecraft-browser.static.hf.space/';
-          for (const probe of ['./clientmain.wasm', './clientmain.parts.json', './clientmain.js',
-                               hfBase + 'clientmain.wasm', hfBase + 'clientmain.wasm-runtime.js']) {
+          for (const probe of ['./minecraft-java-edition-v26.3.wasm', './clientmain.parts.json', './clientmain.js',
+                               hfBase + 'minecraft-java-edition-v26.3.wasm', hfBase + 'minecraft-java-edition-v26.3.wasm-runtime.js']) {
             try {
               brain = (await fetch(probe, { method: 'HEAD' })).ok;
             } catch (e) {
@@ -3179,7 +3190,7 @@
             // play.html prefers the WebAssembly client and only downloads the
             // split JavaScript bundle when WASM is unavailable. Forward the
             // explicit engine switches so QA can still force either backend.
-            let brainQuery = 'play.html?embedded=1&stats=0&v=20261124b';
+            let brainQuery = 'play.html?embedded=1&stats=0&v=20261125b';
             if (params.get('wasm') === '1') brainQuery += '&wasm=1';
             if (params.get('wasm') === '0') brainQuery += '&wasm=0';
             if (params.has('js')) brainQuery += '&js=' + encodeURIComponent(params.get('js'));
@@ -3201,7 +3212,7 @@
             loading.classList.add('hidden');
             finishSplash();
           } else {
-            throw new Error('The real Java client is not deployed (clientmain.wasm / clientmain.parts.json missing).');
+            throw new Error('The real Java client is not deployed (minecraft-java-edition-v26.3.wasm / clientmain.parts.json missing).');
           }
         }
         progress();

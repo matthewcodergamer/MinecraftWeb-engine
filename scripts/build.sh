@@ -70,8 +70,14 @@ for a in core classlib jso jso-apis jso-impl interop platform metaprogramming-ap
 done
 # TeaVM's java.util.zip is implemented on top of jzlib.
 TEAVM_RT+=("$ROOT/tools/lib/jzlib-1.1.3.jar")
-NAME="$(echo "${ENTRY##*.}" | tr 'A-Z' 'a-z').${TARGET/wasm/wasm}"
-[ "$TARGET" = js ] && NAME="${NAME%.js}.js"
+# The JavaScript fallback keeps the historical clientmain name because the
+# split-bundle manifest and its parts are named after it. WebAssembly uses the
+# production artifact names served by the Space and GitHub Pages.
+if [ "$TARGET" = js ]; then
+  NAME="$(echo "${ENTRY##*.}" | tr 'A-Z' 'a-z').js"
+else
+  NAME="minecraft-java-edition-v${MC_VERSION}.wasm"
+fi
 set +e
 time "$JDK/bin/java" -Xss${PORT_STACK:-1g} -Xmx${PORT_HEAP:-3g} -Dport.rules="$ROOT/patches/rules.txt" -Dport.lenientLinkage=${PORT_LENIENT:-true} ${PORT_JAVA_OPTS:-} -cp "build/tools:$TEAVM_CP" PortBuilder "$TARGET" "$ENTRY" "$OUT" "$NAME" \
   "$ROOT/build/classes" "$MC_JAR" "${LIBARR[@]}" "${TEAVM_RT[@]}" 2>&1 | tee "build/$ENTRY.$TARGET.log" | tail -${PORT_LOG_LINES:-60}

@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 MC_JAR="${MC_JAR:-$HOME/Library/Application Support/minecraft/versions/26.3/26.3.jar}"
 mkdir -p build/web
 cp -R web/. build/web/
-[ -f build/web/client-resources.bin ] || python3 scripts/pack_resources.py
+[ -f build/web/minecraft-java-edition-v26.3-assets.bin ] || python3 scripts/pack_resources.py
 PORT="${PORT:-8000}"
 echo "Open http://localhost:$PORT/index.html   (hybrid: Rust/WebGPU body + Java brain)"
 echo "     http://localhost:$PORT/play.html    (Java client alone)"

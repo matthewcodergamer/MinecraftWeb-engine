@@ -87,11 +87,11 @@ jobs:
       - name: Patch and verify TeaVM Wasm GC runtime
         run: |
           set -euo pipefail
-          test -s build/web/clientmain.wasm
-          test -s build/web/clientmain.wasm-runtime.js
-          python3 scripts/patch_teavm_wasm_runtime.py build/web/clientmain.wasm-runtime.js
-          grep -q "createWeakRef" build/web/clientmain.wasm-runtime.js
-          echo "Verified clientmain.wasm and patched TeaVM Wasm GC browser runtime"
+          test -s build/web/minecraft-java-edition-v26.3.wasm
+          test -s build/web/minecraft-java-edition-v26.3.wasm-runtime.js
+          python3 scripts/patch_teavm_wasm_runtime.py build/web/minecraft-java-edition-v26.3.wasm-runtime.js
+          grep -q "createWeakRef" build/web/minecraft-java-edition-v26.3.wasm-runtime.js
+          echo "Verified minecraft-java-edition-v26.3.wasm and patched TeaVM Wasm GC browser runtime"
 
       - name: Preserve original TeaVM Wasm GC module for Chrome
         run: |
@@ -99,7 +99,7 @@ jobs:
           # Binaryen 133 can rewrite TeaVM's GC reference casts into br_on_cast
           # sequences rejected by Chrome's WebAssembly validator. Keep the
           # original TeaVM module until an optimized candidate passes Chrome.
-          test -s build/web/clientmain.wasm
+          test -s build/web/minecraft-java-edition-v26.3.wasm
           rm -f build/web/clientmain.optimized.wasm
           echo "Keeping original TeaVM output; no unverified Binaryen rewrite applied."
 
@@ -114,8 +114,8 @@ jobs:
           # Regenerate the Java classpath archive from this exact client and its
           # declared ICU4J libraries. The checked-in web archive can predate ICU
           # timezone bundles, causing UResourceBundle to null-deref at startup.
-          python3 scripts/pack_resources.py --mc-dir "$MC_DIR" --version "$MC_VERSION" --jar-only --out build/web/client-resources.bin
-          test -s build/web/client-resources.bin
+          python3 scripts/pack_resources.py --mc-dir "$MC_DIR" --version "$MC_VERSION" --jar-only --out build/web/minecraft-java-edition-v26.3-assets.bin
+          test -s build/web/minecraft-java-edition-v26.3-assets.bin
 
       - name: Build Rust WebGPU Body
         run: bash scripts/build_body.sh
@@ -126,9 +126,9 @@ jobs:
         with:
           name: minecraft-web-client
           path: |
-            build/web/clientmain.wasm
-            build/web/clientmain.wasm-runtime.js
-            build/web/client-resources.bin
+            build/web/minecraft-java-edition-v26.3.wasm
+            build/web/minecraft-java-edition-v26.3.wasm-runtime.js
+            build/web/minecraft-java-edition-v26.3-assets.bin
           if-no-files-found: warn
           retention-days: 14
 
@@ -154,6 +154,19 @@ jobs:
           SERVER_PID=$!
           trap "kill $SERVER_PID" EXIT
           sleep 2
+          python3 - <<'PY'
+          import urllib.request
+          url = "http://127.0.0.1:8765/minecraft-java-edition-v26.3.wasm"
+          request = urllib.request.Request(url, method="HEAD")
+          with urllib.request.urlopen(request, timeout=30) as response:
+              ctype = response.headers.get_content_type()
+              size = int(response.headers.get("Content-Length") or 0)
+          if ctype != "application/wasm":
+              raise SystemExit(f"{url} is served as {ctype}, expected application/wasm")
+          if size <= 0:
+              raise SystemExit(f"{url} has no Content-Length")
+          print(f"Verified production WebAssembly MIME: {ctype}, {size:,} bytes")
+          PY
           python3 scripts/cdp.py "http://127.0.0.1:8765/game.html?smoke-world=1&wasm=1&diag=1&rd=6&adaptive=0" \
             --timeout 1200 \
             --soak-seconds 60 \
@@ -165,7 +178,7 @@ jobs:
             --assert-js "window.__mc && window.__mc.stage !== 'failed'" \
             --assert-js "window.__mc && window.__mc.javaStage !== 'failed'" \
             --assert-js "(() => { const f = document.getElementById('mc-brain'); const m = f && f.contentWindow && f.contentWindow.__mc; return !!m && m.stage !== 'failed'; })()" \
-            --assert-js "(() => { const f = document.getElementById('mc-brain'); const u = f && f.contentWindow ? String(f.contentWindow.__mcWasmUrl || '') : ''; return u.indexOf('127.0.0.1') >= 0 && u.indexOf('clientmain.wasm') >= 0; })()" \
+            --assert-js "(() => { const f = document.getElementById('mc-brain'); const u = f && f.contentWindow ? String(f.contentWindow.__mcWasmUrl || '') : ''; return u.indexOf('127.0.0.1') >= 0 && u.indexOf('minecraft-java-edition-v26.3.wasm') >= 0; })()" \
             --assert-js "(() => { const c = document.querySelector('canvas'); return !!c && c.width > 0 && c.height > 0; })()"
           cp build/browser_console.log build/smoke_console.log
           cp build/browser_error.txt build/smoke_error.txt
@@ -199,7 +212,7 @@ jobs:
             --assert-js "window.__mc && window.__mc.stage !== 'failed'" \
             --assert-js "window.__mc && window.__mc.javaStage !== 'failed'" \
             --assert-js "(() => { const f = document.getElementById('mc-brain'); const m = f && f.contentWindow && f.contentWindow.__mc; return !!m && m.stage !== 'failed'; })()" \
-            --assert-js "(() => { const f = document.getElementById('mc-brain'); const u = f && f.contentWindow ? String(f.contentWindow.__mcWasmUrl || '') : ''; return u.indexOf('127.0.0.1') >= 0 && u.indexOf('clientmain.wasm') >= 0; })()" \
+            --assert-js "(() => { const f = document.getElementById('mc-brain'); const u = f && f.contentWindow ? String(f.contentWindow.__mcWasmUrl || '') : ''; return u.indexOf('127.0.0.1') >= 0 && u.indexOf('minecraft-java-edition-v26.3.wasm') >= 0; })()" \
             --assert-js "(() => { const f = document.getElementById('mc-brain'); const m = f && f.contentWindow && f.contentWindow.__mc; return !!m && String(m['world-preset'] || '').indexOf('flat') >= 0; })()"
           cp build/browser_console.log build/title_console.log
           cp build/browser_error.txt build/title_error.txt
@@ -219,7 +232,7 @@ jobs:
                        "smoke_soak.png", "title_soak.png"):
               p = Path("build") / name
               data = p.read_bytes()
-              if data[:8] != b"\\x89PNG\\r\\n\\x1a\\n" or len(data) < 24:
+              if data[:8] != bytes([0x89]) + b"PNG\r\n\x1a\n" or len(data) < 24:
                   raise SystemExit(f"{name}: not a valid PNG")
               width, height = struct.unpack(">II", data[16:24])
               if width < 640 or height < 360:

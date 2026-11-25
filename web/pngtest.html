@@ -9,7 +9,7 @@
 const log = (s) => { document.getElementById('log').textContent += s + '\n'; console.log(s); };
 window.__mc = {};
 (async () => {
-  const buf = await (await fetch('client-resources.bin')).arrayBuffer();
+  const buf = await (await fetch('minecraft-java-edition-v26.3-assets.bin')).arrayBuffer();
   const dv = new DataView(buf), len = dv.getUint32(4, true);
   const index = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 8, len)));
   const N = __mcNative, H = __mcHeap;

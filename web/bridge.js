@@ -258,7 +258,7 @@
   }
 
   /* ------------------------------------------------------------------ assets
-     Range-chunked downloader for client-textures.bin / client-resources.bin.
+     Range-chunked downloader for client-textures.bin / minecraft-java-edition-v26.3-assets.bin.
 
      iOS Safari is the reason this exists. A single 32 MB `arrayBuffer()` is
      exactly the shape of request that gets a backgrounded phone tab killed,

@@ -48,7 +48,7 @@ PORT_HEAP=4g scripts/build.sh mcport.M2Main js   # full Bootstrap (~5 min; add
 
 # Pack every vanilla asset (blocks, items, GUI, sounds, music, languages,
 # asset indexes). This reads your own installation and writes only into build/.
-python3 scripts/pack_resources.py            # -> build/web/client-resources.bin (~477 MiB)
+python3 scripts/pack_resources.py            # -> build/web/minecraft-java-edition-v26.3-assets.bin (~477 MiB)
                                              #    build/web/client-textures.bin (~0.4 MiB)
                                              #    build/web/ui/{dirt,mojangstudios}.png
 
@@ -57,7 +57,7 @@ scripts/serve.sh                             # http://localhost:8000/index.html
 ```
 
 The hybrid page needs exactly one download of the large archive: the Java iframe
-loads `client-resources.bin`, while the Rust body loads the tiny
+loads `minecraft-java-edition-v26.3-assets.bin`, while the Rust body loads the tiny
 `client-textures.bin`. `index.html?java=0` skips the Java iframe for renderer-only
 debugging; `body.html` and `play.html` remain standalone.
 

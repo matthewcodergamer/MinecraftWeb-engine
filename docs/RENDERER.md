@@ -177,7 +177,7 @@ a Worker.
 
 The Body stopped inventing colours and now samples the same pixels the Java client does.
 
-- **Texture array, not an atlas.** `client-resources.bin` carries the vanilla block PNGs
+- **Texture array, not an atlas.** `minecraft-java-edition-v26.3-assets.bin` carries the vanilla block PNGs
   from the user's own 26.3 jar; `renderer/index.html` hands each one to
   `upload_texture(layer, bytes)` and Rust decodes it (`png` crate), resamples to 16×16,
   builds a 4-level mip chain and copies it into one `texture_2d_array` of 16 layers. An

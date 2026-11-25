@@ -3,7 +3,7 @@
 from pathlib import Path
 import sys
 
-path = Path(sys.argv[1] if len(sys.argv) > 1 else "build/web/clientmain.wasm-runtime.js")
+path = Path(sys.argv[1] if len(sys.argv) > 1 else "build/web/minecraft-java-edition-v26.3.wasm-runtime.js")
 source = path.read_text(encoding="utf-8")
 
 

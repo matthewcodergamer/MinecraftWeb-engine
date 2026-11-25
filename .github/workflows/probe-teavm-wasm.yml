@@ -89,7 +89,7 @@ jobs:
           BINARYEN_BIN="/tmp/binaryen-version_133/bin/wasm-opt"
           test -x "$BINARYEN_BIN"
           "$BINARYEN_BIN" --version
-          if "$BINARYEN_BIN" --enable-gc build/web/clientmain.wasm -Oz --converge --outlining --code-folding --directize --one-caller-inline-max-function-size=100 -o build/web/clientmain.optimized.wasm; then
+          if "$BINARYEN_BIN" --enable-gc build/web/minecraft-java-edition-v26.3.wasm -Oz --converge --outlining --code-folding --directize --one-caller-inline-max-function-size=100 -o build/web/clientmain.optimized.wasm; then
             python3 - <<'PY'
           from pathlib import Path
 
@@ -123,7 +123,7 @@ jobs:
                   pos = section_end
               return len(data), largest
 
-          original = Path("build/web/clientmain.wasm")
+          original = Path("build/web/minecraft-java-edition-v26.3.wasm")
           candidate = Path("build/web/clientmain.optimized.wasm")
           try:
               size, (largest, index) = largest_function(candidate)
@@ -145,7 +145,7 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path("build/web/clientmain.wasm")
+          path = Path("build/web/minecraft-java-edition-v26.3.wasm")
           data = path.read_bytes()
 
           def uleb(buf, pos):
@@ -202,7 +202,7 @@ jobs:
                           data = archive.read(resource)
                   except (KeyError, OSError):
                       continue
-                  target = Path("build/web/clientmain.wasm-runtime.js")
+                  target = Path("build/web/minecraft-java-edition-v26.3.wasm-runtime.js")
                   target.write_bytes(data)
                   print(f"Copied {resource} from {jar}: {len(data):,} bytes -> {target}")
                   raise SystemExit(0)
@@ -210,7 +210,7 @@ jobs:
           PY
 
       - name: Apply Wasm-GC WeakReference compatibility fallback
-        run: python3 scripts/patch_teavm_wasm_runtime.py build/web/clientmain.wasm-runtime.js
+        run: python3 scripts/patch_teavm_wasm_runtime.py build/web/minecraft-java-edition-v26.3.wasm-runtime.js
 
       - name: Stage browser page and vanilla resources
         env:
@@ -218,8 +218,8 @@ jobs:
           MC_VERSION: "26.3"
         run: |
           cp -R web/. build/web/
-          python3 scripts/pack_resources.py --mc-dir "$MC_DIR" --version "$MC_VERSION" --jar-only --out build/web/client-resources.bin
-          test -s build/web/client-resources.bin
+          python3 scripts/pack_resources.py --mc-dir "$MC_DIR" --version "$MC_VERSION" --jar-only --out build/web/minecraft-java-edition-v26.3-assets.bin
+          test -s build/web/minecraft-java-edition-v26.3-assets.bin
           test -s build/web/client-textures.bin
 
       - name: Build Rust WebGPU Body
@@ -236,11 +236,11 @@ jobs:
 
       - name: Verify TeaVM WebAssembly outputs
         run: |
-          test -s build/web/clientmain.wasm
-          test -s build/web/clientmain.wasm-runtime.js
+          test -s build/web/minecraft-java-edition-v26.3.wasm
+          test -s build/web/minecraft-java-edition-v26.3.wasm-runtime.js
           python3 - <<'PY'
           from pathlib import Path
-          for name in ("clientmain.wasm", "clientmain.wasm-runtime.js"):
+          for name in ("minecraft-java-edition-v26.3.wasm", "minecraft-java-edition-v26.3.wasm-runtime.js"):
               p = Path("build/web") / name
               print(f"{name}: {p.stat().st_size:,} bytes")
           PY
@@ -264,7 +264,7 @@ jobs:
         with:
           name: teavm-wasm-gc-clientmain
           path: |
-            build/web/clientmain.wasm
-            build/web/clientmain.wasm-runtime.js
+            build/web/minecraft-java-edition-v26.3.wasm
+            build/web/minecraft-java-edition-v26.3.wasm-runtime.js
           if-no-files-found: error
           retention-days: 7

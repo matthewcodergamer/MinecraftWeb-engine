@@ -23,6 +23,7 @@ import net.minecraft.world.level.levelgen.WorldDimensions;
 import net.minecraft.world.level.levelgen.presets.WorldPreset;
 import net.minecraft.world.level.levelgen.presets.WorldPresets;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.core.BlockPos;
@@ -89,6 +90,10 @@ public final class ChunkBridge {
     private static boolean worldRequested;
     private static boolean freshWorld;
     private static boolean rulesApplied;
+    private static boolean audioReported;
+    /** QA loadout split from {@code __mcWorldRequested.hotbar}, or null until read. */
+    private static String[] hotbarItems;
+    private static int hotbarTries;
     /** Wall-clock time the title screen was first observed, or 0 while it is absent. */
     private static long titleSeenAt;
     private static long lastScan;
@@ -119,6 +124,9 @@ public final class ChunkBridge {
         lastPresetLevel = null;
         freshWorld = false;
         rulesApplied = false;
+        audioReported = false;
+        hotbarItems = null;
+        hotbarTries = 0;
         lastScan = 0L;
         titleSeenAt = 0L;
         firstLevelCreatedLogged = false;
@@ -141,6 +149,15 @@ public final class ChunkBridge {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null) {
             return;
+        }
+        if (!audioReported) {
+            audioReported = true;
+            try {
+                BrowserRuntime.report("audio-backend",
+                        minecraft.getSoundManager() == null ? "missing" : "noop");
+            } catch (Throwable t) {
+                BrowserRuntime.report("audio-backend", "error");
+            }
         }
         reportBootState(minecraft);
         clearBootOverlay(minecraft);
@@ -186,6 +203,7 @@ public final class ChunkBridge {
             rulesApplied = true;
             applyGameRules(minecraft);
         }
+        applyHotbar(minecraft);
 
         // Loading a different world (or returning to the title screen and picking
         // another save) must not leave the previous world's geometry in the Body.
@@ -581,6 +599,58 @@ public final class ChunkBridge {
     }
 
     /**
+     * Gives the optional host-provided QA loadout to the joining player so the
+     * hotbar exercises the real 3D item renderer. Only the smoke/QA world sets
+     * {@code __mcWorldRequested.hotbar}; normal worlds never enter this path.
+     * The server owns the inventory, so the items arrive through the ordinary
+     * {@code /give} command and stay in sync with the integrated server.
+     */
+    private static void applyHotbar(Minecraft minecraft) {
+        if (!freshWorld || minecraft.player == null || minecraft.player.connection == null) {
+            return;
+        }
+        if (hotbarItems == null) {
+            String raw = settingHotbar();
+            hotbarItems = raw.isEmpty() ? new String[0] : raw.split(",");
+            if (hotbarItems.length > 0) {
+                // Keep "Gave 1 [..] to Player" out of the screenshot.
+                command(minecraft, "gamerule sendCommandFeedback false");
+            }
+        }
+        if (hotbarItems.length == 0 || hotbarTries >= 6) {
+            return;
+        }
+        boolean missing = false;
+        for (int i = 0; i < hotbarItems.length && i < 9; i++) {
+            String id = hotbarItems[i].trim();
+            if (!id.isEmpty() && !itemInSlot(minecraft, i, id)) {
+                missing = true;
+                break;
+            }
+        }
+        if (!missing) {
+            return;
+        }
+        hotbarTries++;
+        for (int i = 0; i < hotbarItems.length && i < 9; i++) {
+            String id = hotbarItems[i].trim();
+            if (!id.isEmpty() && !itemInSlot(minecraft, i, id)) {
+                command(minecraft, "give @s " + id);
+            }
+        }
+    }
+
+    private static boolean itemInSlot(Minecraft minecraft, int slot, String id) {
+        try {
+            ItemStack stack = minecraft.player.getInventory().getItem(slot);
+            return !stack.isEmpty()
+                    && BuiltInRegistries.ITEM.getKey(stack.getItem()).toString().equals(id);
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
      * Reports the preset of the world the integrated server actually created.
      * {@code ClientChunkCache} does not expose a generator, so read the
      * authoritative {@link ServerLevel}. This runs once per level and lets the
@@ -700,6 +770,10 @@ public final class ChunkBridge {
 
     @JSBody(script = "var w=globalThis.__mcWorldRequested||{}; return String(w.type==null?'normal':w.type);")
     private static native String settingType();
+
+    @JSBody(script = "var w=globalThis.__mcWorldRequested||{};"
+            + " return Array.isArray(w.hotbar) ? w.hotbar.join(',') : '';")
+    private static native String settingHotbar();
 
     @JSBody(script = "var w=globalThis.__mcWorldRequested||{}; return !!w.commands;")
     private static native boolean settingCommands();

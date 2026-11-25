@@ -1,5 +1,7 @@
 package net.minecraft.client.sounds;
 
+import mcport.rt.BrowserRuntime;
+import net.minecraft.client.resources.sounds.SoundInstance;
 import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.util.profiling.ProfilerFiller;
 
@@ -12,6 +14,8 @@ import net.minecraft.util.profiling.ProfilerFiller;
  * rest of the resource reload can complete and the title screen can be built.
  */
 public final class BrowserSoundManagerPatches {
+    private static boolean playReported;
+
     private BrowserSoundManagerPatches() {
     }
 
@@ -40,5 +44,19 @@ public final class BrowserSoundManagerPatches {
     /** BODY target for SoundEngine.reload – keep engine silent. */
     public static void reload(SoundEngine engine) {
         // no-op
+    }
+
+    /**
+     * BODY target for SoundEngine.play. The browser has no OpenAL device, but
+     * callers (music, subtitles, UI clicks) should still see a successful
+     * start instead of NOT_STARTED, which makes the client retry or treat the
+     * sound as missing. Nothing is mixed or played: this is the silent backend.
+     */
+    public static SoundEngine.PlayResult play(SoundEngine engine, SoundInstance sound) {
+        if (!playReported) {
+            playReported = true;
+            BrowserRuntime.report("audio-backend", "noop");
+        }
+        return SoundEngine.PlayResult.STARTED_SILENTLY;
     }
 }
