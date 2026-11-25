@@ -471,13 +471,44 @@ def main():
             try { return c.toDataURL('image/png'); } catch (e) { return ''; }
         })()"""
 
+        top_canvas_js = """(() => {
+            const c = document.getElementById('mc-canvas');
+            if (!c || !c.width || !c.height) return '';
+            try { return c.toDataURL('image/png'); } catch (e) { return ''; }
+        })()"""
+
+        # Page.captureScreenshot omits accelerated canvas layers in this headless
+        # configuration (the image comes back transparent), but canvas.toDataURL
+        # returns their pixels. Draw the captured DOM (HUD/buttons) over the Rust
+        # canvas to get one truthful image of the renderer-only path.
+        composite_js = """(async () => {
+            const src = window.__mcTopShot || '';
+            if (!src) return '';
+            const top = new Image();
+            top.src = src;
+            try { await top.decode(); } catch (e) { return ''; }
+            const c = document.getElementById('mc-canvas');
+            if (!c || !c.width || !c.height) return '';
+            const out = document.createElement('canvas');
+            out.width = c.width;
+            out.height = c.height;
+            const ctx = out.getContext('2d');
+            if (!ctx) return '';
+            try {
+                ctx.drawImage(c, 0, 0, out.width, out.height);
+                ctx.drawImage(top, 0, 0, out.width, out.height);
+                return out.toDataURL('image/png');
+            } catch (e) { return ''; }
+        })()"""
+
         def capture(path, timeout_sec=60):
             """Save the best available pixels for the current shell mode.
 
             In java-ui mode the top page contains only the Java iframe, and
             Page.captureScreenshot can come back fully transparent. Capture the
             Java canvas itself in that case so title/world screenshots are real
-            evidence instead of empty 4 KB PNGs.
+            evidence instead of empty 4 KB PNGs. The renderer-only shell has the
+            Rust canvas in the top page, so composite it with the DOM overlay.
             """
             top_png = b""
             try:
@@ -498,6 +529,35 @@ def main():
                     frame_png = base64.b64decode(url.split(",", 1)[1])
             except Exception:
                 pass
+            if not java_ui:
+                try:
+                    url = js_value(top_canvas_js, timeout_sec=min(30, timeout_sec))
+                    canvas_png = (base64.b64decode(url.split(",", 1)[1])
+                                  if isinstance(url, str) and url.startswith("data:image/png;base64,")
+                                  else b"")
+                except Exception:
+                    canvas_png = b""
+                if canvas_png and png_has_visible_pixels(canvas_png):
+                    if top_png:
+                        try:
+                            ws.call("Runtime.evaluate", {
+                                "expression": "window.__mcTopShot = 'data:image/png;base64,"
+                                              + base64.b64encode(top_png).decode() + "'",
+                                "returnByValue": True}, pump=pump, timeout_sec=20)
+                            r = ws.call("Runtime.evaluate", {
+                                "expression": composite_js, "returnByValue": True,
+                                "awaitPromise": True}, pump=pump, timeout_sec=60)
+                            composed = r.get("result", {}).get("result", {}).get("value")
+                            if (isinstance(composed, str)
+                                    and composed.startswith("data:image/png;base64,")):
+                                candidate = base64.b64decode(composed.split(",", 1)[1])
+                                if png_has_visible_pixels(candidate):
+                                    top_png = candidate
+                        except Exception as exc:
+                            print("canvas composite failed: {}: {}".format(
+                                type(exc).__name__, exc), flush=True)
+                    else:
+                        top_png = canvas_png
             top_ok = bool(top_png) and png_has_visible_pixels(top_png)
             frame_ok = bool(frame_png) and png_has_visible_pixels(frame_png)
             if frame_ok and (java_ui or not top_ok):
