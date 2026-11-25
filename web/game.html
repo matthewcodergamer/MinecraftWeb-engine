@@ -467,9 +467,16 @@
     box-shadow: 0 0 0 1px rgba(0,0,0,.8), inset 0 0 0 1px rgba(255,255,255,.05);
   }
   #progress-fill {
+    position: relative; overflow: hidden;
     height: 100%; width: 0%; background: #80ff20; transition: width .18s linear;
     box-shadow: 0 0 8px rgba(128,255,32,.35);
   }
+  #progress-fill:after {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.55), transparent);
+    transform: translateX(-110%); animation: loadShine 1.35s linear infinite;
+  }
+  @keyframes loadShine { to { transform: translateX(110%); } }
   #load-detail {
     margin-top: 8px; color: rgba(220,235,220,.6); text-align: center;
     font: 11px/1.45 ui-monospace, Menlo, monospace;
@@ -1253,6 +1260,7 @@
 
   <div id="mc-toast"></div>
 
+  <script>window.__mcBridgeHost = true;</script>
   <script src="bridge.js"></script>
   <script src="input.js"></script>
   <script type="module">
@@ -1264,6 +1272,7 @@
     const loading = $('loading');
     const fill = $('progress-fill');
     const label = $('progress-text');
+    const detail = $('load-detail');
     const errorBox = $('load-error');
     const errorActions = $('error-actions');
     const hint = $('hint');
@@ -1339,6 +1348,9 @@
       menuOpen: HTML_UI,
       booted: false,
       mode: 'survival',
+      bootStartedAt: performance.now(),
+      lastStatusAt: performance.now(),
+      lastBrainStatusAt: 0,
     };
     if (!HTML_UI) {
       menu.classList.remove('open');
@@ -1458,7 +1470,10 @@
 
     /* -------------------------------------------------------------- progress */
     function status(text) {
-      if (text) label.textContent = text;
+      if (text) {
+        label.textContent = text;
+        state.lastStatusAt = performance.now();
+      }
       if (text && text !== lastHostStage) {
         lastHostStage = text;
         postToHost('stage', { text, progress: state.javaBoot });
@@ -1474,9 +1489,28 @@
       const pct = Math.round(value * 100);
       if (pct !== lastHostProgress) {
         lastHostProgress = pct;
-        postToHost('progress', { value: pct, stage: state.javaStage });
+        postToHost('progress', { value: pct, stage: state.javaStage, status: label.textContent });
       }
     }
+
+    /* A stalled-looking progress bar is usually the browser compiling a
+       112 MiB WebAssembly module, not a crash. Keep a real clock and a plain
+       explanation on screen, and republish it to the Pages launcher. */
+    setInterval(() => {
+      if (state.done || state.failed || state.javaUiLive) return;
+      const now = performance.now();
+      const elapsed = Math.max(0, Math.round((now - state.bootStartedAt) / 1000));
+      if (detail) {
+        detail.textContent = 'Elapsed ' + elapsed + 's. The browser is downloading, compiling WebAssembly or building the Java client — this is not frozen.';
+      }
+      if ((now - state.lastStatusAt) / 1000 < 2) return;
+      const base = String(label.textContent || 'Starting the browser client')
+        .replace(/\s+—\s+still working \(\d+s\)$/, '');
+      const text = base + ' — still working (' + elapsed + 's)';
+      label.textContent = text;
+      state.lastStatusAt = now;
+      postToHost('stage', { text, progress: state.javaBoot });
+    }, 1000);
 
     function rustSectionCount() {
       const module = mcBridge && mcBridge.state && mcBridge.state.module;
@@ -1857,6 +1891,18 @@
         // The Java brain received the seed / game mode and started generating.
         state.worldAck = true;
         if (!state.done && !state.failed) status('Java brain connected — generating world…');
+      } else if (data.type === 'progress') {
+        // Real byte progress from play.html's fetchAsset(). This is what makes
+        // the launcher bar move during the 64 MiB asset download instead of
+        // sitting at a milestone value for minutes.
+        const value = Math.max(0, Math.min(1, Number(data.value) || 0));
+        state.javaBoot = Math.max(state.javaBoot, value);
+        if (data.status && performance.now() - state.lastBrainStatusAt > 400) {
+          state.lastBrainStatusAt = performance.now();
+          label.textContent = String(data.status);
+          state.lastStatusAt = performance.now();
+        }
+        progress();
       } else if (data.type === 'ready') {
         state.javaReady = true;
         state.java = 1;
@@ -3252,7 +3298,7 @@
             // play.html prefers the WebAssembly client and only downloads the
             // split JavaScript bundle when WASM is unavailable. Forward the
             // explicit engine switches so QA can still force either backend.
-            let brainQuery = 'play.html?embedded=1&stats=0&v=20261125c';
+            let brainQuery = 'play.html?embedded=1&stats=0&v=20261125d';
             // In the normal flow Java renders the visible canvas. The Rust body
             // is only an opaque boot backdrop, so do not pack/post its world.
             if (!HTML_UI && params.get('java-primary') !== '0') brainQuery += '&java-primary=1';

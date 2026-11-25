@@ -88,8 +88,12 @@ const HF_BASE = 'https://matthewcodergamer-minecraft-browser.static.hf.space/';
 // Bumped on every deployed client build. The Space CDN caches the module and
 // its runtime for a long time, so an unversioned URL can keep serving an old
 // wasm build after a deployment.
-const MC_BUILD = '20261125b';
+const MC_BUILD = '20261125d';
+// Cache Storage bucket for the two large client artifacts. Bumping MC_BUILD
+// changes the bucket, so a new client never runs against stale bytes.
+const CLIENT_CACHE = 'mc-client-' + MC_BUILD;
 if (embedded) document.documentElement.classList.add('embedded');
+if (window.mcBridge && mcBridge.configureAssetCache) mcBridge.configureAssetCache(CLIENT_CACHE);
 
 // World handshake with the page that owns the menus. Java's ChunkBridge reads
 // these globals when the title screen is idle, so the host can apply the name,
@@ -206,7 +210,21 @@ window.addEventListener('unhandledrejection', (e) => {
   fail('REJECTION: ' + (e.reason && e.reason.stack || e.reason));
 });
 
-async function fetchWithProgress(url, label, from, to) {
+/* The two artifacts download in parallel on desktop. Weight their progress by
+   real size so the bar follows total bytes instead of jumping backwards when
+   the smaller archive finishes first. */
+const DL_WEIGHT_ASSETS = 64.7;
+const DL_WEIGHT_WASM = 111.9;
+const downloadState = { assets: 0, wasm: 0 };
+function downloadBar(kind, fraction) {
+  downloadState[kind] = Math.max(downloadState[kind] || 0, Math.max(0, Math.min(1, fraction || 0)));
+  const total = DL_WEIGHT_ASSETS + DL_WEIGHT_WASM;
+  const combined = (downloadState.assets * DL_WEIGHT_ASSETS
+    + downloadState.wasm * DL_WEIGHT_WASM) / total;
+  bar(0.95 * combined);
+}
+
+async function fetchWithProgress(url, label, from, to, useCache) {
   // Shared with the host page: ./-relative, range-chunked, resumable. iOS
   // Safari cannot survive a single 31 MB arrayBuffer() when backgrounded.
   // Absolute URLs are used by the GitHub Pages shell, which keeps the large
@@ -214,10 +232,19 @@ async function fetchWithProgress(url, label, from, to) {
   const target = /^https?:\/\//i.test(url) ? url : './' + url;
   return mcBridge.fetchAsset(target, {
     retries: 2,
+    cacheName: useCache ? CLIENT_CACHE : null,
+    contentType: 'application/octet-stream',
     onProgress: (fraction, got, total) => {
       const mb = (n) => (n / 1048576).toFixed(0);
       msg(label + ' ' + mb(got) + ' / ' + mb(total || got) + ' MiB');
-      bar(from + (to - from) * (fraction || 0));
+      downloadBar('assets', fraction);
+    },
+    onCacheHit: (bytes) => {
+      msg(label + ' — loaded from this device (' + (bytes / 1048576).toFixed(0) + ' MiB, no download)');
+      downloadBar('assets', 1);
+    },
+    onCached: () => {
+      msg(label + ' — saved on this device for the next visit');
     },
   });
 }
@@ -297,6 +324,40 @@ async function downloadPart(url, expected, onBytes) {
   return chunks;
 }
 
+/* Download the wasm ourselves so the progress bar follows real bytes, then
+   compile it from a Blob URL. Cache Storage keeps the finished bytes for the
+   next visit; the HF signed CDN URL changes every time, so the HTTP cache
+   cannot do that on its own. */
+async function loadWasmModule(url, options) {
+  const absolute = new URL(url, location.href).href;
+  const mb = (n) => (n / 1048576).toFixed(0);
+  const buffer = await mcBridge.fetchAsset(absolute, {
+    retries: 1,
+    cacheName: CLIENT_CACHE,
+    contentType: 'application/wasm',
+    onProgress: (fraction, got, total) => {
+      msg('Downloading WebAssembly client ' + mb(got) + ' / ' + mb(total || got) + ' MiB');
+      downloadBar('wasm', fraction);
+    },
+    onCacheHit: (bytes) => {
+      msg('WebAssembly client loaded from this device (' + mb(bytes) + ' MiB, no download)');
+      downloadBar('wasm', 1);
+    },
+    onCached: () => msg('WebAssembly client saved on this device for the next visit'),
+  });
+  const blobUrl = URL.createObjectURL(new Blob([buffer], { type: 'application/wasm' }));
+  try {
+    msg('Compiling WebAssembly client…');
+    return await TeaVM.wasmGC.load(blobUrl, options);
+  } catch (blobError) {
+    // A browser that refuses blob: streaming still gets the real module.
+    console.warn('blob wasm load failed; loading the URL directly', blobError);
+    return await TeaVM.wasmGC.load(absolute, options);
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+  }
+}
+
 async function loadWasmBrain() {
   // The Hugging Face Space serves the module next to this page. The GitHub
   // Pages shell intentionally keeps only the lightweight HTML/JS host and
@@ -339,12 +400,12 @@ async function loadWasmBrain() {
   };
   let teavm;
   try {
-    teavm = await TeaVM.wasmGC.load('minecraft-java-edition-v26.3.wasm?v=' + MC_BUILD, options);
+    teavm = await loadWasmModule('minecraft-java-edition-v26.3.wasm?v=' + MC_BUILD, options);
     window.__mcWasmUrl = new URL('minecraft-java-edition-v26.3.wasm?v=' + MC_BUILD, location.href).href;
   } catch (localError) {
     if (mustUseLocalBuild || location.hostname.endsWith('.hf.space')) throw localError;
     console.warn('local WASM module unavailable; loading the canonical module', localError);
-    teavm = await TeaVM.wasmGC.load(HF_BASE + 'minecraft-java-edition-v26.3.wasm?v=' + MC_BUILD, options);
+    teavm = await loadWasmModule(HF_BASE + 'minecraft-java-edition-v26.3.wasm?v=' + MC_BUILD, options);
     window.__mcWasmUrl = HF_BASE + 'minecraft-java-edition-v26.3.wasm?v=' + MC_BUILD;
   }
   window.__mcTeaVM = teavm;
@@ -487,7 +548,7 @@ async function loadResources() {
   let lastError = null;
   for (const source of sources) {
     try {
-      buf = await fetchWithProgress(source, 'Loading game resources', 0, 0.6);
+      buf = await fetchWithProgress(source, 'Loading game resources', 0, 0.6, true);
       break;
     } catch (error) {
       lastError = error;

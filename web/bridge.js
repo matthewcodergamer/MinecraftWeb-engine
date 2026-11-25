@@ -10,7 +10,11 @@
 //     is injected into the SDL shim so the real Java input/physics path runs.
 'use strict';
 (function () {
-  const embedded = window.parent && window.parent !== window;
+  // A host page (game.html) has its own #mc-brain iframe. It may itself be
+  // embedded in the website's launcher, but it is still the host for that
+  // iframe and must route input to Java, not post it to the outer page.
+  const hostPage = window.__mcBridgeHost === true || !!document.getElementById('mc-brain');
+  const embedded = !hostPage && window.parent && window.parent !== window;
   const params = new URLSearchParams(location.search);
   const rust = { module: null };
   const pending = [];
@@ -244,11 +248,12 @@
       injectInput(kind, payload);
       return;
     }
-    // Hybrid parent: forward to the off-screen Java brain iframe. If Java has
-    // not produced a section (or the iframe is the renderer-only placeholder),
-    // drive the Rust fallback so mobile/desktop controls still work.
+    // Hybrid parent: forward to the Java brain iframe. `javaReady` is emitted
+    // when the client finishes loading, so title-screen clicks and touch
+    // controls reach Java even in Java-primary mode, where no Rust sections
+    // are streamed. If Java never becomes ready, the Rust fallback still runs.
     const iframe = document.getElementById('mc-brain');
-    const javaAlive = !!(iframe && iframe.contentWindow && state.javaReady && state.sections > 0);
+    const javaAlive = !!(iframe && iframe.contentWindow && state.javaReady);
     if (javaAlive) {
       iframe.contentWindow.postMessage({ source: 'mc-host', type: 'input', kind, payload }, '*');
       return;
@@ -443,19 +448,112 @@
     return out.buffer;
   }
 
+  /* ---------------------------------------------------------- artifact cache
+   * The WebAssembly client is ~112 MiB and the resource archive ~62 MiB. The
+   * Space redirects every request to a signed CDN URL, so the normal HTTP
+   * cache cannot reuse the bytes between visits. Cache Storage can: store the
+   * finished artifacts under a build-specific cache name and serve them
+   * instantly next time. A failed or over-quota cache write is never fatal.
+   */
+  const ASSET_CACHE_PREFIX = 'mc-client-';
+  let assetCacheName = null;
+  let assetCachePruned = false;
+
+  async function cacheAvailable() {
+    return typeof caches !== 'undefined' && typeof caches.open === 'function';
+  }
+
+  function configureAssetCache(name) {
+    if (!name) return;
+    const next = ASSET_CACHE_PREFIX + String(name).replace(/[^a-zA-Z0-9._-]/g, '');
+    if (next === assetCacheName) return;
+    assetCacheName = next;
+    if (navigator.storage && navigator.storage.persist) {
+      navigator.storage.persist().catch(() => { /* best effort */ });
+    }
+    if (assetCachePruned) return;
+    assetCachePruned = true;
+    (async () => {
+      if (!(await cacheAvailable())) return;
+      try {
+        const keys = await caches.keys();
+        await Promise.all(keys
+          .filter((key) => key.indexOf(ASSET_CACHE_PREFIX) === 0 && key !== assetCacheName)
+          .map((key) => caches.delete(key)));
+      } catch (error) {
+        console.warn('asset cache prune skipped', error);
+      }
+    })();
+  }
+
+  async function cacheGet(href) {
+    if (!assetCacheName || !(await cacheAvailable())) return null;
+    try {
+      const cache = await caches.open(assetCacheName);
+      const hit = await cache.match(href);
+      if (!hit) return null;
+      return await hit.arrayBuffer();
+    } catch (error) {
+      console.warn('asset cache read skipped', error);
+      return null;
+    }
+  }
+
+  async function cachePut(href, buffer, contentType) {
+    if (!assetCacheName || !(await cacheAvailable())) return false;
+    try {
+      if (navigator.storage && navigator.storage.estimate) {
+        const estimate = await navigator.storage.estimate();
+        const free = (estimate.quota || 0) - (estimate.usage || 0);
+        // Leave headroom for the running client, the GPU driver and the
+        // browser's own storage. A full disk is worse than a second download.
+        if (free > 0 && free < buffer.byteLength + 128 * 1024 * 1024) return false;
+      }
+      const cache = await caches.open(assetCacheName);
+      await cache.put(href, new Response(buffer, {
+        headers: {
+          'content-type': contentType || 'application/octet-stream',
+          'content-length': String(buffer.byteLength),
+        },
+      }));
+      return true;
+    } catch (error) {
+      console.warn('asset cache write skipped', error);
+      return false;
+    }
+  }
+
   /**
    * Fetch a binary asset relative to the page (`./name.bin`), with resume,
    * retries and progress. `onProgress(fraction, loaded, total)`.
+   *
+   * Pass `cacheName` to keep the finished bytes in Cache Storage. A cache hit
+   * reports 100% immediately and calls `onCacheHit(bytes)`.
    */
   async function fetchAsset(url, options) {
     const opts = options || {};
     const href = new URL(url, document.baseURI).href;
     const attempts = opts.retries == null ? 2 : opts.retries;
+    const useCache = !!opts.cacheName;
+    if (useCache) configureAssetCache(opts.cacheName);
+    if (useCache) {
+      const cached = await cacheGet(href);
+      if (cached) {
+        console.info('fetchAsset cache hit', { url: href, bytes: cached.byteLength });
+        if (opts.onCacheHit) opts.onCacheHit(cached.byteLength);
+        if (opts.onProgress) opts.onProgress(1, cached.byteLength, cached.byteLength);
+        return cached;
+      }
+    }
     let lastError = null;
     for (let attempt = 0; attempt <= attempts; attempt++) {
       try {
         const buffer = await rangeDownload(href, opts.onProgress, opts.chunkSize);
         console.info('fetchAsset ok', { url: href, bytes: buffer.byteLength });
+        if (useCache) {
+          const stored = await cachePut(href, buffer, opts.contentType);
+          if (stored && opts.onCached) opts.onCached(buffer.byteLength);
+        }
         return buffer;
       } catch (error) {
         lastError = error;
@@ -539,6 +637,7 @@
     javaError,
     bodyReady,
     fetchAsset,
+    configureAssetCache,
     state,
   };
   window.__mcBridge = window.mcBridge;
