@@ -95,6 +95,16 @@ jobs:
           print(f"asset archive: {path.stat().st_size:,} bytes, {len(index):,} entries")
           PY
 
+      - name: Restore the real title-screen panoramas
+        run: |
+          set -euo pipefail
+          # The live archive preserves sounds/languages/toasts, but the 26.3 jar
+          # stores 1x1 grey placeholders for the six panorama faces. Replace
+          # only those entries with the committed 1024x1024 PNGs.
+          python3 scripts/patch_panorama.py \
+            deploy/resources/minecraft-java-edition-v26.3-assets.bin \
+            web/ui/panorama
+
       - name: Publish to Hugging Face
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
