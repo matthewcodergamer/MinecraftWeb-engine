@@ -71,6 +71,8 @@ public final class ChunkBridge {
     private static final Int32Array IDS = Int32Array.create(4096);
     /** Same length as IDS: baked `sky << 4 | block` for one section. */
     private static final Uint8Array LIGHT = Uint8Array.create(4096);
+    /** All-air section used to clear a mined-out mesh without allocating 16 KB. */
+    private static final Int32Array EMPTY = Int32Array.create(4096);
 
     private static boolean installed;
     private static boolean firstPumpLogged;
@@ -87,6 +89,10 @@ public final class ChunkBridge {
     private static int lowFpsStreak;
     private static boolean firstSectionLogged;
     private static boolean ready;
+    private static boolean clientReady;
+    private static boolean javaPrimaryValue;
+    private static boolean canvasOwned;
+    private static long frameCounter;
     private static boolean worldRequested;
     private static boolean freshWorld;
     private static boolean rulesApplied;
@@ -138,6 +144,7 @@ public final class ChunkBridge {
         lastAdaptiveAt = 0L;
         lowFpsStreak = 0;
         playerPosReports = 0;
+        frameCounter = 0;
         emitReset();
     }
 
@@ -164,6 +171,25 @@ public final class ChunkBridge {
         applyPerformanceDefaults(minecraft);
         adaptQuality(minecraft);
         maybeStartWorld(minecraft);
+        frameCounter++;
+        // Java's own renderer is ready for input as soon as the client has
+        // finished loading, not only after the first chunk is packed for the
+        // Rust body. Emitting this separately keeps title-screen clicks and
+        // touch controls working in Java-primary mode, where no sections are
+        // streamed at all.
+        if (!clientReady && minecraft.isGameLoadFinished()) {
+            clientReady = true;
+            emitReady();
+        }
+        // Once the real Java renderer owns the canvas, the Rust body is paused
+        // and the host ignores its world stream. Keep the cheap diagnostics and
+        // adaptive quality above, but stop packing 4096-block sections and
+        // cloning player state across the iframe every 500 ms. The same applies
+        // from the start in Java-primary mode: the opaque browser boot screen
+        // hides the Rust backdrop, so its geometry would be invisible work.
+        if (javaPrimary() || javaOwnsCanvas()) {
+            return;
+        }
         if (minecraft.level == null || minecraft.player == null) {
             if (minecraft.level != null && !firstLevelCreatedLogged) {
                 firstLevelCreatedLogged = true;
@@ -187,14 +213,19 @@ public final class ChunkBridge {
             }
         }
 
-        playerPosReports++;
-        if (playerPosReports % 20 == 1) {
-            BrowserRuntime.report("player-pos",
-                    minecraft.player.getX() + "," + minecraft.player.getY() + "," + minecraft.player.getZ()
-                            + "," + minecraft.player.getYRot() + "," + minecraft.player.getXRot());
-            BlockPos below = minecraft.player.blockPosition().below();
-            BrowserRuntime.report("block-below",
-                    minecraft.level.getBlockState(below) + "@" + below.getX() + "," + below.getY() + "," + below.getZ());
+        // The Rust body is a boot backdrop, not the game camera. Half-rate
+        // player updates still look smooth, and halving the postMessage /
+        // string traffic also halves the garbage the browser has to collect.
+        if ((frameCounter & 1) == 0) {
+            playerPosReports++;
+            if (playerPosReports % 20 == 1) {
+                BrowserRuntime.report("player-pos",
+                        minecraft.player.getX() + "," + minecraft.player.getY() + "," + minecraft.player.getZ()
+                                + "," + minecraft.player.getYRot() + "," + minecraft.player.getXRot());
+                BlockPos below = minecraft.player.blockPosition().below();
+                BrowserRuntime.report("block-below",
+                        minecraft.level.getBlockState(below) + "@" + below.getX() + "," + below.getY() + "," + below.getZ());
+            }
         }
 
         // Options that are not part of LevelSettings/WorldOptions are applied
@@ -215,12 +246,17 @@ public final class ChunkBridge {
         }
 
         // The Rust camera follows Java's collision/gravity result. Send the eye
-        // position every frame; sections are scanned on the slower timer.
-        sendPlayer(minecraft.player.getX(), minecraft.player.getEyeY(), minecraft.player.getZ(),
-                minecraft.player.getYRot(), minecraft.player.getXRot());
-        // Keep the renderer-only sky in lockstep with Java's world clock.
-        double day = Math.floorMod(minecraft.level.getOverworldClockTime(), 24000L) / 24000.0;
-        emitTime(day);
+        // position at half rate; sections are scanned on the slower timer.
+        if ((frameCounter & 1) == 0) {
+            sendPlayer(minecraft.player.getX(), minecraft.player.getEyeY(), minecraft.player.getZ(),
+                    minecraft.player.getYRot(), minecraft.player.getXRot());
+        }
+        // Keep the renderer-only sky in lockstep with Java's world clock. The
+        // sky changes slowly; ten updates a second are plenty.
+        if ((frameCounter % 10) == 0) {
+            double day = Math.floorMod(minecraft.level.getOverworldClockTime(), 24000L) / 24000.0;
+            emitTime(day);
+        }
 
         long now = System.currentTimeMillis();
         if (now - lastScan < SCAN_INTERVAL_MS) {
@@ -250,6 +286,15 @@ public final class ChunkBridge {
      * "still reloading" from "reload finished but an onboarding screen is up".
      */
     private static void reportBootState(Minecraft minecraft) {
+        long now = System.currentTimeMillis();
+        // Build the diagnostic string at most four times a second. This used
+        // to assemble class names, server state and widget bounds on every
+        // rendered frame, then throw the result away; on a slow browser that
+        // string work was a measurable part of the frame budget.
+        if (now - lastBootStateAt < 250) {
+            return;
+        }
+        lastBootStateAt = now;
         Object overlay = minecraft.gui.overlay();
         Object screen = minecraft.gui.screen();
         // Screen widgets can change without the boot state changing (tab switch,
@@ -265,15 +310,10 @@ public final class ChunkBridge {
                 + " server=" + describeServer(minecraft)
                 + " conn=" + (minecraft.getConnection() != null)
                 + " sent=" + SENT.size();
-        long now = System.currentTimeMillis();
-        // Publish on change at most four times a second. The old every-fifth-
-        // frame write kept a fresh string in window.__mc and in the console
-        // forever, which costs memory in a long browser session.
-        if (value.equals(lastBootState) || now - lastBootStateAt < 250) {
+        if (value.equals(lastBootState)) {
             return;
         }
         lastBootState = value;
-        lastBootStateAt = now;
         BrowserRuntime.report("boot-state", value);
     }
 
@@ -814,7 +854,7 @@ public final class ChunkBridge {
      * push immediately instead of waiting for the poller.
      */
     public static void captureSection(LevelChunkSection section, int cx, int cy, int cz) {
-        if (section == null) {
+        if (section == null || javaPrimary()) {
             return;
         }
         if (!firstSectionLogged) {
@@ -832,7 +872,7 @@ public final class ChunkBridge {
         if (section.hasOnlyAir()) {
             SENT_LIGHT.remove(key);
             if (SENT.remove(key) != null) {
-                emitSection(cx, cy, cz, Int32Array.create(4096));
+                emitSection(cx, cy, cz, EMPTY);
             }
             return;
         }
@@ -949,6 +989,32 @@ public final class ChunkBridge {
     @JSBody(params = {"x", "y", "z", "yaw", "pitch"}, script =
             "if (globalThis.mcBridge) globalThis.mcBridge.setPlayerPos(x, y, z, yaw, pitch);")
     private static native void sendPlayer(double x, double y, double z, float yaw, float pitch);
+
+    /** Cached because the flag is set once and this is read every frame. */
+    private static boolean javaOwnsCanvas() {
+        if (canvasOwned) {
+            return true;
+        }
+        canvasOwned = javaOwnsCanvasFlag();
+        return canvasOwned;
+    }
+
+    @JSBody(script = "try { return !!(globalThis.mcBridge && globalThis.mcBridge.state"
+            + " && globalThis.mcBridge.state.javaOwnsCanvas); } catch (e) { return false; }")
+    private static native boolean javaOwnsCanvasFlag();
+
+    /** True when the host has told the bridge that Java renders the visible
+     *  canvas, so the Rust body's world stream is invisible work. */
+    private static boolean javaPrimary() {
+        if (!javaPrimaryValue) {
+            javaPrimaryValue = javaPrimaryFlag();
+        }
+        return javaPrimaryValue;
+    }
+
+    @JSBody(script = "try { return !!(globalThis.mcBridge && globalThis.mcBridge.state"
+            + " && globalThis.mcBridge.state.javaPrimary); } catch (e) { return false; }")
+    private static native boolean javaPrimaryFlag();
 
     @JSBody(params = {}, script =
             "if (globalThis.mcBridge) globalThis.mcBridge.javaReady();")

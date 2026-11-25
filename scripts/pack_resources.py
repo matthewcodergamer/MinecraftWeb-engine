@@ -56,6 +56,13 @@ DEFAULT_MC_DIR = Path.home() / "Library" / "Application Support" / "minecraft"
 DEFAULT_VERSION = "26.3"
 DEFAULT_OUT = Path("build/web/minecraft-java-edition-v26.3-assets.bin")
 
+# The 26.3 client jar ships 1x1 grey placeholders for the title-screen
+# panorama; the real 1024x1024 faces are downloaded asset objects. They must
+# override the jar copy or the title screen renders as a flat grey wall.
+EXTERNAL_OVERRIDE_PREFIXES = (
+    "assets/minecraft/textures/gui/title/background/panorama_",
+)
+
 
 @dataclass(frozen=True)
 class Entry:
@@ -133,7 +140,7 @@ def object_entries(mc_dir: Path, meta: dict, already: set[str], verify: bool) ->
     missing = 0
     for logical_name, spec in sorted(objects.items()):
         logical = f"assets/{logical_name}"
-        if logical in already:
+        if logical in already and not logical.startswith(EXTERNAL_OVERRIDE_PREFIXES):
             continue  # the jar's copy is identical and already packed
         digest = spec.get("hash", "")
         size = int(spec.get("size", 0))
@@ -414,7 +421,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.jar_only:
         external = object_entries(mc_dir, meta, names, args.verify)
-        entries.extend(external)
+        overrides = {e.name for e in external if e.name.startswith(EXTERNAL_OVERRIDE_PREFIXES)}
+        if overrides:
+            replaced = sum(1 for e in entries if e.name in overrides)
+            entries = [e for e in entries if e.name not in overrides]
+            entries.extend(e for e in external if e.name in overrides)
+            print(f"asset index overrides {replaced} jar placeholder(s): "
+                  f"{', '.join(sorted(overrides))}")
+        entries.extend(e for e in external if e.name not in overrides)
         names.update(e.name for e in external)
 
     # The browser redirects Class/ClassLoader resource lookups into this archive.

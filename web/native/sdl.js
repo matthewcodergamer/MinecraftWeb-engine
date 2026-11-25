@@ -54,7 +54,16 @@
     const forced = parseFloat(params.get('scale'));
     if (forced > 0) return forced;
     const mobile = /iPhone|iPad|Android/i.test(navigator.userAgent);
-    return mobile ? Math.min(dpr, 1.0) : Math.min(dpr, 2);
+    if (mobile) return Math.min(dpr, 1.0);
+    // A Retina desktop window at DPR 2 spends four times the fill rate of the
+    // same window at DPR 1. The Java client already records every draw on the
+    // CPU, so the extra pixels are the difference between a slideshow and a
+    // playable frame on integrated GPUs (Iris Plus, Apple Intel, etc.). Keep
+    // the framebuffer near 2.2 MP and let the browser upscale the canvas.
+    const w = Math.max(1, window.innerWidth);
+    const h = Math.max(1, window.innerHeight);
+    const budgetScale = Math.sqrt(2_200_000 / (w * h));
+    return Math.max(0.75, Math.min(dpr, 1.5, budgetScale));
   }
 
   function resize(initial) {

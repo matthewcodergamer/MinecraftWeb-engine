@@ -11,11 +11,17 @@
 'use strict';
 (function () {
   const embedded = window.parent && window.parent !== window;
+  const params = new URLSearchParams(location.search);
   const rust = { module: null };
   const pending = [];
   const state = window.__mcBridgeState = {
     embedded,
+    // Java owns the visible canvas in the normal browser flow. The Rust body is
+    // only a boot backdrop behind an opaque status screen, so streaming every
+    // chunk/player frame into it is wasted CPU and allocation churn.
+    javaPrimary: params.get('java-primary') === '1',
     javaReady: false,
+    javaOwnsCanvas: false,
     bodyReady: false,
     sections: 0,
     lastPlayer: null,
@@ -41,6 +47,14 @@
       console.warn('mcBridge: postMessage failed', error);
       return false;
     }
+  }
+
+  /** World/geometry traffic is only useful while the Rust body owns the canvas.
+   *  Once Java's own renderer is revealed, stop cloning chunks and player state
+   *  across the iframe every frame. Progress/error/ready messages still flow. */
+  function postWorldToParent(type, payload) {
+    if (!embedded || state.javaPrimary || state.javaOwnsCanvas || window.__mcJavaOwnsCanvas) return false;
+    return postToParent(type, payload);
   }
 
   function callRust(name, args) {
@@ -77,7 +91,7 @@
     state.sections++;
     if (callRust('receive_java_section', [cx, cy, cz, array])) return true;
     if (embedded) {
-      postToParent('section', { cx, cy, cz, ids: array });
+      postWorldToParent('section', { cx, cy, cz, ids: array });
       return true;
     }
     pending.push({ name: 'receive_java_section', args: [cx, cy, cz, array] });
@@ -93,7 +107,7 @@
   function setTimeOfDay(fraction) {
     if (callRust('set_time_of_day', [fraction])) return true;
     if (embedded) {
-      postToParent('time', { fraction });
+      postWorldToParent('time', { fraction });
       return true;
     }
     pending.push({ name: 'set_time_of_day', args: [fraction] });
@@ -110,7 +124,7 @@
     }
     if (callRust('receive_java_light', [cx, cy, cz, bytes])) return true;
     if (embedded) {
-      postToParent('light', { cx, cy, cz, packed: bytes });
+      postWorldToParent('light', { cx, cy, cz, packed: bytes });
       return true;
     }
     pending.push({ name: 'receive_java_light', args: [cx, cy, cz, bytes] });
@@ -123,7 +137,7 @@
     state.sections = 0;
     if (callRust('reset_world', [])) return true;
     if (embedded) {
-      postToParent('reset', {});
+      postWorldToParent('reset', {});
       return true;
     }
     pending.push({ name: 'reset_world', args: [] });
@@ -133,13 +147,13 @@
   function setBlockName(id, name) {
     state.lastPalette.set(id, name);
     if (callRust('set_block_name', [id, name])) return;
-    if (embedded) postToParent('block-name', { id, name });
+    if (embedded) postWorldToParent('block-name', { id, name });
     else pending.push({ name: 'set_block_name', args: [id, name] });
   }
 
   function setBlockMaterial(id, top, bottom, side, cutout) {
     if (callRust('set_block_material', [id, top, bottom, side, !!cutout])) return;
-    if (embedded) postToParent('block-material', { id, top, bottom, side, cutout: !!cutout });
+    if (embedded) postWorldToParent('block-material', { id, top, bottom, side, cutout: !!cutout });
   }
 
   function setPlayerPos(x, y, z, yaw, pitch) {
@@ -151,7 +165,7 @@
       if (state.lastRotation) callRust('set_java_rotation', state.lastRotation);
       return;
     }
-    if (embedded) postToParent('player', { x, y, z, yaw, pitch });
+    if (embedded) postWorldToParent('player', { x, y, z, yaw, pitch });
   }
 
   /** Mouse/touch look from the visible page. Rust applies it immediately; the
@@ -466,7 +480,15 @@
     if (!event.data || typeof event.data !== 'object') return;
     const data = event.data;
     if (data.source === 'mc-brain' && !embedded) {
-      // Parent side: messages from the Java iframe.
+      // Parent side: messages from the Java iframe. Once Java owns the visible
+      // canvas the Rust body is paused; ignore its old world stream instead of
+      // uploading sections and player state into a renderer nobody can see.
+      if (window.__mcJavaOwnsCanvas
+          && (data.type === 'section' || data.type === 'light' || data.type === 'time'
+            || data.type === 'reset' || data.type === 'block-name'
+            || data.type === 'block-material' || data.type === 'player')) {
+        return;
+      }
       if (data.type === 'section') {
         receiveJavaSection(data.cx, data.cy, data.cz, data.ids);
       } else if (data.type === 'light') {
@@ -492,6 +514,10 @@
       }
     } else if (data.source === 'mc-host' && embedded) {
       // Iframe side: input from the visible page.
+      if (data.type === 'java-ui') {
+        state.javaOwnsCanvas = true;
+        return;
+      }
       if (data.type === 'input') injectInput(data.kind, data.payload || {});
     }
   });
