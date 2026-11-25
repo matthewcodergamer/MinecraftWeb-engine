@@ -4,11 +4,8 @@ name: Deploy verified client to Hugging Face
 # workflow. The HF write token stays in repository secrets and is never printed,
 # checked in, or passed through this workflow's inputs.
 on:
-  push:
-    branches:
-      - feat/client-headless-webgpu-boot
-    paths:
-      - ".github/workflows/deploy-hf.yml"
+  # Manual only. The repository HF_TOKEN secret was stale on 2026-11-25 and
+  # must be rotated to a token with write access before dispatching this.
   workflow_dispatch:
     inputs:
       run_id:
