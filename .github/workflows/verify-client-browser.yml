@@ -199,7 +199,9 @@ jobs:
           # WorldSelectionList.handleNewLevels opens CreateWorldScreen directly
           # instead of stopping at SelectWorldScreen, so do not wait for a
           # SelectWorldScreen button that 26.3 never shows in this case.
-          python3 scripts/cdp.py "http://127.0.0.1:8766/game.html?wasm=1&diag=1&rd=6&adaptive=0&mobs=0" \
+          # gfx/clouds exercise the override plumbing without asking the
+          # software renderer to shade fancy leaves or volumetric clouds.
+          python3 scripts/cdp.py "http://127.0.0.1:8766/game.html?wasm=1&diag=1&rd=6&adaptive=0&mobs=0&gfx=fast&clouds=fast" \
             --timeout 1800 \
             --soak-seconds 120 \
             --soak-screenshot build/title_soak.png \
