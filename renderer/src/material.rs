@@ -1,9 +1,9 @@
 //! Block-state -> texture layer + vanilla face shading.
 //!
 //! The Body's only interpretation of a block ID is this table. It starts with
-//! the synthetic demo palette so M2b keeps working, then the Java Brain (or the
-//! page's palette bridge) registers real `Block.getId(state)` values by registry
-//! name. Meshing consults the table; it never calls back into Java.
+//! the legacy M2b test palette, then the Java Brain (or the page's palette
+//! bridge) registers real `Block.getId(state)` values by registry name. Meshing
+//! consults the table; it never calls back into Java.
 //!
 //! Vanilla resolves block textures through models and block-state properties.
 //! The Body deliberately keeps the first pass simpler: one top/bottom/side
@@ -124,7 +124,7 @@ pub const L_DIRT_PATH_SIDE: u32 = 96;
 pub const L_FARMLAND: u32 = 97;
 pub const L_FARMLAND_MOIST: u32 = 98;
 
-/// Demo block IDs (the synthetic world's palette; kept for M2b regression tests).
+/// Legacy M2b test IDs (kept so the standalone mesher regression tests still run).
 pub const B_STONE: i32 = 1;
 pub const B_DIRT: i32 = 2;
 pub const B_GRASS: i32 = 3;

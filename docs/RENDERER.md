@@ -45,7 +45,7 @@ not treat world generation or Java-to-Rust delivery as verified.
 Consequences:
 
 - The Body crate below is developed **standalone** and does not depend on the Brain
-  packaging. It can be verified with the triangle + synthetic sections today.
+  packaging. It can be verified with the triangle harness and real Java sections today.
 - The eventual Brain packaging for mobile must be a WASM build (TeaVM WASM-GC target or
   another Java→wasm path) plus aggressive reachability trimming. A 279 MB JS bundle cannot
   ship under Safari's ~1.4–1.5 GB tab limit. That is a separate workstream.
@@ -61,7 +61,7 @@ renderer/
 ├── .gitignore
 └── src/
     ├── lib.rs            # surface/device, chunk pipeline, depth, camera, RAF, stats
-    ├── bridge.rs         # section store, upload_section export, synthetic world
+    ├── bridge.rs         # section store + upload_section export
     ├── arena.rs          # vertex/index arena + per-section draw ranges
     ├── cull.rs           # frustum planes + section AABB test
     ├── mesh.rs           # 18³ border assembly + 16³ greedy mesher
@@ -97,9 +97,14 @@ The HTML page is harness glue only: `await init(); run();`.
 
 ![Milestone 0 triangle](m0-triangle.png)
 
-### 4.2 M1 — synthetic chunk path (verified)
+### 4.2 M1 — synthetic chunk path (verified, historical)
 
-- `bridge::generate_demo()` fills 32 stored sections (4×4 chunks, 2 layers) with a sine
+> **Removed.** The synthetic world generator (`worldgen.rs`, `noise.rs`,
+> `bridge::generate_demo`) was deleted. The Body now starts with an empty sky
+> and only renders sections uploaded by the real Java Brain. The measurements
+> below document how the mesher was validated before Java was wired in.
+
+- `bridge::generate_demo()` filled 32 stored sections (4×4 chunks, 2 layers) with a sine
   heightmap: stone below, four layers of dirt, grass on top. 15 of the top-layer sections
   are fully air, so only 17 contain geometry.
 - `mesh.rs` assembles an **18³ padded volume** from the center section plus its six
@@ -136,7 +141,7 @@ a Worker so this stall never reaches the render loop.
 
 ### 4.3 M2a — arena + frustum culling (verified)
 
-- The demo world is now 8×8 chunks (128×128 blocks): 128 stored sections, 72 non-empty.
+- The historical demo world was 8×8 chunks (128×128 blocks): 128 stored sections, 72 non-empty.
   The arena skips the 56 all-air sections, so it only holds drawable geometry.
 - `arena.rs` packs all section meshes into one vertex buffer and one index buffer. Every
   section records an index range and a world AABB; the render loop issues one `draw_indexed`

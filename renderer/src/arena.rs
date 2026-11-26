@@ -109,8 +109,8 @@ impl ChunkArena {
         self.slots.len()
     }
 
-    /// Drops every draw range. Used when the Java Brain replaces the synthetic
-    /// demo world; the dirty queue then rebuilds the real sections.
+    /// Drops every draw range when the Java Brain takes over a new world; the
+    /// dirty queue then rebuilds the real sections.
     pub fn clear(&mut self) {
         self.slots.clear();
         self.total_indices = 0;

@@ -5,6 +5,7 @@ import java.util.Map;
 
 import mcport.rt.BrowserRuntime;
 import mcport.rt.FrameLoop;
+import net.minecraft.client.CloudStatus;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.LevelLoadingScreen;
 import net.minecraft.client.gui.screens.TitleScreen;
@@ -391,12 +392,15 @@ public final class ChunkBridge {
                 rd = mobile ? 5 : 8;
             }
             rd = Math.max(2, Math.min(32, rd));
-            // Fast graphics everywhere: fancy leaves, smooth lighting and
-            // entity shadows are all expensive in the WebGPU backend. Clouds
-            // are disabled because the browser cloud mesh is currently
-            // malformed (vertical quads), and they are pure fill-rate cost.
+            // Fast graphics by default: fancy leaves, smooth lighting and
+            // entity shadows are all expensive in the WebGPU backend. A player
+            // can still opt into the full preset with ?gfx=fancy.
             try {
-                net.minecraft.client.GraphicsPreset.FAST.apply(minecraft);
+                if ("fancy".equals(requestedGraphics())) {
+                    net.minecraft.client.GraphicsPreset.FANCY.apply(minecraft);
+                } else {
+                    net.minecraft.client.GraphicsPreset.FAST.apply(minecraft);
+                }
             } catch (Throwable ignored) {
             }
             try {
@@ -407,8 +411,22 @@ public final class ChunkBridge {
                 minecraft.options.entityShadows().set(Boolean.FALSE);
             } catch (Throwable ignored) {
             }
+            // Clouds are part of the sky, not an optional effect. Older builds
+            // forced them OFF because the texel-buffer lowering read the cloud
+            // cells as unsigned bytes; that is fixed now, so restore the
+            // vanilla mesh. ?clouds=off|fast|fancy overrides the default, and
+            // once a player changes the option in-game we stop forcing it so
+            // their saved choice survives the next boot.
             try {
-                minecraft.options.cloudStatus().set(net.minecraft.client.CloudStatus.OFF);
+                String requested = requestedClouds();
+                if (!requested.isEmpty()) {
+                    minecraft.options.cloudStatus().set(cloudStatus(requested, mobile));
+                } else if (!cloudsDefaultApplied()) {
+                    minecraft.options.cloudStatus().set(mobile
+                            ? net.minecraft.client.CloudStatus.FAST
+                            : net.minecraft.client.CloudStatus.FANCY);
+                    markCloudsDefaultApplied();
+                }
             } catch (Throwable ignored) {
             }
             minecraft.options.renderDistance().set(rd);
@@ -427,6 +445,35 @@ public final class ChunkBridge {
     @JSBody(script = "try { return Number(new URLSearchParams(location.search).get('rd')) || 0; }"
             + " catch (e) { return 0; }")
     private static native int requestedRenderDistance();
+
+    @JSBody(script = "try { return String(new URLSearchParams(location.search).get('gfx') || '').toLowerCase(); }"
+            + " catch (e) { return ''; }")
+    private static native String requestedGraphics();
+
+    @JSBody(script = "try { return String(new URLSearchParams(location.search).get('clouds') || '').toLowerCase(); }"
+            + " catch (e) { return ''; }")
+    private static native String requestedClouds();
+
+    private static CloudStatus cloudStatus(String requested, boolean mobile) {
+        if ("off".equals(requested)) {
+            return CloudStatus.OFF;
+        }
+        if ("fast".equals(requested)) {
+            return CloudStatus.FAST;
+        }
+        if ("fancy".equals(requested)) {
+            return CloudStatus.FANCY;
+        }
+        return mobile ? CloudStatus.FAST : CloudStatus.FANCY;
+    }
+
+    /** True once the new cloud default has been applied to this browser profile. */
+    @JSBody(script = "try { return localStorage.getItem('mc_clouds_default_v1') === '1'; }"
+            + " catch (e) { return false; }")
+    private static native boolean cloudsDefaultApplied();
+
+    @JSBody(script = "try { localStorage.setItem('mc_clouds_default_v1', '1'); } catch (e) {}")
+    private static native void markCloudsDefaultApplied();
 
     @JSBody(script = "try { return (window.__mcFrames && window.__mcFrames.fps) || 0; }"
             + " catch (e) { return 0; }")

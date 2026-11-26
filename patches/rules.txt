@@ -421,18 +421,22 @@ BODY com.mojang.blaze3d.platform.Window setIcon(Lnet/minecraft/server/packs/Pack
 # list's world icon; skip the attempt instead of crashing gameplay.
 BODY net.minecraft.client.renderer.GameRenderer tryTakeScreenshotIfNeeded()V -> mcport.rt.patch.GameRendererPatches tryTakeScreenshotIfNeeded
 
-# --- Browser audio is unavailable: skip sounds.json preparation (TeaVM illegal-cast trap) ---
-# Keep this rule active in both browser and TeaVM probe builds.
+# --- Browser audio: skip vanilla's reflective sounds.json preparation, mix in WebAudio ----------
+# Keep the prepare/apply rules active in both browser and TeaVM probe builds. The JS host owns
+# the sounds.json registry, so the reflective Gson path (which traps under TeaVM) is bypassed.
 BODY net.minecraft.client.sounds.SoundManager prepare(Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)Lnet/minecraft/client/sounds/SoundManager$Preparations; -> net.minecraft.client.sounds.BrowserSoundManagerPatches prepare
 
-# --- Browser audio is unavailable: skip the SoundManager/SoundEngine OpenAL paths ---------------
-# Sound preparation is already replaced above; apply/loadLibrary/reload avoid binding OpenAL at runtime.
+# SoundEngine is still the vanilla object, but its OpenAL entry points are replaced. play forwards
+# the real SoundInstance to window.mcAudio; the rest keep the engine bookkeeping coherent so
+# MusicManager can detect the end of a track and stop it.
 BODY net.minecraft.client.sounds.SoundManager apply(Lnet/minecraft/client/sounds/SoundManager$Preparations;Lnet/minecraft/server/packs/resources/ResourceManager;Lnet/minecraft/util/profiling/ProfilerFiller;)V -> net.minecraft.client.sounds.BrowserSoundManagerPatches apply
 BODY net.minecraft.client.sounds.SoundEngine loadLibrary()V -> net.minecraft.client.sounds.BrowserSoundManagerPatches loadLibrary
 BODY net.minecraft.client.sounds.SoundEngine reload()V -> net.minecraft.client.sounds.BrowserSoundManagerPatches reload
-# Report a successful start for every sound while mixing nothing. Returning
-# NOT_STARTED made the client believe the sound device was unavailable.
 BODY net.minecraft.client.sounds.SoundEngine play(Lnet/minecraft/client/resources/sounds/SoundInstance;)Lnet/minecraft/client/sounds/SoundEngine$PlayResult; -> net.minecraft.client.sounds.BrowserSoundManagerPatches play
+BODY net.minecraft.client.sounds.SoundManager playDelayed(Lnet/minecraft/client/resources/sounds/SoundInstance;I)V -> net.minecraft.client.sounds.BrowserSoundManagerPatches playDelayed
+BODY net.minecraft.client.sounds.SoundManager isActive(Lnet/minecraft/client/resources/sounds/SoundInstance;)Z -> net.minecraft.client.sounds.BrowserSoundManagerPatches isActive
+BODY net.minecraft.client.sounds.SoundManager stop(Lnet/minecraft/client/resources/sounds/SoundInstance;)V -> net.minecraft.client.sounds.BrowserSoundManagerPatches stopOne
+BODY net.minecraft.client.sounds.SoundManager stop()V -> net.minecraft.client.sounds.BrowserSoundManagerPatches stopEverything
 
 # --- Browser first launch: skip the narrator onboarding screen -------------------------------
 # A fresh browser profile has onboardAccessibility=true, so vanilla inserts

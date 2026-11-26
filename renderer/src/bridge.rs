@@ -1,9 +1,8 @@
 //! Bridge v0: the Java Brain writes 16^3 block-ID sections here.
 //!
 //! `upload_section(cx, cy, cz, version, ids)` is the wasm-bindgen export the
-//! Brain calls. For the renderer-only deployment, `generate_demo()` feeds the
-//! same store with Horizon-derived noise terrain so the mesher and light
-//! engine are exercised before Java is wired in.
+//! Brain calls. The store starts empty: the Body never invents terrain, so the
+//! first pixels come from the real Java world.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
@@ -12,9 +11,10 @@ use wasm_bindgen::prelude::*;
 
 use crate::lighting;
 use crate::mesh::{block_index, mesh_section, Vertex, VOLUME};
-use crate::worldgen::{WorldGen, CHUNK_RADIUS, LAYERS, SEA_LEVEL, WORLD_TOP};
 
-const DEMO_SEED: i64 = 0x5eed;
+/// World height used only to bound the renderer-only collision query. Java
+/// owns the real build height; this is not a terrain generator.
+const WORLD_TOP: i32 = 320;
 
 struct Section {
     version: u32,
@@ -32,8 +32,8 @@ thread_local! {
     /// Sections waiting to be re-meshed, in upload order. Deduplicated, because
     /// one edit dirties the section plus up to six neighbours.
     static DIRTY: RefCell<VecDeque<(i32, i32, i32)>> = const { RefCell::new(VecDeque::new()) };
-    /// Set when the Brain takes ownership of the world. The renderer drops the
-    /// synthetic demo arena once, before the first real section is drawn.
+    /// Set when the Brain takes ownership of the world. The renderer clears any
+    /// stale arena once, before the first real section is drawn.
     static RESET: Cell<bool> = const { Cell::new(false) };
     static VERSION: Cell<u32> = const { Cell::new(1) };
     static JAVA_CONNECTED: Cell<bool> = const { Cell::new(false) };
@@ -75,8 +75,8 @@ pub fn upload_section(cx: i32, cy: i32, cz: i32, version: u32, ids: &[i32]) -> b
 /// body.receive_java_chunk(chunkX, chunkZ, int32Array4096);
 /// ```
 ///
-/// The first real chunk retires the synthetic demo world. `cy` is implicitly 0;
-/// worlds with a non-zero minimum Y use `receive_java_section` instead.
+/// The first real chunk clears the empty/stale Body store. `cy` is implicitly
+/// 0; worlds with a non-zero minimum Y use `receive_java_section` instead.
 #[wasm_bindgen]
 pub fn receive_java_chunk(chunk_x: i32, chunk_z: i32, block_ids: &[i32]) -> bool {
     receive_java_section(chunk_x, 0, chunk_z, block_ids)
@@ -106,7 +106,7 @@ pub fn receive_java_section(cx: i32, cy: i32, cz: i32, block_ids: &[i32]) -> boo
         return false;
     }
     if !JAVA_CONNECTED.with(|flag| flag.replace(true)) {
-        // First real section: the demo world is no longer authoritative.
+        // First real section: drop anything left over from a previous world.
         SECTIONS.with(|cell| cell.borrow_mut().clear());
         DIRTY.with(|queue| queue.borrow_mut().clear());
         PENDING_LIGHT.with(|cell| cell.borrow_mut().clear());
@@ -424,194 +424,8 @@ pub fn rebuild_light_if_stale() {
     rebuild_light();
 }
 
-/// Renderer-only demo world: Horizon-derived noise terrain, biomes, trees and
-/// boulders, centred on (0, 0). Java replaces every section when it connects.
-pub fn generate_demo() {
-    let generator = WorldGen::new(DEMO_SEED);
-    SECTIONS.with(|cell| cell.borrow_mut().clear());
-    PENDING_LIGHT.with(|cell| cell.borrow_mut().clear());
-    DIRTY.with(|queue| queue.borrow_mut().clear());
-    JAVA_CONNECTED.with(|flag| flag.set(false));
-    JAVA_LIGHT.with(|flag| flag.set(false));
-
-    for cz in -CHUNK_RADIUS..=CHUNK_RADIUS {
-        for cx in -CHUNK_RADIUS..=CHUNK_RADIUS {
-            for cy in 0..LAYERS {
-                let ids = generator.section(cx, cy, cz);
-                store(cx, cy, cz, 1, &ids);
-            }
-        }
-    }
-    generator.decorate(|x, y, z, block| put(x, y, z, block));
-    rebuild_light();
-}
-
-fn put(x: i32, y: i32, z: i32, block: i32) {
-    if y < 0 || y >= WORLD_TOP {
-        return;
-    }
-    let key = (x >> 4, y >> 4, z >> 4);
-    SECTIONS.with(|cell| {
-        let mut sections = cell.borrow_mut();
-        if let Some(section) = sections.get_mut(&key) {
-            let index = block_index((x & 15) as usize, (y & 15) as usize, (z & 15) as usize);
-            section.ids[index] = block;
-        }
-    });
-}
-
-/// Renderer-only fallback spawn: pick a low grassy clearing near water so the
-/// first view shows the same kind of plains/forest shoreline as the reference
-/// screenshots, then look toward the nearest water.
-pub fn demo_spawn() -> [f32; 3] {
-    demo_spawn_pose().0
-}
-
-pub fn demo_spawn_pose() -> ([f32; 3], f32, f32) {
-    const EYE_HEIGHT: f32 = 1.62;
-    const TOP_Y: i32 = WORLD_TOP - 1;
-    let (mut spawn_x, mut spawn_y, mut spawn_z) = (0, SEA_LEVEL + 2, 0);
-    let mut yaw = 0.0f32;
-
-    SECTIONS.with(|cell| {
-        let sections = cell.borrow();
-        let block_at = |x: i32, y: i32, z: i32| -> i32 {
-            if y < 0 || y >= WORLD_TOP {
-                return 0;
-            }
-            let key = (x >> 4, y >> 4, z >> 4);
-            sections.get(&key).map_or(0, |section| {
-                section.ids[block_index((x & 15) as usize, (y & 15) as usize, (z & 15) as usize)]
-            })
-        };
-        let top_solid = |x: i32, z: i32| -> Option<i32> {
-            let mut y = TOP_Y;
-            while y >= 0 {
-                let id = block_at(x, y, z);
-                if crate::material::opacity(id) >= 15 {
-                    return Some(y);
-                }
-                y -= 1;
-            }
-            None
-        };
-
-        let mut best = (f32::MIN, 0, 0, 0);
-        for z in (-40..=40).step_by(2) {
-            for x in (-40..=40).step_by(2) {
-                let Some(ty) = top_solid(x, z) else {
-                    continue;
-                };
-                let top = block_at(x, ty, z);
-                let mut score = if top == crate::material::B_GRASS {
-                    100.0
-                } else {
-                    -100.0
-                };
-                score -= ((ty - (SEA_LEVEL + 5)).abs() as f32) * 1.4;
-                if ty > SEA_LEVEL + 20 {
-                    score -= (ty - SEA_LEVEL - 20) as f32 * 4.0;
-                }
-                let mut water = 0i32;
-                let mut trees = 0i32;
-                for dz in (-32..=32).step_by(4) {
-                    for dx in (-32..=32).step_by(4) {
-                        if dx * dx + dz * dz > 32 * 32 {
-                            continue;
-                        }
-                        let wx = x + dx;
-                        let wz = z + dz;
-                        let surface = block_at(wx, SEA_LEVEL, wz);
-                        if surface == crate::material::B_WATER || surface == crate::material::B_ICE {
-                            water += 1;
-                        }
-                        let canopy = block_at(wx, ty + 3, wz);
-                        if canopy == crate::material::B_LEAVES || canopy == crate::material::B_LOG {
-                            trees += 1;
-                        }
-                    }
-                }
-                score += water as f32 * 1.2 + trees.min(14) as f32 * 2.6;
-                let mut local_grass = 0i32;
-                let mut local_sand = 0i32;
-                for dz in (-12..=12).step_by(2) {
-                    for dx in (-12..=12).step_by(2) {
-                        if let Some(uy) = top_solid(x + dx, z + dz) {
-                            match block_at(x + dx, uy, z + dz) {
-                                crate::material::B_GRASS => local_grass += 1,
-                                crate::material::B_SAND => local_sand += 1,
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-                score += local_grass as f32 * 1.1 - local_sand as f32 * 0.55;
-                let distance = ((x * x + z * z) as f32).sqrt();
-                score -= distance * 0.12;
-                // Keep a clearing around the eye so the first view is not a
-                // tree trunk filling the screen.
-                for dz in -4..=4 {
-                    for dx in -4..=4 {
-                        for dy in 0..=4 {
-                            if block_at(x + dx, ty + 1 + dy, z + dz) != 0 {
-                                score -= 1200.0;
-                            }
-                        }
-                    }
-                }
-                if score > best.0 {
-                    best = (score, x, ty, z);
-                }
-            }
-        }
-        if best.0 == f32::MIN {
-            if let Some(ty) = top_solid(0, 0) {
-                best = (0.0, 0, ty, 0);
-            }
-        }
-        let (_, x, ty, z) = best;
-        spawn_x = x;
-        spawn_y = ty + 1;
-        spawn_z = z;
-
-        let mut best_view = (f32::MIN, 0.0f32);
-        for step in 0..16 {
-            let angle = step as f32 * std::f32::consts::PI / 8.0;
-            let dir = (-angle.sin(), -angle.cos());
-            let mut view = 0.0f32;
-            for d in [8.0f32, 14.0, 20.0, 28.0, 36.0] {
-                let px = x + (dir.0 * d).round() as i32;
-                let pz = z + (dir.1 * d).round() as i32;
-                let surface = block_at(px, SEA_LEVEL, pz);
-                if surface == crate::material::B_WATER || surface == crate::material::B_ICE {
-                    view += 2.0;
-                }
-                if d >= 14.0 {
-                    if let Some(uy) = top_solid(px, pz) {
-                        match block_at(px, uy, pz) {
-                            crate::material::B_GRASS => view += 1.0,
-                            crate::material::B_LEAVES | crate::material::B_LOG => view += 2.5,
-                            _ => {}
-                        }
-                    }
-                }
-            }
-            if view > best_view.0 {
-                best_view = (view, angle);
-            }
-        }
-        yaw = best_view.1;
-
-    });
-
-    (
-        [spawn_x as f32 + 0.5, spawn_y as f32 + EYE_HEIGHT, spawn_z as f32 + 0.5],
-        yaw,
-        -0.06,
-    )
-}
-
-/// Solid query for the renderer-only walking fallback.
+/// Solid query for the standalone Body's debug walking fallback. It only sees
+/// real Java sections; an empty store means every block is air.
 pub fn is_solid(x: i32, y: i32, z: i32) -> bool {
     if y < 0 || y >= WORLD_TOP {
         return y < 0;
@@ -625,28 +439,4 @@ pub fn is_solid(x: i32, y: i32, z: i32) -> bool {
             id != 0 && !crate::material::is_fluid(id) && !crate::material::is_cross(id)
         })
     })
-}
-
-/// Debug helper for the headless harness: ASCII biome/height map around spawn.
-#[wasm_bindgen]
-pub fn debug_world_map() -> String {
-    let generator = WorldGen::new(DEMO_SEED);
-    let mut out = String::new();
-    for z in (-56..=56).step_by(2) {
-        for x in (-56..=56).step_by(2) {
-            let h = generator.height(x, z);
-            let b = generator.biome(x, z, h);
-            out.push(match b {
-                crate::worldgen::Biome::Ocean => '~',
-                crate::worldgen::Biome::Beach => '.',
-                crate::worldgen::Biome::Plains => ',',
-                crate::worldgen::Biome::Forest => 'T',
-                crate::worldgen::Biome::Desert => 'd',
-                crate::worldgen::Biome::Snowy => '*',
-                crate::worldgen::Biome::Mountains => '^',
-            });
-        }
-        out.push('\n');
-    }
-    out
 }

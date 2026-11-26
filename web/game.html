@@ -3309,7 +3309,7 @@
             // play.html prefers the WebAssembly client and only downloads the
             // split JavaScript bundle when WASM is unavailable. Forward the
             // explicit engine switches so QA can still force either backend.
-            let brainQuery = 'play.html?embedded=1&stats=0&v=20261126a';
+            let brainQuery = 'play.html?embedded=1&stats=0&v=20261126b';
             // Mobs are part of the game again. Natural spawning is capped by
             // the integrated server's gamerules, so this restores normal
             // survival without the old boot-time swarm. Low-end/QA runs can
@@ -3327,6 +3327,8 @@
             // desktop default, which is far too heavy for a browser tab.
             if (params.has('rd')) brainQuery += '&rd=' + encodeURIComponent(params.get('rd'));
             else brainQuery += '&rd=' + ((window.MCInput && MCInput.isTouch) ? 6 : 8);
+            if (params.has('gfx')) brainQuery += '&gfx=' + encodeURIComponent(params.get('gfx'));
+            if (params.has('clouds')) brainQuery += '&clouds=' + encodeURIComponent(params.get('clouds'));
             if (params.get('adaptive') === '0') brainQuery += '&adaptive=0';
             frame.src = brainQuery;
             watchJavaTitleScreen(frame);

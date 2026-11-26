@@ -484,9 +484,9 @@ pub fn install(canvas: HtmlCanvasElement) {
     }
 }
 
-/// Renderer-only spawn. Places the debug camera on the surface found by
-/// `bridge::demo_spawn`. Java, when present, replaces this pose every frame
-/// through `set_java_player`, so it never overrides authoritative physics.
+/// Standalone Body spawn. Places the debug camera at the requested position.
+/// Java, when present, replaces this pose every frame through `set_java_player`,
+/// so it never overrides authoritative physics.
 pub fn set_spawn(position: [f32; 3]) {
     CONTROLS.with(|cell| {
         if let Some(controls) = cell.borrow_mut().as_mut() {

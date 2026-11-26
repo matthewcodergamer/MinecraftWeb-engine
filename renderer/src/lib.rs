@@ -23,9 +23,7 @@ mod lighting;
 mod material;
 mod math;
 mod mesh;
-mod noise;
 mod textures;
-mod worldgen;
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
@@ -353,8 +351,8 @@ impl Renderer {
 
     fn draw(&mut self) {
         self.sync_size();
-        // First real Java section arrives: retire the synthetic demo arena once.
-        // The dirty queue below rebuilds the Brain's sections incrementally.
+        // First real Java section arrives: clear the arena once. The dirty queue
+        // below then builds the Brain's sections incrementally.
         if bridge::take_reset() {
             self.arena.clear();
             self.visible.clear();

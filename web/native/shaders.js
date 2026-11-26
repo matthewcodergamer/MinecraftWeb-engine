@@ -51,7 +51,7 @@
     TypeStruct: 30, TypePointer: 32, TypeFunction: 33, Constant: 43, Function: 54, FunctionParameter: 55,
     FunctionEnd: 56, FunctionCall: 57, Variable: 59, Load: 61, AccessChain: 65, Decorate: 71, MemberDecorate: 72,
     CompositeExtract: 81, CopyObject: 83, SampledImage: 86, ImageFetch: 95, Image: 100,
-    ShiftRightLogical: 194, ShiftLeftLogical: 196, BitwiseAnd: 199,
+    ShiftRightLogical: 194, ShiftRightArithmetic: 195, ShiftLeftLogical: 196, BitwiseAnd: 199,
   };
   const Dec = { Block: 2, BufferBlock: 3, ArrayStride: 6, MatrixStride: 7, BuiltIn: 11, NonWritable: 24, Location: 30,
     Binding: 33, DescriptorSet: 34, Offset: 35 };
@@ -1100,7 +1100,7 @@
     const mk = (op, args) => [((args.length + 1) << 16) | op, ...args];
     const opOf = (ins) => ins[0] & 0xffff;
 
-    let intType = 0, ptrInt = 0, zeroId = 0, twoId = 0, threeId = 0, mask255Id = 0;
+    let intType = 0, ptrInt = 0, zeroId = 0, twoId = 0, threeId = 0, mask255Id = 0, shift24Id = 0;
     for (const id in m.types) {
       const t = m.types[id];
       if (t.kind === 'int' && t.width === 32 && t.signed) intType = +id;
@@ -1119,7 +1119,7 @@
       consts.set(key, id);
       return id;
     };
-    zeroId = constInt(0); twoId = constInt(2); threeId = constInt(3); mask255Id = constInt(255);
+    zeroId = constInt(0); twoId = constInt(2); threeId = constInt(3); mask255Id = constInt(255); shift24Id = constInt(24);
     ptrInt = fresh();
     newTypes.push(mk(Op.TypePointer, [ptrInt, SC.StorageBuffer, intType]));
 
@@ -1158,14 +1158,21 @@
       if (inFunction && op === Op.ImageFetch && imageBase.has(mapped[3])) {
         const base = imageBase.get(mapped[3]), coord = mapped[4];
         const wordIndex = fresh(), ptrWord = fresh(), word = fresh();
-        const low = fresh(), shift = fresh(), shifted = fresh();
+        const low = fresh(), shift = fresh(), shifted = fresh(), value = fresh(), wide = fresh();
         out.push(mk(Op.ShiftRightLogical, [intType, wordIndex, coord, twoId]));
         out.push(mk(Op.AccessChain, [ptrInt, ptrWord, base, zeroId, wordIndex]));
         out.push(mk(Op.Load, [intType, word, ptrWord]));
         out.push(mk(Op.BitwiseAnd, [intType, low, coord, threeId]));
         out.push(mk(Op.ShiftLeftLogical, [intType, shift, low, threeId]));
         out.push(mk(Op.ShiftRightLogical, [intType, shifted, word, shift]));
-        out.push(mk(Op.BitwiseAnd, [intType, mapped[2], shifted, mask255Id]));
+        out.push(mk(Op.BitwiseAnd, [intType, value, shifted, mask255Id]));
+        // GLSL `isamplerBuffer` returns a *signed* byte. The vanilla cloud
+        // mesh stores negative cell coordinates (cellX >> 1 cast to byte), so
+        // masking without sign-extension turned -1 into 255 and shifted whole
+        // cloud cells thousands of blocks away. Recover the sign by shifting
+        // the low byte up and back down arithmetically.
+        out.push(mk(Op.ShiftLeftLogical, [intType, wide, value, shift24Id]));
+        out.push(mk(Op.ShiftRightArithmetic, [intType, mapped[2], wide, shift24Id]));
         fetchValue.set(mapped[2], true);
         continue;
       }

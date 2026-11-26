@@ -17,8 +17,9 @@ platform underneath it. See `docs/ARCHITECTURE.md` and `docs/MIGRATION_MATRIX.md
 - **Hybrid page** (`web/index.html`). Owns the visible WebGPU canvas, shows the
   Mojang loading screen over the exact dirt texture, and runs the Java client in
   an off-screen iframe. The overlay stays up until the Body has meshed the first
-  real 16³ section (or, in `?java=0` mode, the synthetic demo arena). If Java
-  boots but never produces a world, the overlay offers an explicit
+  real 16³ section. The Body starts with an empty sky: it never generates demo
+  terrain, so every block on screen came from the Java world. If Java boots but
+  never produces a world, the overlay offers an explicit
   "Continue with renderer only" button instead of pretending the world loaded.
 
 `web/play.html` still runs the Java client alone (for debugging), and
