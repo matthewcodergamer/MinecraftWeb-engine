@@ -85,6 +85,11 @@ const embedded = params.get('embedded') === '1';
 // All game parts live on the Hugging Face Space. The same files are also
 // available next to this page, which is used as an offline fallback.
 const HF_BASE = 'https://matthewcodergamer-minecraft-browser.static.hf.space/';
+// The Space repository is capped at 1 GB, so the 112 MiB WebAssembly module
+// lives in a model repository and is streamed from there. Resources stay on
+// the Space next to this page. Hugging Face's CDN allows the cross-origin
+// range requests the OPFS downloader uses.
+const WASM_BASE = 'https://huggingface.co/matthewcodergamer/minecraft-web-client/resolve/main/';
 // Bumped on every deployed client build. The Space CDN caches the module and
 // its runtime for a long time, so an unversioned URL can keep serving an old
 // wasm build after a deployment.
@@ -515,16 +520,27 @@ async function loadWasmBrain() {
       };
     },
   };
-  let teavm;
-  try {
-    teavm = await loadWasmModule('minecraft-java-edition-v26.3.wasm?v=' + MC_BUILD, options);
-    window.__mcWasmUrl = new URL('minecraft-java-edition-v26.3.wasm?v=' + MC_BUILD, location.href).href;
-  } catch (localError) {
-    if (mustUseLocalBuild || location.hostname.endsWith('.hf.space')) throw localError;
-    console.warn('local WASM module unavailable; loading the canonical module', localError);
-    teavm = await loadWasmModule(HF_BASE + 'minecraft-java-edition-v26.3.wasm?v=' + MC_BUILD, options);
-    window.__mcWasmUrl = HF_BASE + 'minecraft-java-edition-v26.3.wasm?v=' + MC_BUILD;
+  // The module is too large for the 1 GB Space repository, so the deployed
+  // client streams it from the model repository. A local build is always tried
+  // first when this page is served by CI, and is never replaced by a remote
+  // module: a stale deployed build must not make a broken checkout look green.
+  const localWasm = 'minecraft-java-edition-v26.3.wasm?v=' + MC_BUILD;
+  const remoteWasm = WASM_BASE + 'minecraft-java-edition-v26.3.wasm?v=' + MC_BUILD;
+  const wasmSources = mustUseLocalBuild ? [localWasm, remoteWasm] : [remoteWasm, localWasm];
+  let teavm = null;
+  let lastWasmError = null;
+  for (const source of wasmSources) {
+    try {
+      teavm = await loadWasmModule(source, options);
+      window.__mcWasmUrl = new URL(source, location.href).href;
+      break;
+    } catch (error) {
+      lastWasmError = error;
+      console.warn('WASM module source failed: ' + source, error);
+      if (mustUseLocalBuild) throw error;
+    }
   }
+  if (!teavm) throw lastWasmError || new Error('no WebAssembly module source was available');
   window.__mcTeaVM = teavm;
   window.__mcRunMain = () => teavm.exports.main([]);
   window.__mcEngine = 'wasm';
