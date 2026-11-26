@@ -3309,7 +3309,7 @@
             // play.html prefers the WebAssembly client and only downloads the
             // split JavaScript bundle when WASM is unavailable. Forward the
             // explicit engine switches so QA can still force either backend.
-            let brainQuery = 'play.html?embedded=1&stats=0&v=20261125d';
+            let brainQuery = 'play.html?embedded=1&stats=0&v=20261126a';
             // In the normal flow Java renders the visible canvas. The Rust body
             // is only an opaque boot backdrop, so do not pack/post its world.
             if (!HTML_UI && params.get('java-primary') !== '0') brainQuery += '&java-primary=1';
