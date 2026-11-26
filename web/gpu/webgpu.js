@@ -24,6 +24,7 @@
     pass: null,                  // current GPURenderPassEncoder
     passState: null,
     transient: [],               // [{buf, shadow, size, used}] uploaded at submit
+    fanIndexBuffers: new Map(),  // vertexCount -> index buffer for GL_TRIANGLE_FAN emulation
     pendingReadbacks: [],        // completed async readbacks to report to Java: callback ids
     readbacksInFlight: 0,
     frame: 0,
@@ -112,6 +113,7 @@
       }), 20000, 'WebGPU device request');
       G.features = new Set(requiredFeatures);
       G.queue = G.device.queue;
+      G.fanIndexBuffers.clear();
       G.device.lost.then((info) => {
         G.lost = info;
         G.lostAt = performance.now();
@@ -592,8 +594,30 @@
     ONE_MINUS_DST_ALPHA: 'one-minus-dst-alpha', ONE_MINUS_DST_COLOR: 'one-minus-dst', ONE_MINUS_SRC_ALPHA: 'one-minus-src-alpha',
     ONE_MINUS_SRC_COLOR: 'one-minus-src', SRC_ALPHA: 'src-alpha', SRC_ALPHA_SATURATE: 'src-alpha-saturated', SRC_COLOR: 'src', ZERO: 'zero' };
   const BLEND_OP = { ADD: 'add', SUBTRACT: 'subtract', REVERSE_SUBTRACT: 'reverse-subtract', MIN: 'min', MAX: 'max' };
-  const TOPOLOGY = { LINES: 'triangle-list', DEBUG_LINES: 'line-list', DEBUG_LINE_STRIP: 'line-strip', POINTS: 'point-list',
+  const TOPOLOGY = { LINES: 'line-list', DEBUG_LINES: 'line-list', DEBUG_LINE_STRIP: 'line-strip', POINTS: 'point-list',
     TRIANGLES: 'triangle-list', TRIANGLE_STRIP: 'triangle-strip', TRIANGLE_FAN: 'triangle-list', QUADS: 'triangle-list' };
+
+  // WebGPU has no triangle-fan topology. Java still builds the sky dome (and a
+  // few debug shapes) as a fan with no index buffer, so expand the fan into a
+  // cached index buffer and draw it as indexed triangles. Without this, a fan
+  // of N vertices was drawn as floor(N/3) unrelated triangles, which is what
+  // produced the torn blue "sky" and stray triangles across the screen.
+  function fanIndexBuffer(vertexCount) {
+    let buf = G.fanIndexBuffers.get(vertexCount);
+    if (buf) return buf;
+    const triangles = Math.max(0, vertexCount - 2);
+    const indices = new Uint32Array(triangles * 3);
+    for (let t = 0, o = 0; t < triangles; t++) {
+      indices[o++] = 0;
+      indices[o++] = t + 1;
+      indices[o++] = t + 2;
+    }
+    buf = G.device.createBuffer({ label: 'fan-indices-' + vertexCount, size: indices.byteLength,
+      usage: GU.INDEX | GU.COPY_DST });
+    G.queue.writeBuffer(buf, 0, indices);
+    G.fanIndexBuffers.set(vertexCount, buf);
+    return buf;
+  }
 
   function blendComponent(eq) {
     const op = BLEND_OP[eq.op];
@@ -984,6 +1008,15 @@
     if (!s) return;
     s.drawIndexed = false;
     if (!bindAndValidate()) return;
+    const p = s.pipeline;
+    if (p && p.desc && p.desc.topology === 'TRIANGLE_FAN' && vertexCount >= 3) {
+      // Expand the fan into triangles. The base vertex is passed as baseVertex
+      // so vertex buffers with a first-vertex offset still resolve correctly.
+      G.pass.setIndexBuffer(fanIndexBuffer(vertexCount), 'uint32');
+      G.pass.drawIndexed((vertexCount - 2) * 3, instanceCount, 0, firstVertex, firstInstance);
+      G.stats.draws++;
+      return;
+    }
     G.pass.draw(vertexCount, instanceCount, firstVertex, firstInstance);
     G.stats.draws++;
   };

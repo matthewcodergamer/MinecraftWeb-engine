@@ -56,29 +56,41 @@
     const mobile = /iPhone|iPad|Android/i.test(navigator.userAgent);
     if (mobile) return Math.min(dpr, 1.0);
     // A Retina desktop window at DPR 2 spends four times the fill rate of the
-    // same window at DPR 1. The Java client already records every draw on the
-    // CPU, so the extra pixels are the difference between a slideshow and a
-    // playable frame on integrated GPUs (Iris Plus, Apple Intel, etc.). Keep
-    // the framebuffer near 2.2 MP and let the browser upscale the canvas.
+    // same window at DPR 1. The Java client records every draw on the CPU and
+    // the WebGPU backend submits the whole frame, so extra pixels directly
+    // steal frame time from the 2018 MacBook-class integrated GPU. Keep the
+    // framebuffer near 1.25 MP and let the browser upscale the canvas.
     const w = Math.max(1, window.innerWidth);
     const h = Math.max(1, window.innerHeight);
-    const budgetScale = Math.sqrt(2_200_000 / (w * h));
-    return Math.max(0.75, Math.min(dpr, 1.5, budgetScale));
+    const budgetScale = Math.sqrt(1_250_000 / (w * h));
+    return Math.max(0.7, Math.min(dpr, 1.25, budgetScale));
   }
 
   function resize(initial) {
     const c = state.canvas;
     if (!c) return;
+    const oldScale = state.scale;
     state.scale = computeScale();
     const w = Math.max(1, window.innerWidth), h = Math.max(1, window.innerHeight);
     const pw = Math.max(1, Math.round(w * state.scale)), ph = Math.max(1, Math.round(h * state.scale));
-    const changed = w !== state.cssW || h !== state.cssH || pw !== state.pixelW || ph !== state.pixelH;
+    const cssChanged = w !== state.cssW || h !== state.cssH;
+    const pixelChanged = pw !== state.pixelW || ph !== state.pixelH;
+    if (!initial && !cssChanged && !pixelChanged && state.scale === oldScale) return;
     state.cssW = w; state.cssH = h; state.pixelW = pw; state.pixelH = ph;
-    c.style.width = w + 'px';
-    c.style.height = h + 'px';
-    c.width = pw;
-    c.height = ph;
-    if (changed && !initial) {
+    /* Assigning canvas.width/height clears the drawing buffer even when the
+       value is unchanged. Mobile URL-bar resize events fire repeatedly, which
+       used to blank the framebuffer and show up as a white flash or tear line
+       over the world. Only touch the backing store when its size really
+       changes. */
+    if (cssChanged) {
+      c.style.width = w + 'px';
+      c.style.height = h + 'px';
+    }
+    if (pixelChanged) {
+      c.width = pw;
+      c.height = ph;
+    }
+    if ((cssChanged || pixelChanged) && !initial) {
       push({ type: EV.SDL_EVENT_WINDOW_RESIZED, data1: w, data2: h });
       push({ type: EV.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED, data1: pw, data2: ph });
     }
@@ -93,7 +105,7 @@
     }
     c.tabIndex = 0;
     Object.assign(c.style, { position: 'fixed', left: '0', top: '0', display: 'block', outline: 'none',
-      touchAction: 'none', imageRendering: 'pixelated' });
+      touchAction: 'none', imageRendering: 'pixelated', background: '#000' });
     state.canvas = c;
     resize(true);
     // The Java Window is constructed from the launcher's requested display
@@ -105,7 +117,19 @@
     push({ type: EV.SDL_EVENT_WINDOW_RESIZED, data1: state.cssW, data2: state.cssH });
     push({ type: EV.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED, data1: state.pixelW, data2: state.pixelH });
     installInput(c);
-    window.addEventListener('resize', () => resize(false));
+    /* Coalesce resize bursts into one update per frame. On iOS the URL bar
+       can fire dozens of resize events while it slides; resizing the WebGPU
+       canvas in the middle of a frame is what produced the visible flicker. */
+    let resizeQueued = false;
+    const queueResize = () => {
+      if (resizeQueued) return;
+      resizeQueued = true;
+      const run = () => { resizeQueued = false; resize(false); };
+      if (window.requestAnimationFrame) window.requestAnimationFrame(run);
+      else setTimeout(run, 16);
+    };
+    window.addEventListener('resize', queueResize);
+    window.addEventListener('orientationchange', queueResize);
     return c;
   }
 

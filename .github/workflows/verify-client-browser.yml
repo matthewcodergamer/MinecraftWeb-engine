@@ -207,11 +207,12 @@ jobs:
             --actions "wait=window.__mc && document.body.classList.contains('java-ui');shot=build/title_screen.png;click=Singleplayer@TitleScreen;shot=build/create_world.png;click=World@CreateWorldScreen;cycle=World Type|Superflat;shot=build/world_tab_superflat.png;click=Create New World@CreateWorldScreen" \
             --actions-timeout 900 \
             --screenshot build/browser_title_world.png \
-            --until-js "window.__mc && (window.__mc.stage === 'failed' || window.__mc.javaStage === 'first-java-section-emitted')" \
-            --assert-js "window.__mc && window.__mc.javaStage === 'first-java-section-emitted'" \
+            --until-js "window.__mc && (window.__mc.stage === 'failed' || window.__mc.javaStage === 'world-level-and-player-ready')" \
+            --assert-js "window.__mc && window.__mc.javaStage === 'world-level-and-player-ready'" \
             --assert-js "window.__mc && window.__mc.stage !== 'failed'" \
             --assert-js "window.__mc && window.__mc.javaStage !== 'failed'" \
             --assert-js "(() => { const f = document.getElementById('mc-brain'); const m = f && f.contentWindow && f.contentWindow.__mc; return !!m && m.stage !== 'failed'; })()" \
+            --assert-js "(() => { const f = document.getElementById('mc-brain'); const m = f && f.contentWindow && f.contentWindow.__mc; const b = String(m && m['boot-state'] || ''); return b.indexOf('level=true') >= 0 && b.indexOf('player=true') >= 0; })()" \
             --assert-js "(() => { const f = document.getElementById('mc-brain'); const u = f && f.contentWindow ? String(f.contentWindow.__mcWasmUrl || '') : ''; return u.indexOf('127.0.0.1') >= 0 && u.indexOf('minecraft-java-edition-v26.3.wasm') >= 0; })()" \
             --assert-js "(() => { const f = document.getElementById('mc-brain'); const m = f && f.contentWindow && f.contentWindow.__mc; return !!m && String(m['world-preset'] || '').indexOf('flat') >= 0; })()"
           cp build/browser_console.log build/title_console.log

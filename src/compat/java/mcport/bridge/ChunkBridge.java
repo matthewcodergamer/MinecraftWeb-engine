@@ -95,7 +95,10 @@ public final class ChunkBridge {
     private static long frameCounter;
     private static boolean worldRequested;
     private static boolean freshWorld;
-    private static boolean rulesApplied;
+    /** Fresh world whose worldgen-spawned entities still need one cleanup pass. */
+    private static boolean mobCleanupPending;
+    /** Identity of the level whose gamerules have already been applied. */
+    private static Object lastRulesLevel;
     private static boolean audioReported;
     /** QA loadout split from {@code __mcWorldRequested.hotbar}, or null until read. */
     private static String[] hotbarItems;
@@ -128,8 +131,9 @@ public final class ChunkBridge {
         PALETTE.clear();
         lastLevel = null;
         lastPresetLevel = null;
+        lastRulesLevel = null;
         freshWorld = false;
-        rulesApplied = false;
+        mobCleanupPending = false;
         audioReported = false;
         hotbarItems = null;
         hotbarTries = 0;
@@ -171,6 +175,30 @@ public final class ChunkBridge {
         applyPerformanceDefaults(minecraft);
         adaptQuality(minecraft);
         maybeStartWorld(minecraft);
+        // World readiness and the actual generator preset must be published in
+        // every mode. These used to live below the Java-primary return, so the
+        // normal browser path never reported that a level and player existed;
+        // the end-to-end test then waited forever for a Rust-only stage.
+        if (minecraft.level != null && minecraft.player != null) {
+            if (!firstLevelPlayerLogged) {
+                firstLevelPlayerLogged = true;
+                BrowserRuntime.report("stage", "world-level-and-player-ready");
+            }
+            if (minecraft.level != lastPresetLevel && reportActualPreset(minecraft)) {
+                lastPresetLevel = minecraft.level;
+            }
+            // Gamerules must also run in Java-primary mode, where the Rust
+            // stream below returns early. Apply them once per level, as soon as
+            // the integrated server is available.
+            if (minecraft.level != lastRulesLevel && minecraft.player.connection != null
+                    && minecraft.getSingleplayerServer() != null) {
+                lastRulesLevel = minecraft.level;
+                applyGameRules(minecraft);
+            }
+        } else if (minecraft.level != null && !firstLevelCreatedLogged) {
+            firstLevelCreatedLogged = true;
+            BrowserRuntime.report("stage", "world-level-created");
+        }
         frameCounter++;
         // Java's own renderer is ready for input as soon as the client has
         // finished loading, not only after the first chunk is packed for the
@@ -191,26 +219,7 @@ public final class ChunkBridge {
             return;
         }
         if (minecraft.level == null || minecraft.player == null) {
-            if (minecraft.level != null && !firstLevelCreatedLogged) {
-                firstLevelCreatedLogged = true;
-                BrowserRuntime.report("stage", "world-level-created");
-            }
             return;
-        }
-        if (!firstLevelPlayerLogged) {
-            firstLevelPlayerLogged = true;
-            BrowserRuntime.report("stage", "world-level-and-player-ready");
-        }
-
-        // Worlds created through Java's own menus never pass through
-        // presetDimensions(), so report what the integrated server actually
-        // generated. This is the end-to-end signal the title-screen test uses
-        // to prove that selecting Superflat in CreateWorldScreen produced a
-        // flat world rather than merely changing a button label.
-        if (minecraft.level != lastPresetLevel) {
-            if (reportActualPreset(minecraft)) {
-                lastPresetLevel = minecraft.level;
-            }
         }
 
         // The Rust body is a boot backdrop, not the game camera. Half-rate
@@ -230,10 +239,6 @@ public final class ChunkBridge {
 
         // Options that are not part of LevelSettings/WorldOptions are applied
         // as gamerules once the integrated server has a player to run them.
-        if (freshWorld && !rulesApplied) {
-            rulesApplied = true;
-            applyGameRules(minecraft);
-        }
         applyHotbar(minecraft);
 
         // Loading a different world (or returning to the title screen and picking
@@ -379,29 +384,35 @@ public final class ChunkBridge {
             boolean mobile = isMobileBrowser();
             int rd = requestedRenderDistance();
             if (rd <= 0) {
-                rd = mobile ? 8 : 12;
+                // Desktop 8 chunks / mobile 5. The old 12/8 defaults made the
+                // Java renderer submit several hundred extra chunk draws per
+                // frame, which is the difference between a slideshow and a
+                // playable 30 FPS on integrated laptop GPUs.
+                rd = mobile ? 5 : 8;
             }
             rd = Math.max(2, Math.min(32, rd));
-            if (mobile) {
-                try {
-                    net.minecraft.client.GraphicsPreset.FAST.apply(minecraft);
-                } catch (Throwable ignored) {
-                }
-                try {
-                    minecraft.options.particles().set(net.minecraft.server.level.ParticleStatus.DECREASED);
-                } catch (Throwable ignored) {
-                }
-                try {
-                    minecraft.options.entityShadows().set(Boolean.FALSE);
-                } catch (Throwable ignored) {
-                }
-                try {
-                    minecraft.options.cloudStatus().set(net.minecraft.client.CloudStatus.FAST);
-                } catch (Throwable ignored) {
-                }
+            // Fast graphics everywhere: fancy leaves, smooth lighting and
+            // entity shadows are all expensive in the WebGPU backend. Clouds
+            // are disabled because the browser cloud mesh is currently
+            // malformed (vertical quads), and they are pure fill-rate cost.
+            try {
+                net.minecraft.client.GraphicsPreset.FAST.apply(minecraft);
+            } catch (Throwable ignored) {
+            }
+            try {
+                minecraft.options.particles().set(net.minecraft.server.level.ParticleStatus.DECREASED);
+            } catch (Throwable ignored) {
+            }
+            try {
+                minecraft.options.entityShadows().set(Boolean.FALSE);
+            } catch (Throwable ignored) {
+            }
+            try {
+                minecraft.options.cloudStatus().set(net.minecraft.client.CloudStatus.OFF);
+            } catch (Throwable ignored) {
             }
             minecraft.options.renderDistance().set(rd);
-            minecraft.options.simulationDistance().set(Math.min(rd, mobile ? 6 : 8));
+            minecraft.options.simulationDistance().set(Math.min(rd, mobile ? 5 : 8));
             BrowserRuntime.report("perf-defaults", "rd=" + rd + " mobile=" + mobile);
         } catch (Throwable t) {
             BrowserRuntime.report("perf-defaults-error", t.getClass().getName());
@@ -598,6 +609,7 @@ public final class ChunkBridge {
                 minecraft.createWorldOpenFlows().openWorld(folder, () -> { });
             } else {
                 freshWorld = true;
+                mobCleanupPending = true;
                 minecraft.createWorldOpenFlows().createFreshLevel(folder, settings, options,
                         provider -> presetDimensions(provider, preset), null);
             }
@@ -619,14 +631,47 @@ public final class ChunkBridge {
     }
 
     private static void applyGameRules(Minecraft minecraft) {
-        if (minecraft.player == null || minecraft.player.connection == null) {
+        // Apply rules through the integrated server, not through a player
+        // command. Most browser worlds are created with "Allow Commands" off,
+        // so the old /gamerule path silently did nothing: mobs spawned without
+        // limit and the player could be killed before the first frame.
+        net.minecraft.client.server.IntegratedServer server = minecraft.getSingleplayerServer();
+        if (server == null || minecraft.level == null) {
             return;
         }
-        if (settingKeepInv()) {
-            command(minecraft, "gamerule keepInventory true");
+        ServerLevel level = server.getLevel(minecraft.level.dimension());
+        if (level == null) {
+            return;
         }
-        if (!settingDaylight()) {
-            command(minecraft, "gamerule doDaylightCycle false");
+        net.minecraft.world.level.gamerules.GameRules rules = level.getGameRules();
+        rules.set(net.minecraft.world.level.gamerules.GameRules.KEEP_INVENTORY, settingKeepInv(), server);
+        rules.set(net.minecraft.world.level.gamerules.GameRules.ADVANCE_TIME, settingDaylight(), server);
+        // Natural mob spawning is the single largest source of avoidable entity
+        // work in the browser client: a fresh world can fill several chunks with
+        // slimes/horses before the first frame, and the resulting entities both
+        // tank the frame rate and kill the player during boot. Keep the world
+        // calm unless the host explicitly asks for mobs (?mobs=1).
+        if (!settingMobs()) {
+            rules.set(net.minecraft.world.level.gamerules.GameRules.SPAWN_MOBS, Boolean.FALSE, server);
+            rules.set(net.minecraft.world.level.gamerules.GameRules.SPAWN_PATROLS, Boolean.FALSE, server);
+            rules.set(net.minecraft.world.level.gamerules.GameRules.SPAWN_WANDERING_TRADERS, Boolean.FALSE, server);
+            rules.set(net.minecraft.world.level.gamerules.GameRules.SPAWN_WARDENS, Boolean.FALSE, server);
+            rules.set(net.minecraft.world.level.gamerules.GameRules.SPAWN_PHANTOMS, Boolean.FALSE, server);
+            if (mobCleanupPending || level.getGameTime() < 1200L) {
+                mobCleanupPending = false;
+                try {
+                    // World generation can place animals before the first tick.
+                    // Remove them once so a fresh browser world starts empty
+                    // instead of simulating dozens of idle mob AI brains.
+                    java.util.List<? extends net.minecraft.world.entity.Entity> entities = level.getEntities(
+                            net.minecraft.world.level.entity.EntityTypeTest.forClass(net.minecraft.world.entity.Entity.class),
+                            entity -> !(entity instanceof net.minecraft.world.entity.player.Player));
+                    for (net.minecraft.world.entity.Entity entity : entities) {
+                        entity.discard();
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
         }
     }
 
@@ -810,6 +855,11 @@ public final class ChunkBridge {
 
     @JSBody(script = "var w=globalThis.__mcWorldRequested||{}; return String(w.type==null?'normal':w.type);")
     private static native String settingType();
+
+    @JSBody(script = "try { if (new URLSearchParams(location.search).get('mobs') === '1') return true; }"
+            + " catch (e) {}"
+            + " var w=globalThis.__mcWorldRequested||{}; return !!w.mobs;")
+    private static native boolean settingMobs();
 
     @JSBody(script = "var w=globalThis.__mcWorldRequested||{};"
             + " return Array.isArray(w.hotbar) ? w.hotbar.join(',') : '';")

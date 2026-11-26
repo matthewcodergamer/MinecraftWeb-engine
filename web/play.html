@@ -89,9 +89,10 @@ const HF_BASE = 'https://matthewcodergamer-minecraft-browser.static.hf.space/';
 // its runtime for a long time, so an unversioned URL can keep serving an old
 // wasm build after a deployment.
 const MC_BUILD = '20261125d';
-// Cache Storage bucket for the two large client artifacts. Bumping MC_BUILD
-// changes the bucket, so a new client never runs against stale bytes.
-const CLIENT_CACHE = 'mc-client-' + MC_BUILD;
+// Cache Storage bucket for the two large client artifacts. bridge.js adds the
+// `mc-client-` prefix; bumping MC_BUILD changes the bucket, so a new client
+// never runs against stale bytes.
+const CLIENT_CACHE = MC_BUILD;
 if (embedded) document.documentElement.classList.add('embedded');
 if (window.mcBridge && mcBridge.configureAssetCache) mcBridge.configureAssetCache(CLIENT_CACHE);
 
@@ -324,6 +325,101 @@ async function downloadPart(url, expected, onBytes) {
   return chunks;
 }
 
+/* Mobile browsers are killed while a 112 MiB wasm file sits in a JavaScript
+   ArrayBuffer, then again when it is copied into a Blob. Stream the bytes to
+   the Origin Private File System instead and compile straight from the
+   disk-backed File. On the next visit the same file is reused with no
+   download. Cache Storage remains the fallback for browsers without OPFS. */
+const WASM_CACHE_DIR = 'mc-client';
+const WASM_CACHE_KEY = 'client-' + String(MC_BUILD).replace(/[^a-zA-Z0-9._-]/g, '') + '.wasm';
+let wasmCacheDirPromise = null;
+
+function wasmCacheDir() {
+  if (wasmCacheDirPromise) return wasmCacheDirPromise;
+  wasmCacheDirPromise = (async () => {
+    if (!navigator.storage || typeof navigator.storage.getDirectory !== 'function') return null;
+    try {
+      const root = await navigator.storage.getDirectory();
+      return await root.getDirectoryHandle(WASM_CACHE_DIR, { create: true });
+    } catch (error) {
+      console.warn('OPFS wasm cache unavailable', error);
+      return null;
+    }
+  })();
+  return wasmCacheDirPromise;
+}
+
+async function readWasmCache(dir) {
+  if (!dir) return null;
+  try {
+    const metaFile = await (await dir.getFileHandle(WASM_CACHE_KEY + '.json')).getFile();
+    const meta = JSON.parse(await metaFile.text());
+    const file = await (await dir.getFileHandle(WASM_CACHE_KEY)).getFile();
+    if (file.size > 0 && (!meta.size || Number(meta.size) === file.size)) return file;
+    console.warn('OPFS wasm cache size mismatch', meta.size, file.size);
+  } catch (error) {
+    /* A missing meta or a partial first download: fall through and refetch. */
+  }
+  return null;
+}
+
+async function writeWasmCacheMeta(dir, file) {
+  try {
+    const handle = await dir.getFileHandle(WASM_CACHE_KEY + '.json', { create: true });
+    const writable = await handle.createWritable();
+    await writable.write(JSON.stringify({ build: MC_BUILD, size: file.size, saved: Date.now() }));
+    await writable.close();
+  } catch (error) {
+    console.warn('OPFS wasm cache metadata not saved', error);
+  }
+}
+
+async function downloadWasmToCache(absolute, dir, onProgress) {
+  const response = await fetch(absolute, {
+    cache: 'no-store',
+    headers: { Range: 'bytes=0-' },
+  });
+  if (!response.ok) throw new Error('HTTP ' + response.status + ' — ' + absolute);
+  if (!response.body || !response.body.getReader) throw new Error('streaming download unavailable');
+  const total = Number(response.headers.get('content-length')) || 0;
+  const handle = await dir.getFileHandle(WASM_CACHE_KEY, { create: true });
+  const writable = await handle.createWritable();
+  const reader = response.body.getReader();
+  let got = 0;
+  try {
+    for (;;) {
+      const step = await reader.read();
+      if (step.done) break;
+      await writable.write(step.value);
+      got += step.value.length;
+      onProgress(total ? Math.min(1, got / total) : 0, got, total);
+    }
+    await writable.close();
+  } catch (error) {
+    try { await writable.abort(); } catch (e) { /* already closed */ }
+    throw error;
+  }
+  const file = await handle.getFile();
+  if (total && file.size !== total) {
+    throw new Error('wasm download truncated (' + file.size + ' of ' + total + ' bytes)');
+  }
+  await writeWasmCacheMeta(dir, file);
+  return file;
+}
+
+async function compileWasmFile(file, absolute, options) {
+  const blobUrl = URL.createObjectURL(new Blob([file], { type: 'application/wasm' }));
+  try {
+    msg('Compiling WebAssembly client…');
+    return await TeaVM.wasmGC.load(blobUrl, options);
+  } catch (error) {
+    console.warn('cached wasm blob load failed; loading the URL directly', error);
+    return await TeaVM.wasmGC.load(absolute, options);
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+  }
+}
+
 /* Download the wasm ourselves so the progress bar follows real bytes, then
    compile it from a Blob URL. Cache Storage keeps the finished bytes for the
    next visit; the HF signed CDN URL changes every time, so the HTTP cache
@@ -331,6 +427,27 @@ async function downloadPart(url, expected, onBytes) {
 async function loadWasmModule(url, options) {
   const absolute = new URL(url, location.href).href;
   const mb = (n) => (n / 1048576).toFixed(0);
+  const dir = params.get('nocache') === '1' ? null : await wasmCacheDir();
+  if (dir) {
+    const cached = await readWasmCache(dir);
+    if (cached) {
+      msg('WebAssembly client loaded from this device (' + mb(cached.size) + ' MiB, no download)');
+      downloadBar('wasm', 1);
+      return await compileWasmFile(cached, absolute, options);
+    }
+    try {
+      msg('Downloading WebAssembly client…');
+      const file = await downloadWasmToCache(absolute, dir, (fraction, got, total) => {
+        msg('Downloading WebAssembly client ' + mb(got) + ' / ' + mb(total || got) + ' MiB');
+        downloadBar('wasm', fraction);
+      });
+      msg('WebAssembly client saved on this device for the next visit');
+      return await compileWasmFile(file, absolute, options);
+    } catch (error) {
+      console.warn('OPFS wasm download failed; falling back to Cache Storage', error);
+      msg('Retrying the WebAssembly client download…');
+    }
+  }
   const buffer = await mcBridge.fetchAsset(absolute, {
     retries: 1,
     cacheName: CLIENT_CACHE,

@@ -1264,8 +1264,12 @@
   <script src="bridge.js"></script>
   <script src="input.js"></script>
   <script type="module">
-    import init, * as body from './pkg/mc_body.js';
-    window.__mcBody = body;
+    // The Rust/WebGPU body is a renderer-only fallback and a QA harness. The
+    // normal Java boot path must not start a second renderer: two WebGPU
+    // contexts on one page compete for the same GPU, keep an invisible RAF
+    // loop alive, and make the Java client's frame pacing much worse. Load the
+    // body module only when this page is explicitly running without Java.
+    let body = null;
 
     const params = new URLSearchParams(location.search);
     const $ = (id) => document.getElementById(id);
@@ -1757,6 +1761,11 @@
       window.__mcLoadingFinished = true;
       window.__mc = Object.assign(window.__mc || {}, { stage: 'complete' });
       progress();
+      /* The Java title-screen watcher owns the ready signal when the real
+         client is presenting pixels. The HTML fallback has no Java title
+         watcher, so publish readiness here or the Pages gate would wait for a
+         message that never arrives. */
+      if (HTML_UI) postToHost('ready', { mode: 'html', sections: sectionCount });
       loading.classList.add('done');
       setTimeout(() => {
         loading.classList.add('gone');
@@ -3274,6 +3283,7 @@
           throw new Error('This browser has no WebGPU. Minecraft 26.3 needs Safari 18+ (iOS 18+) or Chrome 113+.');
         }
 
+        let javaDeployed = false;
         if (params.get('java') !== '0') {
           let brain = false;
           // WebAssembly is the primary client. Older deployments also shipped
@@ -3290,6 +3300,7 @@
             if (brain) break;
           }
           if (brain) {
+            javaDeployed = true;
             const frame = $('mc-brain');
             frame.addEventListener('load', flushBrainQueue);
             // Let the client pick its own render scale (devicePixelRatio,
@@ -3327,41 +3338,57 @@
           }
         }
         progress();
-        if (!state.javaStage) status('Starting WebGPU...');
+        if (!state.javaStage) status('Starting the Java client...');
         progress();
 
-        await init(typeof window.__mcBodyWasm === 'string' ? window.__mcBodyWasm : undefined);
-        state.rust = 0.4;
-        progress();
+        // Normal Java boot: no Rust body at all. The Java iframe owns the
+        // canvas, input, world and renderer. Only renderer-only/QA paths load
+        // the Rust module, so there is never a second RAF loop or WebGPU
+        // context competing with the game the player is actually using.
+        const useRustBody = params.get('rust') === '1'
+          || params.get('java') === '0'
+          || params.get('smoke-world') === '1'
+          || (HTML_UI && !javaDeployed);
+        if (useRustBody) {
+          const mod = await import('./pkg/mc_body.js');
+          body = mod;
+          window.__mcBody = mod;
+          await body.default(typeof window.__mcBodyWasm === 'string' ? window.__mcBodyWasm : undefined);
+          state.rust = 0.4;
+          progress();
 
-        // Keep both the framebuffer and chunk working set conservative on
-        // touch devices and laptops with 8 GB RAM or less.
-        const mem = Number(navigator.deviceMemory) || 0;
-        const lowMemory = MCInput.isTouch || (mem > 0 && mem <= 8);
-        window.__mcDprCap = lowMemory ? 1 : 2;
-        body.set_render_distance(lowMemory ? 2 : 6);
-        // The scene target now matches the swap-chain format, so the grade is
-        // valid on BGRA as well; `?post=0` keeps the direct path for A/B tests.
-        const preferred = navigator.gpu.getPreferredCanvasFormat
-          ? navigator.gpu.getPreferredCanvasFormat() : 'bgra8unorm';
-        body.set_post_enabled(params.get('post') !== '0');
-        console.log('render distance: ' + body.render_distance() + ' chunks · post: ' + body.post_enabled() +
-          ' · canvas: ' + preferred);
+          // Keep both the framebuffer and chunk working set conservative on
+          // touch devices and laptops with 8 GB RAM or less.
+          const mem = Number(navigator.deviceMemory) || 0;
+          const lowMemory = MCInput.isTouch || (mem > 0 && mem <= 8);
+          window.__mcDprCap = lowMemory ? 1 : 2;
+          body.set_render_distance(lowMemory ? 2 : 6);
+          // The scene target now matches the swap-chain format, so the grade is
+          // valid on BGRA as well; `?post=0` keeps the direct path for A/B tests.
+          const preferred = navigator.gpu.getPreferredCanvasFormat
+            ? navigator.gpu.getPreferredCanvasFormat() : 'bgra8unorm';
+          body.set_post_enabled(params.get('post') !== '0');
+          console.log('render distance: ' + body.render_distance() + ' chunks · post: ' + body.post_enabled() +
+            ' · canvas: ' + preferred);
 
-        await loadTextures();
-        state.rust = 0.9;
-        status('Building terrain...');
-        progress();
+          await loadTextures();
+          state.rust = 0.9;
+          status('Building terrain...');
+          progress();
 
-        mcBridge.attachRust(body);
-        body.set_host_input(true);
-        guardParentAnimationFrames();
-        body.run();
+          mcBridge.attachRust(body);
+          body.set_host_input(true);
+          guardParentAnimationFrames();
+          body.run();
 
-        window.__mcInput = MCInput.install($('mc-canvas'), {});
-        window.__mcInput.setEnabled(false);
+          window.__mcInput = MCInput.install($('mc-canvas'), {});
+          window.__mcInput.setEnabled(false);
+        } else {
+          state.rust = 1;
+          console.log('Java client owns the canvas; Rust body is not started.');
+          progress();
+        }
 
-        state.rust = 1;
         state.booted = true;
         progress();
         finishSplash();
