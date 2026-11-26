@@ -3310,6 +3310,11 @@
             // split JavaScript bundle when WASM is unavailable. Forward the
             // explicit engine switches so QA can still force either backend.
             let brainQuery = 'play.html?embedded=1&stats=0&v=20261126a';
+            // Mobs are part of the game again. Natural spawning is capped by
+            // the integrated server's gamerules, so this restores normal
+            // survival without the old boot-time swarm. Low-end/QA runs can
+            // still opt out with ?mobs=0 on the host URL.
+            if (params.get('mobs') !== '0') brainQuery += '&mobs=1';
             // In the normal flow Java renders the visible canvas. The Rust body
             // is only an opaque boot backdrop, so do not pack/post its world.
             if (!HTML_UI && params.get('java-primary') !== '0') brainQuery += '&java-primary=1';
