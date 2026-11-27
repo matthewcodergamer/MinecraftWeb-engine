@@ -66,16 +66,16 @@
 </script>
 <div id="boot"><div id="boot-msg">Starting…</div><div class="bar"><div id="boot-bar"></div></div><pre id="boot-err"></pre></div>
 <div id="stats"></div>
-<script src="native/layout.js?v=20261127a"></script>
-<script src="native/layout-shaders.js?v=20261127a"></script>
-<script src="native/heap.js?v=20261127a"></script>
-<script src="native/natives.js?v=20261127a"></script>
-<script src="native/sdl.js?v=20261127a"></script>
-<script src="native/shaders.js?v=20261127a"></script>
-<script src="native/stb.js?v=20261127a"></script>
-<script src="gpu/webgpu.js?v=20261127a"></script>
+<script src="native/layout.js?v=20261127b"></script>
+<script src="native/layout-shaders.js?v=20261127b"></script>
+<script src="native/heap.js?v=20261127b"></script>
+<script src="native/natives.js?v=20261127b"></script>
+<script src="native/sdl.js?v=20261127b"></script>
+<script src="native/shaders.js?v=20261127b"></script>
+<script src="native/stb.js?v=20261127b"></script>
+<script src="gpu/webgpu.js?v=20261127b"></script>
 <script src="bridge.js"></script>
-<script src="native/audio.js?v=20261127a"></script>
+<script src="native/audio.js?v=20261127b"></script>
 <script>
 // Host page of the browser port: loads the client jar's resources (packed from the user's own installation),
 // initialises the WebAssembly shader toolchain and the WebGPU device, then starts the real
@@ -94,7 +94,7 @@ const WASM_BASE = 'https://huggingface.co/matthewcodergamer/minecraft-web-client
 // Bumped on every deployed client build. The Space CDN caches the module and
 // its runtime for a long time, so an unversioned URL can keep serving an old
 // wasm build after a deployment.
-const MC_BUILD = '20261127a';
+const MC_BUILD = '20261127b';
 // Cache Storage bucket for the two large client artifacts. bridge.js adds the
 // `mc-client-` prefix; bumping MC_BUILD changes the bucket, so a new client
 // never runs against stale bytes.

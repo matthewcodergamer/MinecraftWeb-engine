@@ -88,6 +88,7 @@ public final class ChunkBridge {
     private static long lastBootStateAt;
     private static long lastAdaptiveAt;
     private static int lowFpsStreak;
+    private static int highFpsStreak;
     private static boolean firstSectionLogged;
     private static boolean ready;
     private static boolean clientReady;
@@ -148,6 +149,7 @@ public final class ChunkBridge {
         lastBootStateAt = 0L;
         lastAdaptiveAt = 0L;
         lowFpsStreak = 0;
+        highFpsStreak = 0;
         playerPosReports = 0;
         frameCounter = 0;
         emitReset();
@@ -389,7 +391,7 @@ public final class ChunkBridge {
                 // Java renderer submit several hundred extra chunk draws per
                 // frame, which is the difference between a slideshow and a
                 // playable 30 FPS on integrated laptop GPUs.
-                rd = mobile ? 5 : 8;
+                rd = mobile ? 4 : 8;
             }
             rd = Math.max(2, Math.min(32, rd));
             // Fast graphics by default: fancy leaves, smooth lighting and
@@ -430,7 +432,7 @@ public final class ChunkBridge {
             } catch (Throwable ignored) {
             }
             minecraft.options.renderDistance().set(rd);
-            minecraft.options.simulationDistance().set(Math.min(rd, mobile ? 5 : 8));
+            minecraft.options.simulationDistance().set(Math.min(rd, mobile ? 4 : 8));
             BrowserRuntime.report("perf-defaults", "rd=" + rd + " mobile=" + mobile);
         } catch (Throwable t) {
             BrowserRuntime.report("perf-defaults-error", t.getClass().getName());
@@ -479,6 +481,13 @@ public final class ChunkBridge {
             + " catch (e) { return 0; }")
     private static native double currentFps();
 
+    @JSBody(script = "try { return Number(window.__mcScaleBias) || 1; } catch (e) { return 1; }")
+    private static native double currentScaleBias();
+
+    @JSBody(params = "bias", script = "try { window.__mcScaleBias = bias;"
+            + " if (window.__mcQueueResize) window.__mcQueueResize(); } catch (e) {}")
+    private static native void setScaleBias(double bias);
+
     @JSBody(script = "try { return new URLSearchParams(location.search).get('adaptive') !== '0'; }"
             + " catch (e) { return true; }")
     private static native boolean adaptiveQuality();
@@ -505,16 +514,47 @@ public final class ChunkBridge {
             return;
         }
         int rd = minecraft.options.renderDistance().get();
-        if (fps < 28 && rd > 4) {
-            if (++lowFpsStreak >= 3) {
+        double bias = currentScaleBias();
+        if (fps < 28) {
+            highFpsStreak = 0;
+            if (rd > 4) {
+                if (++lowFpsStreak >= 3) {
+                    lowFpsStreak = 0;
+                    rd--;
+                    minecraft.options.renderDistance().set(rd);
+                    BrowserRuntime.report("adaptive-rd",
+                            "fps=" + Math.round(fps) + " rd=" + rd);
+                }
+            } else if (bias > 0.6) {
+                // The draw distance is already at the playable floor, so the
+                // remaining frame cost is fill rate. Step the backing store
+                // down by 10% every five seconds; CSS keeps the canvas
+                // full-screen and the browser upscales it. This is the only
+                // lever that helps a phone whose GPU cannot fill 1080p.
                 lowFpsStreak = 0;
-                rd--;
-                minecraft.options.renderDistance().set(rd);
-                BrowserRuntime.report("adaptive-rd",
-                        "fps=" + Math.round(fps) + " rd=" + rd);
+                bias = Math.max(0.6, bias - 0.1);
+                setScaleBias(bias);
+                BrowserRuntime.report("adaptive-scale",
+                        "fps=" + Math.round(fps) + " rd=" + rd
+                                + " scale=" + String.format(java.util.Locale.ROOT, "%.1f", bias));
             }
         } else {
             lowFpsStreak = 0;
+            if (fps > 52 && bias < 1.0) {
+                // Recover image sharpness after a transient slowdown (chunk
+                // streaming, another tab) instead of leaving the canvas soft
+                // for the rest of the session.
+                if (++highFpsStreak >= 6) {
+                    highFpsStreak = 0;
+                    bias = Math.min(1.0, bias + 0.1);
+                    setScaleBias(bias);
+                    BrowserRuntime.report("adaptive-scale-up",
+                            "fps=" + Math.round(fps) + " rd=" + rd
+                                    + " scale=" + String.format(java.util.Locale.ROOT, "%.1f", bias));
+                }
+            } else {
+                highFpsStreak = 0;
+            }
         }
     }
 

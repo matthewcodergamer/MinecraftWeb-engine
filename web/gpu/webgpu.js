@@ -19,6 +19,7 @@
     pipelines: new Set(),
     planTotal: 0,
     presentMs: 0, presentAvg: 0, intervalMs: 0, intervalAvg: 0,
+    gpuAvg: 0, gpuProbe: false,
     lastPresentAt: 0,
     encoder: null,               // current GPUCommandEncoder (lazily created)
     pass: null,                  // current GPURenderPassEncoder
@@ -1286,6 +1287,7 @@
       transientBytes: s.transientBytes, transientChunks: G.transient.length,
       objSlots: G.obj.length, freeSlots: G.free.length, planTotal: G.planTotal,
       presentAvg: +G.presentAvg.toFixed(2), intervalAvg: +G.intervalAvg.toFixed(2),
+      gpuAvg: +G.gpuAvg.toFixed(2), adapter: G.adapterName || '', fallback: !!G.isFallback,
       heapMB: performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : -1,
       heapTotalMB: performance.memory ? Math.round(performance.memory.totalJSHeapSize / 1048576) : -1,
       heapLimitMB: performance.memory ? Math.round(performance.memory.jsHeapSizeLimit / 1048576) : -1,
@@ -1360,6 +1362,21 @@
       G.intervalAvg = G.intervalAvg ? G.intervalAvg * 0.9 + G.intervalMs * 0.1 : G.intervalMs;
     }
     G.lastPresentAt = t1;
+    // Queue latency, not submit time, is the number that explains a low frame
+    // rate: if this tracks intervalAvg the GPU is the bottleneck, and a large
+    // gap means the Java/JS side is. One probe in flight keeps the promise
+    // overhead out of the hot path.
+    if (!G.gpuProbe && G.queue && G.device && !G.lost) {
+      G.gpuProbe = true;
+      const probeAt = t1;
+      G.queue.onSubmittedWorkDone().then(() => {
+        G.gpuProbe = false;
+        const ms = performance.now() - probeAt;
+        G.gpuAvg = G.gpuAvg ? G.gpuAvg * 0.9 + ms * 0.1 : ms;
+      }, () => {
+        G.gpuProbe = false;
+      });
+    }
     if ((G.frame & 511) === 0) trimCaches();
   };
 })();

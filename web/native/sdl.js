@@ -53,17 +53,29 @@
     const dpr = window.devicePixelRatio || 1;
     const forced = parseFloat(params.get('scale'));
     if (forced > 0) return forced;
+    // The Java tick bridge lowers this bias when a device cannot hold 30 FPS.
+    // Fill rate is the one cost that scales directly with pixels, and a
+    // slightly soft image is far better than a slideshow on a weak phone GPU.
+    const bias = Math.min(1, Math.max(0.5, Number(globalThis.__mcScaleBias) || 1));
+    const w = Math.max(1, window.innerWidth);
+    const h = Math.max(1, window.innerHeight);
     const mobile = /iPhone|iPad|Android/i.test(navigator.userAgent);
-    if (mobile) return Math.min(dpr, 1.0);
+    if (mobile) {
+      // A 1440p phone framebuffer is 3.7 MP; the Java client submits the whole
+      // frame every tick, so a mid-range mobile GPU cannot fill that at 30 fps.
+      // Start near 1.6 MP (roughly 850p wide) instead of waiting ~20 s for the
+      // adaptive bias to walk down from full resolution. The bias can still
+      // lower or raise it from here.
+      const mobileBudget = Math.sqrt(1_600_000 / (w * h));
+      return Math.max(0.5, Math.min(dpr, 1.0, mobileBudget) * bias);
+    }
     // A Retina desktop window at DPR 2 spends four times the fill rate of the
     // same window at DPR 1. The Java client records every draw on the CPU and
     // the WebGPU backend submits the whole frame, so extra pixels directly
     // steal frame time from the 2018 MacBook-class integrated GPU. Keep the
     // framebuffer near 1.25 MP and let the browser upscale the canvas.
-    const w = Math.max(1, window.innerWidth);
-    const h = Math.max(1, window.innerHeight);
     const budgetScale = Math.sqrt(1_250_000 / (w * h));
-    return Math.max(0.7, Math.min(dpr, 1.25, budgetScale));
+    return Math.max(0.5, Math.max(0.7, Math.min(dpr, 1.25, budgetScale)) * bias);
   }
 
   function resize(initial) {
@@ -130,6 +142,8 @@
     };
     window.addEventListener('resize', queueResize);
     window.addEventListener('orientationchange', queueResize);
+    // Called by the Java tick bridge after it lowers the render-scale bias.
+    globalThis.__mcQueueResize = queueResize;
     return c;
   }
 

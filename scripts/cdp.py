@@ -757,10 +757,11 @@ def main():
                 snap = data.get("snap") or {}
                 transient_mb = round((snap.get("transientBytes") or 0) / 1048576, 1)
                 line = ("SOAK {:6.1f}s frame={} fps={:.1f} javaFps={:.1f} workMs={:.1f} "
-                        "presentMs={:.2f} heapMB={} liveTex={} liveBuf={} livePipe={} plans={} "
+                        "presentMs={:.2f} gpuMs={:.1f} heapMB={} liveTex={} liveBuf={} livePipe={} plans={} "
                         "objSlots={} transientMB={} lost={}").format(
                             now - started_at, frame, window_fps, float(data.get("fps") or 0),
                             float(data.get("workAvg") or 0), float(snap.get("presentAvg") or 0),
+                            float(snap.get("gpuAvg") or 0),
                             snap.get("heapMB", -1), snap.get("liveTextures", -1),
                             snap.get("liveBuffers", -1), snap.get("livePipelines", -1),
                             snap.get("planTotal", -1), snap.get("objSlots", -1),
