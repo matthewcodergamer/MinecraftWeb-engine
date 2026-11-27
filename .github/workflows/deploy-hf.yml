@@ -95,7 +95,9 @@ jobs:
           PY
           # The Space shell streams the module from the model repository.
           # Keeping a second 112 MB copy on the Space only burns storage quota.
-          rm -rf deploy/wasm
+          # The small TeaVM runtime JS still belongs on the Space, so remove
+          # only the module and let upload_hf.py publish the runtime.
+          rm -f deploy/wasm/minecraft-java-edition-v26.3.wasm
 
       - name: Fetch the complete live asset archive
         run: |
