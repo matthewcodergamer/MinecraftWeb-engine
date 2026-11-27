@@ -19,7 +19,12 @@ That keeps the APK small and lets the game update without reinstalling.
 
 The APK is built on GitHub Actions by
 `.github/workflows/build-android-apk.yml`. It uses the runner's Android SDK/NDK
-and produces `minecraft-browser-android.apk` as a workflow artifact.
+and produces a signed `minecraft-browser-26.3.1-aarch64-release.apk` artifact.
+
+The release key is the checked-in `ci-release.jks` sideload key (alias
+`minecraftweb`, password `minecraftweb-ci-2026`). It is public by design so CI
+can sign without repository secrets; it is **not** a Play Store upload key.
+Replace it with a private keystore before publishing to a store.
 
 Local build (with Android SDK + NDK installed):
 

@@ -1,10 +1,16 @@
-name: Build Android APK
+name: Build signed Android APK
 
 on:
   workflow_dispatch:
+    inputs:
+      debug:
+        description: "Build a debug APK instead of the signed release APK"
+        type: boolean
+        default: false
   push:
     paths:
       - "android/**"
+      - "android/patch_signing.py"
       - ".github/workflows/build-android-apk.yml"
 
 permissions:
@@ -84,7 +90,23 @@ jobs:
           done
           grep -rn "ndkVersion\|compileSdk" src-tauri/gen/android --include='*.kts' | head -20 || true
 
-      - name: Build the sideloadable APK
+      - name: Add the sideload release signing config
+        if: ${{ !inputs.debug }}
+        working-directory: android
+        run: python3 patch_signing.py src-tauri/gen/android/app/build.gradle.kts
+
+      - name: Build the signed release APK
+        if: ${{ !inputs.debug }}
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ github.workspace }}/android/ci-release.jks
+          ANDROID_KEYSTORE_PASSWORD: minecraftweb-ci-2026
+          ANDROID_KEY_ALIAS: minecraftweb
+          ANDROID_KEY_PASSWORD: minecraftweb-ci-2026
+        run: npx tauri android build --apk --release --target aarch64 --ci
+
+      - name: Build the debug APK
+        if: ${{ inputs.debug }}
         working-directory: android
         run: npx tauri android build --apk --debug --target aarch64 --ci
 
@@ -93,14 +115,37 @@ jobs:
           set -euo pipefail
           mkdir -p dist-apk
           find android/src-tauri/gen/android/app/build/outputs -name '*.apk' -print
-          find android/src-tauri/gen/android/app/build/outputs -name '*.apk' -exec cp {} dist-apk/ \;
+          if [ "${{ inputs.debug }}" = "true" ]; then
+            suffix=debug
+          else
+            suffix=release
+          fi
+          for apk in $(find android/src-tauri/gen/android/app/build/outputs -name '*.apk'); do
+            cp "$apk" "dist-apk/minecraft-browser-26.3.1-aarch64-$suffix.apk"
+          done
           test -n "$(ls -A dist-apk)"
           ls -lh dist-apk
+
+      - name: Verify the release signature
+        if: ${{ !inputs.debug }}
+        run: |
+          set -euo pipefail
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
+          test -n "$APKSIGNER"
+          "$APKSIGNER" verify --verbose --print-certs dist-apk/*.apk | tee dist-apk/signature.txt
+
+      - name: Summarize the APK
+        run: |
+          set -euo pipefail
+          aapt dump badging dist-apk/*.apk | grep -E "^(package|sdkVersion|targetSdkVersion|native-code)" | tee dist-apk/badging.txt
 
       - name: Upload the APK
         uses: actions/upload-artifact@v4
         with:
-          name: minecraft-browser-android-apk
-          path: dist-apk/*.apk
+          name: ${{ inputs.debug && 'minecraft-browser-android-debug-apk' || 'minecraft-browser-android-release-apk' }}
+          path: |
+            dist-apk/*.apk
+            dist-apk/signature.txt
+            dist-apk/badging.txt
           if-no-files-found: error
           retention-days: 30
