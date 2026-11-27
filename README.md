@@ -14,8 +14,8 @@ unmodified client bytecode with [TeaVM](https://github.com/konsoletyper/teavm), 
 | Item | State |
 |---|---|
 | Browser branch | `feat/client-headless-webgpu-boot` |
-| Browser HEAD | monitor/plan-cache fixes on top of `0ea1e34` (this commit); earlier code commit `0ea1e34` |
-| Browser CI | `45996284596` completed successfully; next run validates the monitor/plan fixes |
+| Browser HEAD | `6307f3a` (monitor leak + plan-cache fixes) |
+| Browser CI | verify `46006565688`, probe `46006565701`, running on `6307f3a` |
 | Live Space | build `26.3-20261127a`; still serves the unstripped ~112 MB module |
 | Native branch | `feat/native-vulkan`, HEAD `ac90861`, not pushed, no APK |
 | Next gate | confirm the heap drop and plan-eviction drop, then deploy |
@@ -352,10 +352,10 @@ WebView wrapper and not a Tauri shell. The five-second sponsor ad is a hard requ
 declare victory early, do not swap the Java client for a demo renderer, and do not ship a fake APK.
 
 REPO STATE
-- Browser work: branch feat/client-headless-webgpu-boot, latest code commit 0ea1e34 (README commits
-  after it are docs-only). Code commits: 0ea1e34 (strip the Wasm name section for deploy, PERF
-  window deltas, planTotal fix), 52f1534 (profiling and hot-path counters), 88119c0 (TeaVM runtime
-  kept on the Space), c0014ec (GUI/sound fixes, build 20261127a).
+- Browser work: branch feat/client-headless-webgpu-boot, HEAD 6307f3a. Code commits: 6307f3a
+  (monitor leak + bind-group plan-cache fixes, title screenshot wait), 0ea1e34 (strip the Wasm name
+  section for deploy, PERF window deltas, planTotal fix), 52f1534 (profiling and hot-path
+  counters), 88119c0 (TeaVM runtime kept on the Space), c0014ec (GUI/sound fixes, build 20261127a).
 - Live: https://matthewcodergamer-minecraft-browser.static.hf.space/ (build 26.3-20261127a).
   Space commit ee1cd576bb87; model repo matthewcodergamer/minecraft-web-client commit
   86b7b521bddd. Wasm 111,924,360 bytes (next deploy ~60.4 MB stripped); runtime JS 17,338 bytes;
@@ -370,8 +370,8 @@ REPO STATE
   SwiftShader; its FPS is not a real-GPU metric.
 
 CURRENT PERFORMANCE WORK
-- Verify run 45996284596 completed successfully. title_profile.json (1.16 MB) and
-  smoke_profile.json (281 KB) are in the browser-console-diagnostics artifact.
+- Verify run 45996284596 completed successfully (profile: 1.16 MB title, 281 KB smoke). The next
+  run, 46006565688 on 6307f3a, validates the monitor/plan fixes.
 - Title/Create World result: 12.6 fps, workAvg 77 ms, presentAvg 0.00 ms, heap 2.37-2.42 GB
   (limit 4.19 GB), nativeHeapPeakMB 194, 711 textures, 727 views, 103 buffers, 199 pipelines,
   ~262 draws/frame, ~11 passes/frame, ~17 bind groups/frame.
