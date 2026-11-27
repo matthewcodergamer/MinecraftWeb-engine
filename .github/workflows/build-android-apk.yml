@@ -1,0 +1,102 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "android/**"
+      - ".github/workflows/build-android-apk.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Rust with the Android target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Configure the runner Android SDK and NDK
+        run: |
+          set -euo pipefail
+          if [ -z "${ANDROID_HOME:-}" ]; then
+            export ANDROID_HOME=/usr/local/lib/android/sdk
+          fi
+          test -d "$ANDROID_HOME" || { echo "Android SDK not found"; exit 1; }
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          NDK_VERSION=$(ls -1 "$ANDROID_HOME/ndk" 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$NDK_VERSION" ]; then
+            SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -1)
+            test -n "$SDKMANAGER" || { echo "sdkmanager not found"; exit 1; }
+            yes | "$SDKMANAGER" --install "ndk;27.0.12077973" >/dev/null
+            NDK_VERSION=27.0.12077973
+          fi
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          echo "Using Android SDK $ANDROID_HOME and NDK $NDK_VERSION"
+          ls -1 "$ANDROID_HOME/platforms" | tail -3
+
+      - name: Install Tauri CLI
+        working-directory: android
+        run: npm install
+
+      - name: Generate application icons
+        working-directory: android
+        run: npx tauri icon src-tauri/icons/source.png
+
+      - name: Initialize the Android project
+        working-directory: android
+        run: npx tauri android init --ci
+
+      - name: Match the generated Gradle project to the runner NDK
+        working-directory: android
+        run: |
+          set -euo pipefail
+          NDK_VERSION=$(basename "$ANDROID_NDK_HOME")
+          for file in \
+            src-tauri/gen/android/app/build.gradle.kts \
+            src-tauri/gen/android/build.gradle.kts; do
+            if [ -f "$file" ]; then
+              sed -i -E "s/ndkVersion = \"[^\"]*\"/ndkVersion = \"$NDK_VERSION\"/" "$file"
+            fi
+          done
+          grep -rn "ndkVersion\|compileSdk" src-tauri/gen/android --include='*.kts' | head -20 || true
+
+      - name: Build the sideloadable APK
+        working-directory: android
+        run: npx tauri android build --apk --debug --target aarch64 --ci
+
+      - name: Collect the APK
+        run: |
+          set -euo pipefail
+          mkdir -p dist-apk
+          find android/src-tauri/gen/android/app/build/outputs -name '*.apk' -print
+          find android/src-tauri/gen/android/app/build/outputs -name '*.apk' -exec cp {} dist-apk/ \;
+          test -n "$(ls -A dist-apk)"
+          ls -lh dist-apk
+
+      - name: Upload the APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: minecraft-browser-android-apk
+          path: dist-apk/*.apk
+          if-no-files-found: error
+          retention-days: 30

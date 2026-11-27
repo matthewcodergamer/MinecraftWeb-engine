@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>Minecraft Java 26.3</title>
+<style>
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+  #game { display: block; width: 100%; height: 100%; border: 0; background: #000; }
+  #fallback {
+    position: fixed; inset: 0; display: none; place-items: center; padding: 24px;
+    color: #eee; background: #111; font: 16px/1.5 system-ui, sans-serif; text-align: center;
+  }
+  #fallback a { color: #8ecae6; }
+</style>
+</head>
+<body>
+<iframe id="game"
+        src="https://matthewcodergamer-minecraft-browser.static.hf.space/?v=26.3-20261127a&host=android"
+        allow="fullscreen; autoplay; gamepad; clipboard-write; pointer-lock"
+        allowfullscreen></iframe>
+<div id="fallback">
+  <div>
+    <h2>WebGPU is required</h2>
+    <p>This build needs Android 12+ and Android System WebView 121 or newer.</p>
+    <p>Update <b>Android System WebView</b> from the Play Store, then reopen the app.</p>
+    <p><a href="https://matthewcodergamer.github.io/">Open the browser version instead</a></p>
+  </div>
+</div>
+<script>
+  (function () {
+    var frame = document.getElementById('game');
+    var fallback = document.getElementById('fallback');
+    // The embedded client reports a missing WebGPU adapter by failing to boot.
+    // Surface a readable message instead of a black screen on old WebViews.
+    setTimeout(function () {
+      try {
+        var w = frame.contentWindow;
+        var mc = w && w.__mc;
+        if (mc && mc.stage === 'failed') {
+          fallback.style.display = 'grid';
+        }
+      } catch (e) {}
+    }, 12000);
+  })();
+</script>
+</body>
+</html>
