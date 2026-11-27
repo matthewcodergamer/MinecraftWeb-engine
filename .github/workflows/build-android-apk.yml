@@ -103,7 +103,7 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: minecraftweb-ci-2026
           ANDROID_KEY_ALIAS: minecraftweb
           ANDROID_KEY_PASSWORD: minecraftweb-ci-2026
-        run: npx tauri android build --apk --release --target aarch64 --ci
+        run: npx tauri android build --apk --target aarch64 --ci
 
       - name: Build the debug APK
         if: ${{ inputs.debug }}
