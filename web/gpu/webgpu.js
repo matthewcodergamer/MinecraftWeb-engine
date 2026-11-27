@@ -686,6 +686,11 @@
     // bind groups) as soon as Java destroys it. Keeping destroyed pipelines in
     // a global list leaked GPU memory across resource reloads and dimensions.
     G.pipelines.delete(p);
+    // Plans are released with the pipeline. Keep the global counter honest:
+    // without this, every resource reload permanently inflated planTotal and
+    // eventually forced a full plan-cache flush (and a bind-group rebuild
+    // wave) on a live renderer that had not actually grown.
+    G.planTotal -= p.planCount || 0;
     p.plans = null;
     p.planCount = 0;
     p.variants = null;
@@ -1272,6 +1277,8 @@
       objSlots: G.obj.length, freeSlots: G.free.length, planTotal: G.planTotal,
       presentAvg: +G.presentAvg.toFixed(2), intervalAvg: +G.intervalAvg.toFixed(2),
       heapMB: performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : -1,
+      heapTotalMB: performance.memory ? Math.round(performance.memory.totalJSHeapSize / 1048576) : -1,
+      heapLimitMB: performance.memory ? Math.round(performance.memory.jsHeapSizeLimit / 1048576) : -1,
       nativeHeapMB: H() ? Math.round(H().inUse / 1048576) : -1,
       nativeHeapPeakMB: H() ? Math.round(H().peak / 1048576) : -1,
       bufferWrites: s.bufferWrites, bufferWriteMB: +(s.bufferWriteBytes / 1048576).toFixed(1),

@@ -173,30 +173,80 @@ def png_has_visible_pixels(data):
         return True
 
 
+def _profile_label(node):
+    frame = node.get("callFrame") or {}
+    name = frame.get("functionName") or "(anonymous)"
+    url = frame.get("url") or ""
+    line = int(frame.get("lineNumber", -1)) + 1
+    short_url = url.rsplit("/", 1)[-1] if url else ""
+    return name + (" ({}:{})".format(short_url, line) if short_url else "")
+
+
 def summarize_cpu_profile(profile, top=35):
-    """Print the hottest self-time frames from a Chrome CPU profile."""
+    """Print the hottest self and inclusive frames from a Chrome CPU profile.
+
+    Self time finds the leaf doing the work (a Wasm helper, JSON.parse, a
+    bridge call); inclusive time finds the Java frame or game phase that owns
+    it. Wasm GC builds carry a name section, so most leaf names are real Java
+    methods rather than wasm-function indices.
+    """
     nodes = profile.get("nodes") or []
-    buckets = {}
+    by_id = {int(n.get("id")): n for n in nodes}
+    parent = {}
     for node in nodes:
-        hits = int(node.get("hitCount") or 0)
-        if hits <= 0:
-            continue
-        frame = node.get("callFrame") or {}
-        name = frame.get("functionName") or "(anonymous)"
-        url = frame.get("url") or ""
-        line = int(frame.get("lineNumber", -1)) + 1
-        key = (name, url, line)
-        buckets[key] = buckets.get(key, 0) + hits
-    total = sum(buckets.values())
+        for child in node.get("children") or []:
+            parent[int(child)] = int(node.get("id"))
+    self_hits = {}
+    inclusive_us = {}
+    samples = profile.get("samples") or []
+    deltas = profile.get("timeDeltas") or []
+    if samples:
+        for index, node_id in enumerate(samples):
+            node_id = int(node_id)
+            delta = int(deltas[index]) if index < len(deltas) else 1000
+            delta = max(0, delta)
+            seen = set()
+            while node_id in by_id and node_id not in seen:
+                seen.add(node_id)
+                inclusive_us[node_id] = inclusive_us.get(node_id, 0) + delta
+                node_id = parent.get(node_id, 0)
+            leaf = int(samples[index])
+            self_hits[leaf] = self_hits.get(leaf, 0) + 1
+    else:
+        for node in nodes:
+            hits = int(node.get("hitCount") or 0)
+            if hits:
+                self_hits[int(node.get("id"))] = hits
+    total = sum(self_hits.values())
     if not total:
         print("PROFILE: no samples were recorded", flush=True)
         return
-    print("PROFILE: {} self-time samples across {} frames".format(total, len(nodes)), flush=True)
-    for (name, url, line), hits in sorted(buckets.items(), key=lambda item: item[1], reverse=True)[:top]:
-        short_url = url.rsplit("/", 1)[-1] if url else ""
-        print("PROFILE {:5.1f}% {:6d}  {}{}".format(
-            100.0 * hits / total, hits, name,
-            " ({}:{})".format(short_url, line) if short_url else ""), flush=True)
+    sampled_ms = sum(inclusive_us.get(int(n.get("id")), 0) for n in nodes
+                     if int(n.get("id")) not in parent) / 1000.0
+    print("PROFILE: {} self samples across {} frames, {:.1f}s on the main thread"
+          .format(total, len(nodes), sampled_ms), flush=True)
+    self_buckets = {}
+    for node_id, hits in self_hits.items():
+        node = by_id.get(node_id)
+        if node:
+            self_buckets[_profile_label(node)] = self_buckets.get(_profile_label(node), 0) + hits
+    print("PROFILE self-time:", flush=True)
+    for label, hits in sorted(self_buckets.items(), key=lambda item: item[1], reverse=True)[:top]:
+        print("PROFILE {:5.1f}% {:6d}  {}".format(100.0 * hits / total, hits, label), flush=True)
+    if inclusive_us:
+        print("PROFILE inclusive (top-level phases first):", flush=True)
+        roots = [n for n in nodes if int(n.get("id")) not in parent]
+        ranked = sorted(inclusive_us.items(), key=lambda item: item[1], reverse=True)
+        for node_id, micros in ranked[:top]:
+            node = by_id.get(node_id)
+            if not node:
+                continue
+            label = _profile_label(node)
+            if node_id in [int(r.get("id")) for r in roots]:
+                label = "[root] " + label
+            print("PROFILE {:5.1f}% {:8.0f}ms  {}".format(
+                100.0 * micros / max(1, sum(inclusive_us.get(int(r.get("id")), 0) for r in roots)),
+                micros / 1000.0, label), flush=True)
 
 
 def main():
@@ -751,6 +801,12 @@ def main():
                 return False
             return True
 
+        def perf_metrics():
+            """Cumulative renderer metrics, used as deltas around the profile."""
+            ws.call("Performance.enable", pump=pump)
+            metrics = ws.call("Performance.getMetrics", pump=pump).get("result", {}).get("metrics", [])
+            return {m.get("name"): m.get("value") for m in metrics}
+
         def run_cpu_profile():
             """Sample the main thread after the soak; the soak itself stays unperturbed."""
             if not a.cpu_profile:
@@ -758,7 +814,9 @@ def main():
             seconds = max(1.0, a.cpu_profile_seconds)
             print("{:7.2f}s PROFILE start: {:.0f}s at {} us".format(
                 time.time() - t0, seconds, a.cpu_profile_interval), flush=True)
+            before = {}
             try:
+                before = perf_metrics()
                 ws.call("Profiler.enable", pump=pump)
                 ws.call("Profiler.setSamplingInterval",
                         {"interval": max(100, int(a.cpu_profile_interval))}, pump=pump)
@@ -798,12 +856,14 @@ def main():
                 print("PROFILE stop failed: {}: {}".format(type(exc).__name__, exc), flush=True)
                 return
             try:
-                ws.call("Performance.enable", pump=pump)
-                metrics = ws.call("Performance.getMetrics", pump=pump).get("result", {}).get("metrics", [])
-                wanted = {m.get("name"): m.get("value") for m in metrics
-                          if m.get("name") in ("TaskDuration", "ScriptDuration", "LayoutDuration",
-                                               "RecalcStyleDuration", "JSHeapUsedSize", "JSHeapTotalSize")}
-                print("PERF " + json.dumps(wanted), flush=True)
+                after = perf_metrics()
+                keys = ("TaskDuration", "ScriptDuration", "LayoutDuration",
+                        "RecalcStyleDuration", "JSHeapUsedSize", "JSHeapTotalSize")
+                window = {k: round(after.get(k, 0) - before.get(k, 0), 3) for k in keys}
+                window["windowSec"] = round(seconds, 1)
+                window["busyPct"] = round(100.0 * max(0.0, window["TaskDuration"]) / seconds, 1)
+                window["scriptPct"] = round(100.0 * max(0.0, window["ScriptDuration"]) / seconds, 1)
+                print("PERF " + json.dumps(window), flush=True)
             except (TimeoutError, EOFError, OSError) as exc:
                 print("PERF metrics unavailable: {}: {}".format(type(exc).__name__, exc), flush=True)
 
