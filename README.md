@@ -9,6 +9,22 @@ unmodified client bytecode with [TeaVM](https://github.com/konsoletyper/teavm), 
 > Space **before** native Vulkan work resumes. The native APK is not finished and no APK is shipped
 > from this branch yet.
 
+## Status snapshot (2026-11-27)
+
+| Item | State |
+|---|---|
+| Browser branch | `feat/client-headless-webgpu-boot` |
+| Browser HEAD | latest code commit `0ea1e34`; README commits after it are docs-only |
+| Browser CI | verify `45996284596`, probe `45996284611`, both running on `0f652a8` |
+| Live Space | build `26.3-20261127a`; still serves the unstripped ~112 MB module |
+| Native branch | `feat/native-vulkan`, HEAD `ac90861`, not pushed, no APK |
+| Next gate | read `title_profile.json`, `PERF`, and `SOAKGPU`; then one batched performance commit |
+
+> **CI caveat:** the verify workflow uses `concurrency: cancel-in-progress`, so any push touching
+> `scripts/**`, `web/**`, `src/**`, `renderer/**`, `patches/**`, `tools/src/**`, or the workflow
+> file **cancels the running verify job**. Batch changes and wait for the profile artifact before
+> pushing. A README-only commit does not trigger the workflow.
+
 ## Live build
 
 | Item | Value |
@@ -144,20 +160,24 @@ PY
 3. **Java renderer CPU.** ~250 draws and ~11 passes per frame with per-uniform JS bridge calls
    may be the real cost on a fast GPU. Batch uniform bindings or cache more state if the profile
    points there.
-4. **Plan-cache counter leak (fixed, uncommitted at the time of writing).** `destroyPipeline` did
-   not subtract `planCount` from `planTotal`, so resource reloads eventually forced a full
-   plan-cache flush and a bind-group rebuild wave.
+4. **Plan-cache counter leak (fixed in `0ea1e34`).** `destroyPipeline` did not subtract
+   `planCount` from `planTotal`, so resource reloads eventually forced a full plan-cache flush and
+   a bind-group rebuild wave.
 5. **Bridge overhead.** Every uniform and draw crosses Wasm→JS. It is cheap per call but adds up;
    measure before redesigning.
 
 ### Next steps
 
-1. Wait for CI run **45994386852** and download `browser-console-diagnostics`.
-2. Read the `SOAKGPU` lines and `title_profile.json`; confirm hypothesis 1 vs 2/3.
-3. Apply the highest-impact fix; re-run the same soak and compare `fps`, `workAvg`, `bindGroups`,
-   `heapMB`, and `nativeHeapPeakMB`.
+1. Wait for the current verify run (`45996284596` at the time of writing) and download
+   `browser-console-diagnostics`. The earlier profiled run `45994386852` was cancelled by the
+   concurrency group when the README/fix commit was pushed, so it produced no profile.
+2. Read the `SOAKGPU` lines, the `PERF` window (`busyPct`, `scriptPct`, `TaskDuration`), and
+   `title_profile.json`; confirm hypothesis 1 vs 2/3.
+3. Apply the highest-impact fix in one batched commit; re-run the same soak and compare `fps`,
+   `workAvg`, `bindGroups`, `heapMB`, `heapLimitMB`, and `nativeHeapPeakMB`.
 4. Deploy the optimized build manually (the current PAT cannot dispatch workflows or read
-   repository secrets: HTTP 403). Use `scripts/upload_hf.py` and upload the Wasm to the model repo.
+   repository secrets: HTTP 403). Use `scripts/upload_hf.py`, strip the Wasm with
+   `scripts/strip_wasm_names.py`, and upload it to the model repo.
 5. Only after the browser build is verified and deployed, resume native Vulkan.
 
 ## Native Vulkan APK (paused)
@@ -167,7 +187,7 @@ The WebView/Tauri APK was scrapped. **Only a real native Vulkan APK is acceptabl
 | Item | State |
 |---|---|
 | Branch | `feat/native-vulkan`, HEAD `ac90861` |
-| Base | `c0014ec` (two commits behind browser HEAD `88119c0`/`52f1534`) |
+| Base | `c0014ec`; browser HEAD has since advanced to `0f652a8` (rebase before resuming) |
 | WebView/Tauri shell | Removed in `ac90861`; old shell still in `8eb6624` for reference |
 | Scaffold | `stash@{0}` `native-vulkan-scaffold-wip` |
 | Scaffold files | `native/src/{textures,arena,world,input,camera,renderer,lib,main}.rs` |
@@ -230,6 +250,42 @@ python3 scripts/strip_wasm_names.py \
   build/web/minecraft-java-edition-v26.3.wasm build/web/minecraft-java-edition-v26.3.wasm
 ```
 
+### Live verification checklist
+
+```sh
+BASE=https://matthewcodergamer-minecraft-browser.static.hf.space
+# 1. The shell must advertise the build that was just deployed.
+curl -sL "$BASE/index.html" | grep -oE "v=2026[0-9a-z]+" | head
+# 2. The model repo must serve the module; after the strip it is ~60.4 MB.
+curl -sIL https://huggingface.co/matthewcodergamer/minecraft-web-client/resolve/main/\
+minecraft-java-edition-v26.3.wasm | grep -iE 'HTTP/|content-length'
+# 3. Audio metadata and a range request must still answer.
+curl -s -o /dev/null -w '%{http_code}\n' "$BASE/sounds-index.json"
+curl -s -r 0-3 https://huggingface.co/matthewcodergamer/minecraft-web-client/resolve/main/\
+sounds.bin | head -c 4   # expect OggS
+```
+
+A live deploy is not "verified" until `MC_BUILD` matches the new version, the module size matches
+the build log, and the title screen/Create World/Superflat flow plus audio pass in CI.
+
+## Known issues and open questions
+
+- **No real-GPU FPS number.** CI uses SwiftShader; the local ARM64 host cannot expose a WebGPU
+  adapter (Chrome 158 returns "no adapter" for SwiftShader and lavapipe). The ~13 fps title soak is
+  a software-rasterizer number, not a user-facing score. `PERF.busyPct` from the profiled run is
+  the evidence that separates CPU-bound from GPU-starved.
+- **`title_screen.png` is blank gray** while `title_soak.png` shows the world. This is a screenshot
+  timing/loading-splash issue, not proof that the title screen fails to render. Fix the capture
+  trigger and add assertions for Language/Singleplayer/death/loading screens.
+- **Heap headroom.** ~2.3–2.4 GB used against a typical 2.4–4 GB V8 limit, including the 768 MB
+  native heap. Do not lower `?heapMB=` without checking `nativeHeapPeakMB` first.
+- **Deploy credentials.** The current PAT can push and read public APIs but cannot dispatch
+  workflows or read repository secrets (HTTP 403). Deployment is manual until that changes.
+- **No native APK.** The native scaffold is parked in `stash@{0}`; only a winit + wgpu
+  NativeActivity build counts. The WebView/Tauri shell is scrapped.
+- **TeaVM import surface.** 97 JS/DOM/WebGPU imports. Native is a platform-layer port, not a
+  WASM→Vulkan translation.
+
 ## Layout
 
 | Path | Purpose |
@@ -267,11 +323,17 @@ USER GOAL
    functions; native needs a new client/platform layer.
 6. No AdMob for sideloaded Android. Use Mojang/bedrock-samples and GeyserMC mappings for controls.
 
+PLAIN ENGLISH
+The user wants the browser version to stop being slow, to be proven fixed in CI, and to be live on
+the Space. After that, they want a real Android app that renders with Vulkan natively — not a
+WebView wrapper and not a Tauri shell. The five-second sponsor ad is a hard requirement. Do not
+declare victory early, do not swap the Java client for a demo renderer, and do not ship a fake APK.
+
 REPO STATE
-- Browser work: branch feat/client-headless-webgpu-boot. Last commits: 0ea1e34 (strip the Wasm
-  name section for deploy, PERF window deltas, planTotal fix), 2415b86 (this handoff README),
-  52f1534 (profiling and hot-path counters), 88119c0 (TeaVM runtime kept on the Space), c0014ec
-  (GUI/sound fixes, build 20261127a).
+- Browser work: branch feat/client-headless-webgpu-boot, latest code commit 0ea1e34 (README commits
+  after it are docs-only). Code commits: 0ea1e34 (strip the Wasm name section for deploy, PERF
+  window deltas, planTotal fix), 52f1534 (profiling and hot-path counters), 88119c0 (TeaVM runtime
+  kept on the Space), c0014ec (GUI/sound fixes, build 20261127a).
 - Live: https://matthewcodergamer-minecraft-browser.static.hf.space/ (build 26.3-20261127a).
   Space commit ee1cd576bb87; model repo matthewcodergamer/minecraft-web-client commit
   86b7b521bddd. Wasm 111,924,360 bytes (next deploy ~60.4 MB stripped); runtime JS 17,338 bytes;
@@ -286,9 +348,13 @@ REPO STATE
   SwiftShader; its FPS is not a real-GPU metric.
 
 CURRENT PERFORMANCE WORK
-- Run 45994386852 is the profiled build (may be finished by the time you read this). Download the
-  browser-console-diagnostics artifact and inspect build/title_profile.json plus the SOAKGPU log
-  lines.
+- Verify run 45996284596 (probe 45996284611) is the current profiled build on 0f652a8. Download the
+  browser-console-diagnostics artifact and inspect build/title_profile.json plus the SOAKGPU and
+  PERF log lines. The earlier run 45994386852 was cancelled by the concurrency group and has no
+  artifact.
+- IMPORTANT: the verify workflow uses concurrency cancel-in-progress. Any push to scripts/**, web/**,
+  src/**, renderer/**, patches/**, tools/src/**, or the workflow cancels the running job. Batch
+  changes and wait for the profile before pushing. README-only commits are safe.
 - Last verified title/world soak (run 45980931507): ~13 fps, workAvg ~74 ms, presentAvg ~0.00 ms,
   heap ~2.3 GB, 711 live textures, 106 buffers, 199 pipelines, ~250 draws/frame, ~11 passes/frame,
   32 MB transient capacity.
@@ -310,9 +376,10 @@ CURRENT PERFORMANCE WORK
 NEXT MOVES
 1. Run: gh run list --branch feat/client-headless-webgpu-boot; gh run download <id> -n
    browser-console-diagnostics -D diag.
-2. Analyze the profile with scripts/cdp.py's summarize_cpu_profile (self + inclusive).
-3. Apply the highest-impact fix, re-run the same title/world soak, and compare fps/workAvg/
-   bindGroups/heapMB/nativeHeapPeakMB.
+2. Analyze the profile with scripts/cdp.py's summarize_cpu_profile (self + inclusive), then read
+   the PERF line (busyPct/scriptPct) and the SOAKGPU counters.
+3. Apply the highest-impact fix in ONE commit, re-run the same title/world soak, and compare
+   fps/workAvg/bindGroups/heapMB/heapLimitMB/nativeHeapPeakMB.
 4. Verify the real Java title screen, Create World, Superflat world, screenshots, and audio.
 5. Deploy manually with scripts/upload_hf.py; the PAT cannot dispatch workflows or read secrets
    (HTTP 403). Strip the Wasm with scripts/strip_wasm_names.py before uploading it to the model
@@ -321,6 +388,8 @@ NEXT MOVES
    winit + wgpu NativeActivity, build with cargo-ndk + Gradle in CI, assert no WebView.
 7. Add browser CI coverage for Language/Singleplayer/death/loading screens and fix the blank
    title_screen.png timing issue.
+8. Remember: pushes to scripts/web/src cancel the running verify job. Batch work; README-only
+   commits are safe.
 
 GUARDRAILS
 - Do not regress the five-second sponsor ad.
