@@ -17,7 +17,7 @@ unmodified client bytecode with [TeaVM](https://github.com/konsoletyper/teavm), 
 | Visible build | `26.3-20261127a` |
 | Space commit | `ee1cd576bb87` |
 | Model repo | `matthewcodergamer/minecraft-web-client` (commit `86b7b521bddd`) |
-| Wasm module | 111,924,360 bytes |
+| Wasm module (deployed) | 111,924,360 bytes today; next deploy strips the name section to ~60,452,000 bytes |
 | Wasm runtime JS | 17,338 bytes |
 | Asset archive | 64,689,340 bytes, 25,671 entries (jar-only by design) |
 | Audio bank | `sounds.bin`, 117,739,281 bytes, served with HTTP Range from the model repo |
@@ -224,8 +224,10 @@ Manual deploy (the workflow cannot be dispatched with the current PAT):
 
 ```sh
 HF_TOKEN=... python3 scripts/upload_hf.py deploy/parts matthewcodergamer/minecraft-browser ""
-# Upload the Wasm/runtime to matthewcodergamer/minecraft-web-client and bump the
-# ?v= build query in the shell.
+# Strip the module, upload it to matthewcodergamer/minecraft-web-client, and bump
+# the ?v= build query in the shell:
+python3 scripts/strip_wasm_names.py \
+  build/web/minecraft-java-edition-v26.3.wasm build/web/minecraft-java-edition-v26.3.wasm
 ```
 
 ## Layout
@@ -244,7 +246,8 @@ HF_TOKEN=... python3 scripts/upload_hf.py deploy/parts matthewcodergamer/minecra
 | `web/game.html` | QA/test page (`smoke-world`, `screen`, diagnostics) |
 | `web/bridge.js` | Java ↔ Rust/iframe messages |
 | `web/input.js` | Desktop + mobile controls forwarded into Java SDL |
-| `scripts/cdp.py` | Headless Chrome driver, soak, CPU profiling |
+| `scripts/cdp.py` | Headless Chrome driver, soak, CPU profiling, PERF window deltas |
+| `scripts/strip_wasm_names.py` | Removes the ~51 MB Wasm name section for deployment |
 | `renderer/` | Rust WebGPU fallback renderer |
 | `native/` (stash) | Native Vulkan scaffold |
 
@@ -265,13 +268,14 @@ USER GOAL
 6. No AdMob for sideloaded Android. Use Mojang/bedrock-samples and GeyserMC mappings for controls.
 
 REPO STATE
-- Browser work: branch feat/client-headless-webgpu-boot. Last commits: 52f1534 (profiling and
-  hot-path counters), 88119c0 (TeaVM runtime kept on the Space), c0014ec (GUI/sound fixes,
-  build 20261127a).
+- Browser work: branch feat/client-headless-webgpu-boot. Last commits: 0ea1e34 (strip the Wasm
+  name section for deploy, PERF window deltas, planTotal fix), 2415b86 (this handoff README),
+  52f1534 (profiling and hot-path counters), 88119c0 (TeaVM runtime kept on the Space), c0014ec
+  (GUI/sound fixes, build 20261127a).
 - Live: https://matthewcodergamer-minecraft-browser.static.hf.space/ (build 26.3-20261127a).
   Space commit ee1cd576bb87; model repo matthewcodergamer/minecraft-web-client commit
-  86b7b521bddd. Wasm 111,924,360 bytes; runtime JS 17,338 bytes; asset archive 64,689,340 bytes /
-  25,671 entries; sounds.bin 117,739,281 bytes.
+  86b7b521bddd. Wasm 111,924,360 bytes (next deploy ~60.4 MB stripped); runtime JS 17,338 bytes;
+  asset archive 64,689,340 bytes / 25,671 entries; sounds.bin 117,739,281 bytes.
 - Native: branch feat/native-vulkan, HEAD ac90861, based on c0014ec and not pushed. WebView shell
   removed in ac90861 (old shell in 8eb6624). Scaffold is in stash@{0}
   "native-vulkan-scaffold-wip" (native/src/{textures,arena,world,input,camera,renderer,lib,main}.rs).
@@ -296,9 +300,12 @@ CURRENT PERFORMANCE WORK
 - Key questions: is the main thread CPU-bound or starved by SwiftShader? Is GC dominant? Which
   Java frames (LevelRenderer/GameRenderer/Minecraft.tick/SectionRenderDispatcher) or JS bridge
   calls dominate? Does nativeHeapPeakMB justify reducing ?heapMB=768?
-- Prepared fix: destroyPipeline must subtract planCount from planTotal, otherwise resource
-  reloads force a full plan-cache flush and bind-group rebuild wave. Apply it if the branch does
-  not already contain it.
+- Applied in `0ea1e34`: `destroyPipeline` now subtracts `planCount` from `planTotal`, so resource
+  reloads cannot force a full plan-cache flush and a bind-group rebuild wave.
+- `0ea1e34` also adds `scripts/strip_wasm_names.py`. It removes TeaVM's ~51 MB `name` section and
+  takes the module from ~112 MB to ~60.4 MB; the deploy workflow now strips before publishing.
+  Verified locally: the stripped module compiles in Chrome in ~5.2 s and still exposes the same
+  exports. Profiles still come from the unstripped CI artifact.
 
 NEXT MOVES
 1. Run: gh run list --branch feat/client-headless-webgpu-boot; gh run download <id> -n
@@ -308,7 +315,8 @@ NEXT MOVES
    bindGroups/heapMB/nativeHeapPeakMB.
 4. Verify the real Java title screen, Create World, Superflat world, screenshots, and audio.
 5. Deploy manually with scripts/upload_hf.py; the PAT cannot dispatch workflows or read secrets
-   (HTTP 403). Upload the Wasm to the model repo and bump the ?v= build query.
+   (HTTP 403). Strip the Wasm with scripts/strip_wasm_names.py before uploading it to the model
+   repo (the deploy workflow already does this), then bump the ?v= build query.
 6. Then resume native: pop stash@{0} on feat/native-vulkan, rebase onto browser HEAD, implement
    winit + wgpu NativeActivity, build with cargo-ndk + Gradle in CI, assert no WebView.
 7. Add browser CI coverage for Language/Singleplayer/death/loading screens and fix the blank
