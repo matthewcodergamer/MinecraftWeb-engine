@@ -932,6 +932,17 @@
         }
       }
     }
+    if (plan) {
+      // The bind group's dynamic offsets are per draw. A plan is keyed by
+      // buffer identity and binding size, not by the rotating ring offset, so
+      // refresh the offsets before recording the bind. Keeping the first
+      // draw's offsets made every later draw read whichever frame happened to
+      // occupy that slot (flickering GUI colours/transforms and stale fog).
+      let oi = 0;
+      for (let i = 0; i < n; i++) {
+        if (uniformKind[i] === 1) plan.offsets[oi++] = uniformB[i];
+      }
+    }
     if (!plan) {
       const kinds = new Array(n).fill('');
       const e0 = [], e1 = [], offsets = [], sig = new Float64Array(n * 4);

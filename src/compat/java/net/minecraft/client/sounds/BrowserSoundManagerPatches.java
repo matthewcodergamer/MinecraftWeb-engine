@@ -85,8 +85,29 @@ public final class BrowserSoundManagerPatches {
             return SoundEngine.PlayResult.NOT_STARTED;
         }
         try {
-            float volume = sound.getVolume();
-            float pitch = sound.getPitch();
+            // Vanilla SoundEngine.play resolves the event before reading the
+            // instance volume/pitch. The browser backend skips that OpenAL
+            // path, and AbstractSoundInstance.getVolume() dereferences its
+            // resolved Sound. With an empty browser registry getOrResolve()
+            // installs EMPTY_SOUND (volume/pitch 1.0), which is exactly what
+            // we want: the JS mixer owns the real per-event values.
+            Minecraft minecraft = Minecraft.getInstance();
+            SoundManager manager = minecraft == null ? null : minecraft.getSoundManager();
+            if (manager != null) {
+                sound.getOrResolve(manager);
+            }
+            float volume;
+            try {
+                volume = sound.getVolume();
+            } catch (Throwable unresolved) {
+                volume = 1.0f;
+            }
+            float pitch;
+            try {
+                pitch = sound.getPitch();
+            } catch (Throwable unresolved) {
+                pitch = 1.0f;
+            }
             String event = sound.getIdentifier().toString();
             boolean relative = sound.isRelative();
             boolean looping = sound.isLooping();
@@ -99,7 +120,6 @@ public final class BrowserSoundManagerPatches {
             // the per-category slider. Multiplying here keeps the JS mixer
             // stateless and matches vanilla's audible result.
             float category = 1.0f;
-            Minecraft minecraft = Minecraft.getInstance();
             if (minecraft != null && minecraft.options != null && sound.getSource() != null) {
                 category = minecraft.options.getFinalSoundSourceVolume(sound.getSource());
             }
