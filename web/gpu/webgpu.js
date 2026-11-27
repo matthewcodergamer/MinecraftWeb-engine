@@ -1045,11 +1045,21 @@
         G.planTotal = 0;
       }
       if (!p.plans) p.plans = new Map();
-      else if (p.planCount >= 512) {
-        G.stats.planEvictions += p.planCount;
-        G.planTotal -= p.planCount;
-        p.plans.clear();
-        p.planCount = 0;
+      else if (p.planCount >= 1024) {
+        // The GUI's animated-sprite pipeline legitimately needs ~500 plans
+        // (one per sprite view). The old 512 cap cleared the entire cache the
+        // moment it filled, so the same bind groups were rebuilt every few
+        // frames: 34,816 evictions in a 2,000-frame title soak. Drop only the
+        // oldest bucket instead; the hot working set then stays resident.
+        const oldest = p.plans.keys().next();
+        if (!oldest.done) {
+          const stale = p.plans.get(oldest.value);
+          p.plans.delete(oldest.value);
+          const staleCount = stale ? stale.length : 0;
+          p.planCount -= staleCount;
+          G.planTotal -= staleCount;
+          G.stats.planEvictions += staleCount;
+        }
       }
       bucket = p.plans.get(hash);
       if (!bucket) p.plans.set(hash, bucket = []);

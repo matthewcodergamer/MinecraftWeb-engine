@@ -15,6 +15,13 @@ public final class MonitorRegistry {
     }
 
     private static final int TRACE_LIMIT = 4000;
+    /**
+     * Hard ceiling on registered monitors. Normal operation registers only
+     * contended locks (see TObject.createMonitor), so this should never be
+     * reached; it exists so a future eager-registration change cannot turn the
+     * registry into an unbounded leak again.
+     */
+    private static final int MAX_ENTRIES = 1 << 17;
 
     private static Entry[] entries;
     private static int entryCount;
@@ -256,6 +263,9 @@ public final class MonitorRegistry {
     }
 
     public static Entry register(int lockTraceId, String objectClass) {
+        if (entryCount >= MAX_ENTRIES) {
+            return null;
+        }
         Entry entry = new Entry();
         entry.traceId = lockTraceId;
         entry.objectClass = objectClass;

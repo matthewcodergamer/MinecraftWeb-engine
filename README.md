@@ -14,11 +14,11 @@ unmodified client bytecode with [TeaVM](https://github.com/konsoletyper/teavm), 
 | Item | State |
 |---|---|
 | Browser branch | `feat/client-headless-webgpu-boot` |
-| Browser HEAD | latest code commit `0ea1e34`; README commits after it are docs-only |
-| Browser CI | verify `45996284596`, probe `45996284611`, both running on `0f652a8` |
+| Browser HEAD | monitor/plan-cache fixes on top of `0ea1e34` (this commit); earlier code commit `0ea1e34` |
+| Browser CI | `45996284596` completed successfully; next run validates the monitor/plan fixes |
 | Live Space | build `26.3-20261127a`; still serves the unstripped ~112 MB module |
 | Native branch | `feat/native-vulkan`, HEAD `ac90861`, not pushed, no APK |
-| Next gate | read `title_profile.json`, `PERF`, and `SOAKGPU`; then one batched performance commit |
+| Next gate | confirm the heap drop and plan-eviction drop, then deploy |
 
 > **CI caveat:** the verify workflow uses `concurrency: cancel-in-progress`, so any push touching
 > `scripts/**`, `web/**`, `src/**`, `renderer/**`, `patches/**`, `tools/src/**`, or the workflow
@@ -77,27 +77,63 @@ WASM→Vulkan translator** and no plan to add one: the native client needs a rea
 
 ## Current performance state
 
-The last fully verified browser run was **45980931507** (`20261127a`). Its title/world soak ran on
-GitHub's x86_64 runner with **SwiftShader** at 1280×577:
+The profiled build ran as verify **45996284596** (commit `0f652a8`, `20261127a` runtime) on GitHub's
+x86_64 runner with **SwiftShader** at 1280×577. The title/Create World test drives the real Java
+renderer; the smoke test is the separate Rust Body path.
 
-| Metric | Value | Meaning |
+| Metric | Title/Create World | Meaning |
 |---|---|---|
-| Presented FPS | ~12–13 | Software WebGPU; not a real-GPU number |
-| `workAvg` | ~74 ms | Java/WASM frame work from RAF resume to frame stats |
-| `presentAvg` | ~0.00–0.07 ms | `WG.present()` only; GPU rasterization is asynchronous |
-| JS heap | ~2.3–2.4 GB | Includes the 768 MB native heap and the 112 MB Wasm module |
-| Live textures / views | 711 / 727 | Stable over the soak |
-| Live buffers | ~106 | Stable |
-| Pipelines | 199 | Created during load, not per frame |
-| Draws | ~250/frame | |
-| Render passes | ~11/frame | |
-| Transient ring | 32 MB (8 × 4 MB) | Capacity, not necessarily per-frame upload |
-| Bind groups | ~17/frame | Mostly plan-cache misses |
+| Presented FPS | 12.6 | Software WebGPU; not a real-GPU number |
+| `workAvg` | 77 ms | Frame wall time measured by the Java frame loop |
+| `presentAvg` | 0.00 ms | `WG.present()` only; GPU work is asynchronous |
+| Main-thread busy | 49% (`TaskDuration` 12.26 s / 25 s) | Half the window is waiting |
+| Main-thread script | 37% (`ScriptDuration` 9.33 s / 25 s) | WASM/JS work, including ticks |
+| CPU profile idle | 67.8% of samples | Direct evidence of GPU/compositor waiting |
+| JS heap | 2.37–2.42 GB | Before the monitor fix; limit 4.19 GB |
+| Native heap | 194 MB peak | The 768 MB default is mostly unused |
+| Live textures / views | 711 / 727 | Stable |
+| Live buffers | 103 | Stable |
+| Pipelines | 199 | Created during load |
+| Draws | ~262/frame | 537,044 over 2,050 frames |
+| Render passes | ~11/frame | 22,725 over 2,050 frames |
+| Bind groups | ~17/frame | 35,142 over 2,050 frames |
+| Plan misses / evictions | 35,557 / 34,816 | Cache thrash, fixed below |
+| Shader creation | 2.4 s | One-time during load |
 
-The **smoke test is a different path**: `?smoke-world=1` keeps the HTML/Rust Body UI and does not
-wait for Java's canvas takeover. It samples 0.2–1.2 fps with `workAvg` 2.8–4.5 s on a normal
-world. Those numbers describe Java worldgen/tick plus the Rust Body on a 2-vCPU SwiftShader
-runner, **not** the Java WebGPU renderer. Do not use them as the browser-renderer score.
+### CPU profile findings
+
+The title profile sampled 27.4 s (20,359 samples). Self-time:
+
+- **67.8% idle** — the main thread is mostly waiting for the software rasterizer/compositor.
+- 2.1% native program code, 0.5% garbage collector.
+- 1.4% `mcport.rt.MonitorRegistry::describe`, 1.0% `LevelChunkSection::getNoiseBiome`, 0.9%
+  `wasm-to-js`, 0.9% `ChunkAccess::getNoiseBiome`, 0.8% `EnvironmentAttributeSystem::getValue`.
+
+Inclusive time: 58.3% idle, 20.1% frame loop (`FrameLoopAsync` → `Minecraft.run` → `runTick`),
+16.4% `Minecraft.tick`, 13.9% `ClientLevel.animateTick`/`doAnimateTick`, 9.2%
+`EnvironmentAttributeReader.getValue_1`, 8.8% `EnvironmentAttributeSystem.getValue`, 7.8% the
+integrated server fiber, 4.7% `BiomeManager.getNoiseBiomeAtQuart`.
+
+Conclusion: on SwiftShader the browser is **GPU-bound first and CPU-bound second**. The 12.6 fps
+number is not a real-GPU score, but the profile exposed two real CPU/memory bugs:
+
+1. **Monitor registry leak (13,341,935 entries).** `TObject.createMonitor` registered every
+   synchronized object in a static array that is never pruned. `[REPORT] monitors` showed
+   `locks=13341935` after 222 s, and the boot watchdog walked that array every 5 s. At roughly
+   48 bytes per entry this was hundreds of megabytes of the JS heap and a large GC root set.
+   Fixed by registering only contended locks (lazily, already supported by the contended path)
+   and adding a hard 131,072-entry cap.
+2. **Bind-group plan cache thrash.** `animate_sprite_blit` needs ~500 plans (one per sprite view).
+   The per-pipeline cap was 512, so it cleared the entire cache every time it filled: 34,816
+   evictions over 2,050 frames (68 full flushes, exactly 512 each). Fixed by raising the cap to
+   1,024 and evicting only the oldest bucket instead of the whole cache.
+
+The monitor leak is expected to remove roughly 0.6–0.7 GB from the JS heap; the next verify run
+should show it in `heapMB`/`heapTotalMB`. Neither fix changes rendering output.
+
+The **smoke test** (`?smoke-world=1`, Rust Body) sampled 0.2 fps with `busyPct` 70.9% and
+`scriptPct` 9.4%; its profile is 46.8% idle, 45.8% native program code, 3.3% `getCurrentTexture`.
+That path is GPU-bound on the Rust Body and is not the Java renderer score.
 
 ### Instrumentation added in `52f1534`
 
@@ -133,50 +169,31 @@ cdp.summarize_cpu_profile(json.load(open("build/title_profile.json")))
 PY
 ```
 
-### What the profile must answer
+### What the profile answered
 
-1. **Is the main thread CPU-bound or starved?** Compare the profile's total sampled time with the
-   soak wall time and with `Performance.getMetrics` (`TaskDuration`, `ScriptDuration`). If the main
-   thread only sampled a few seconds out of 25 s, SwiftShader/GPU contention is inflating
-   `workAvg`; the FPS number is not representative of a real GPU.
-2. **Is GC dominant?** Look for `(garbage collector)` in self-time. The heap is close to typical
-   Chrome limits, and the 768 MB native heap is a large fixed reservation.
-3. **Which Java frames dominate?** The Wasm module carries a large name section (about 51 MB in
-   the local build), so leaves should appear as real Java methods (`LevelRenderer`,
-   `GameRenderer`, `Minecraft.tick`, `SectionRenderDispatcher`, etc.), not
-   `wasm-function[...]`.
-4. **Which bridge calls dominate?** Look for `bindAndValidate`, `setUniformBuffer`,
-   `drawIndexed`, `beginPass`, `JSON.parse`, `createBindGroup`, `createRenderPipeline`.
-
-### Working hypotheses (ranked)
-
-1. **CI is GPU/CPU-bound on SwiftShader.** Eleven full-screen passes at 1280×577 plus ~250 draws
-   saturate a 2-vCPU runner. The renderer main thread is descheduled, so `workAvg` includes
-   waiting. Real-GPU FPS is probably much higher, but this has not been measured on a real GPU.
-2. **Heap pressure.** `performance.memory.usedJSHeapSize` includes the 768 MB native heap
-   `ArrayBuffer`. At ~2.3 GB used, a ~2.4–4 GB V8 limit leaves little headroom. If the profile
-   shows heavy GC, reduce `?heapMB=` (512 or 384) after checking `nativeHeapPeakMB`, or release
-   the asset/sound buffers after use.
-3. **Java renderer CPU.** ~250 draws and ~11 passes per frame with per-uniform JS bridge calls
-   may be the real cost on a fast GPU. Batch uniform bindings or cache more state if the profile
-   points there.
-4. **Plan-cache counter leak (fixed in `0ea1e34`).** `destroyPipeline` did not subtract
-   `planCount` from `planTotal`, so resource reloads eventually forced a full plan-cache flush and
-   a bind-group rebuild wave.
-5. **Bridge overhead.** Every uniform and draw crosses Wasm→JS. It is cheap per call but adds up;
-   measure before redesigning.
+1. **Main thread CPU-bound or starved?** Neither extreme: 49% busy, 37% script, 67.8% of samples
+   idle. The browser is waiting on SwiftShader for about half the frame and spending the other
+   half in WASM/JS. A real GPU will remove much of the wait, but the CPU half still needs work.
+2. **Is GC dominant?** No: 0.5% of self-time. The 13.3M-entry monitor registry was a much larger
+   problem than the 768 MB native heap; it inflated the live set and every GC scan.
+3. **Which Java frames dominate?** `Minecraft.tick` (16.4%), `ClientLevel.animateTick` (13.9%),
+   environment-attribute lookups (9.2% + 8.8%), biome lookups (4.7%), and the integrated server
+   fiber (7.8%). The renderer itself is not the top CPU consumer on this path.
+4. **Which bridge calls dominate?** None individually. `wasm-to-js` is 0.9% self, `submit` 0.3%,
+   and the per-draw `bindAndValidate`/`drawIndexed` path is spread thin. The bind-group churn was
+   the measurable bridge cost (17 `createBindGroup` calls/frame), now fixed.
 
 ### Next steps
 
-1. Wait for the current verify run (`45996284596` at the time of writing) and download
-   `browser-console-diagnostics`. The earlier profiled run `45994386852` was cancelled by the
-   concurrency group when the README/fix commit was pushed, so it produced no profile.
-2. Read the `SOAKGPU` lines, the `PERF` window (`busyPct`, `scriptPct`, `TaskDuration`), and
-   `title_profile.json`; confirm hypothesis 1 vs 2/3.
-3. Apply the highest-impact fix in one batched commit; re-run the same soak and compare `fps`,
-   `workAvg`, `bindGroups`, `heapMB`, `heapLimitMB`, and `nativeHeapPeakMB`.
-4. Deploy the optimized build manually (the current PAT cannot dispatch workflows or read
-   repository secrets: HTTP 403). Use `scripts/upload_hf.py`, strip the Wasm with
+1. Verify the monitor and plan-cache fixes in CI: the next title soak should show `heapMB`/
+   `heapTotalMB` drop by roughly 0.6–0.7 GB, `planEvictions` near zero after warm-up, and no
+   rendering regression.
+2. Compare `fps`, `workAvg`, `bindGroups`, `heapMB`, `heapLimitMB`, and `nativeHeapPeakMB` against
+   the table above. On SwiftShader, expect a small FPS change; the memory drop is the main signal.
+3. If CPU still matters on a fast GPU, target `animateTick`/environment attributes next. Those are
+   vanilla client frames, so any change must be a targeted bytecode rule, not a gameplay rewrite.
+4. Deploy the verified build manually (the current PAT cannot dispatch workflows or read repository
+   secrets: HTTP 403). Use `scripts/upload_hf.py`, strip the Wasm with
    `scripts/strip_wasm_names.py`, and upload it to the model repo.
 5. Only after the browser build is verified and deployed, resume native Vulkan.
 
@@ -271,14 +288,19 @@ the build log, and the title screen/Create World/Superflat flow plus audio pass 
 ## Known issues and open questions
 
 - **No real-GPU FPS number.** CI uses SwiftShader; the local ARM64 host cannot expose a WebGPU
-  adapter (Chrome 158 returns "no adapter" for SwiftShader and lavapipe). The ~13 fps title soak is
-  a software-rasterizer number, not a user-facing score. `PERF.busyPct` from the profiled run is
-  the evidence that separates CPU-bound from GPU-starved.
-- **`title_screen.png` is blank gray** while `title_soak.png` shows the world. This is a screenshot
-  timing/loading-splash issue, not proof that the title screen fails to render. Fix the capture
-  trigger and add assertions for Language/Singleplayer/death/loading screens.
-- **Heap headroom.** ~2.3–2.4 GB used against a typical 2.4–4 GB V8 limit, including the 768 MB
-  native heap. Do not lower `?heapMB=` without checking `nativeHeapPeakMB` first.
+  adapter (Chrome 158 returns "no adapter" for SwiftShader and lavapipe). The 12.6 fps title soak is
+  a software-rasterizer number, not a user-facing score. `PERF.busyPct` (49%) and the 67.8% idle
+  profile show that roughly half the frame is GPU/compositor wait.
+- **`title_screen.png` was blank gray** while `title_soak.png` shows the world. The capture ran
+  immediately after `java-ui` appeared, before Java had presented a frame. The workflow now waits
+  for `window.__mc.frame > 10` before the shot; confirm it in the next run.
+- **Heap headroom.** The 2.37–2.42 GB measurement included the 13.3M-entry monitor registry leak,
+  now fixed. Re-measure before changing `?heapMB=`: `nativeHeapPeakMB` was only 194 MB against a
+  768 MB reservation, so a 512 MB desktop default is a reasonable follow-up once the leak fix is
+  verified.
+- **Title test final screen.** The run reached `world-level-and-player-ready` with `level=true` and
+  `player=true`, but its last `MW_STATE` still reported `CreateWorldScreen`. Add an explicit
+  in-world HUD assertion so the test cannot pass on a stale screen state.
 - **Deploy credentials.** The current PAT can push and read public APIs but cannot dispatch
   workflows or read repository secrets (HTTP 403). Deployment is manual until that changes.
 - **No native APK.** The native scaffold is parked in `stash@{0}`; only a winit + wgpu
@@ -348,47 +370,42 @@ REPO STATE
   SwiftShader; its FPS is not a real-GPU metric.
 
 CURRENT PERFORMANCE WORK
-- Verify run 45996284596 (probe 45996284611) is the current profiled build on 0f652a8. Download the
-  browser-console-diagnostics artifact and inspect build/title_profile.json plus the SOAKGPU and
-  PERF log lines. The earlier run 45994386852 was cancelled by the concurrency group and has no
-  artifact.
-- IMPORTANT: the verify workflow uses concurrency cancel-in-progress. Any push to scripts/**, web/**,
-  src/**, renderer/**, patches/**, tools/src/**, or the workflow cancels the running job. Batch
-  changes and wait for the profile before pushing. README-only commits are safe.
-- Last verified title/world soak (run 45980931507): ~13 fps, workAvg ~74 ms, presentAvg ~0.00 ms,
-  heap ~2.3 GB, 711 live textures, 106 buffers, 199 pipelines, ~250 draws/frame, ~11 passes/frame,
-  32 MB transient capacity.
-- The smoke test (?smoke-world=1) is the Rust Body path and runs at 0.2–1.2 fps with workAvg
-  2.8–4.5 s; do not treat it as the Java renderer score.
-- Instrumentation: web/gpu/webgpu.js counters and state-call skipping; FrameProfiler.java for
-  submit/hooks/readback phases; scripts/cdp.py --cpu-profile; workflow uploads title_profile.json
-  and smoke_profile.json.
-- Key questions: is the main thread CPU-bound or starved by SwiftShader? Is GC dominant? Which
-  Java frames (LevelRenderer/GameRenderer/Minecraft.tick/SectionRenderDispatcher) or JS bridge
-  calls dominate? Does nativeHeapPeakMB justify reducing ?heapMB=768?
-- Applied in `0ea1e34`: `destroyPipeline` now subtracts `planCount` from `planTotal`, so resource
-  reloads cannot force a full plan-cache flush and a bind-group rebuild wave.
-- `0ea1e34` also adds `scripts/strip_wasm_names.py`. It removes TeaVM's ~51 MB `name` section and
-  takes the module from ~112 MB to ~60.4 MB; the deploy workflow now strips before publishing.
-  Verified locally: the stripped module compiles in Chrome in ~5.2 s and still exposes the same
-  exports. Profiles still come from the unstripped CI artifact.
+- Verify run 45996284596 completed successfully. title_profile.json (1.16 MB) and
+  smoke_profile.json (281 KB) are in the browser-console-diagnostics artifact.
+- Title/Create World result: 12.6 fps, workAvg 77 ms, presentAvg 0.00 ms, heap 2.37-2.42 GB
+  (limit 4.19 GB), nativeHeapPeakMB 194, 711 textures, 727 views, 103 buffers, 199 pipelines,
+  ~262 draws/frame, ~11 passes/frame, ~17 bind groups/frame.
+- PERF window: TaskDuration 12.26s/25s (busyPct 49.0), ScriptDuration 9.33s/25s (scriptPct 37.3).
+- CPU profile: 20,359 samples over 27.4s; 67.8% idle, 2.1% program, 0.5% GC. Inclusive: 58.3%
+  idle, 20.1% frame loop, 16.4% Minecraft.tick, 13.9% ClientLevel.animateTick, 9.2% + 8.8%
+  environment-attribute lookups, 7.8% integrated server, 4.7% biome lookups. The renderer is not
+  the top CPU consumer; SwiftShader waiting is about half the frame.
+- Smoke profile (Rust Body): 0.2 fps, busyPct 70.9, scriptPct 9.4; 46.8% idle, 45.8% program,
+  3.3% getCurrentTexture. Not the Java renderer score.
+- FIXED in this commit: MonitorRegistry leak. [REPORT] showed locks=13,341,935 after 222s because
+  TObject.createMonitor registered every synchronized object forever. Registration is now lazy
+  (contended path only) with a 131,072 hard cap. Expect ~0.6-0.7 GB less heap.
+- FIXED in this commit: bind-group plan thrash. animate_sprite_blit needs ~500 plans; the 512 cap
+  cleared the whole cache, causing 34,816 evictions / 68 flushes in 2,050 frames. Cap is now 1,024
+  and eviction drops only the oldest bucket.
+- Also: scripts/strip_wasm_names.py cuts the deployed module from ~112 MB to ~60.4 MB; the deploy
+  workflow strips before publishing. cdp.py now prints PERF deltas (busyPct/scriptPct) and
+  inclusive profile time. The title screenshot action waits for frame > 10 to avoid the blank
+  title_screen.png.
 
 NEXT MOVES
-1. Run: gh run list --branch feat/client-headless-webgpu-boot; gh run download <id> -n
-   browser-console-diagnostics -D diag.
-2. Analyze the profile with scripts/cdp.py's summarize_cpu_profile (self + inclusive), then read
-   the PERF line (busyPct/scriptPct) and the SOAKGPU counters.
-3. Apply the highest-impact fix in ONE commit, re-run the same title/world soak, and compare
-   fps/workAvg/bindGroups/heapMB/heapLimitMB/nativeHeapPeakMB.
-4. Verify the real Java title screen, Create World, Superflat world, screenshots, and audio.
-5. Deploy manually with scripts/upload_hf.py; the PAT cannot dispatch workflows or read secrets
+1. Wait for the new verify run (triggered by this commit), download
+   browser-console-diagnostics, and confirm heapMB/heapTotalMB dropped by ~0.6-0.7 GB and
+   planEvictions is near zero after warm-up.
+2. Check title_screen.png is non-blank and the flow still reaches world-level-and-player-ready;
+   compare fps/workAvg/bindGroups/heapMB/heapLimitMB/nativeHeapPeakMB with the numbers above.
+3. Deploy manually with scripts/upload_hf.py; the PAT cannot dispatch workflows or read secrets
    (HTTP 403). Strip the Wasm with scripts/strip_wasm_names.py before uploading it to the model
    repo (the deploy workflow already does this), then bump the ?v= build query.
-6. Then resume native: pop stash@{0} on feat/native-vulkan, rebase onto browser HEAD, implement
+4. Then resume native: pop stash@{0} on feat/native-vulkan, rebase onto browser HEAD, implement
    winit + wgpu NativeActivity, build with cargo-ndk + Gradle in CI, assert no WebView.
-7. Add browser CI coverage for Language/Singleplayer/death/loading screens and fix the blank
-   title_screen.png timing issue.
-8. Remember: pushes to scripts/web/src cancel the running verify job. Batch work; README-only
+5. Add browser CI coverage for Language/Singleplayer/death/loading screens.
+6. Remember: pushes to scripts/web/src cancel the running verify job. Batch work; README-only
    commits are safe.
 
 GUARDRAILS

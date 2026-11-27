@@ -223,7 +223,7 @@ def summarize_cpu_profile(profile, top=35):
         return
     sampled_ms = sum(inclusive_us.get(int(n.get("id")), 0) for n in nodes
                      if int(n.get("id")) not in parent) / 1000.0
-    print("PROFILE: {} self samples across {} frames, {:.1f}s on the main thread"
+    print("PROFILE: {} self samples across {} frames, {:.1f}ms on the main thread"
           .format(total, len(nodes), sampled_ms), flush=True)
     self_buckets = {}
     for node_id, hits in self_hits.items():
