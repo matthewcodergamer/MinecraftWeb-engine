@@ -171,6 +171,8 @@ jobs:
             --timeout 1200 \
             --soak-seconds 60 \
             --soak-screenshot build/smoke_soak.png \
+            --cpu-profile build/smoke_profile.json \
+            --cpu-profile-seconds 15 \
             --preload-js "try { sessionStorage.setItem('mw_play_pass', String(Date.now())); } catch (e) {}" \
             --screenshot build/browser_title_or_world.png \
             --until-js "window.__mc && (window.__mc.stage === 'failed' || window.__mc.javaStage === 'first-java-section-emitted')" \
@@ -205,6 +207,8 @@ jobs:
             --timeout 1800 \
             --soak-seconds 120 \
             --soak-screenshot build/title_soak.png \
+            --cpu-profile build/title_profile.json \
+            --cpu-profile-seconds 25 \
             --preload-js "try { sessionStorage.setItem('mw_play_pass', String(Date.now())); } catch (e) {}" \
             --actions "wait=window.__mc && document.body.classList.contains('java-ui');shot=build/title_screen.png;click=Singleplayer@TitleScreen;shot=build/create_world.png;click=World@CreateWorldScreen;cycle=World Type|Superflat;shot=build/world_tab_superflat.png;click=Create New World@CreateWorldScreen" \
             --actions-timeout 900 \
@@ -263,5 +267,7 @@ jobs:
             build/smoke_error.txt
             build/title_console.log
             build/title_error.txt
+            build/title_profile.json
+            build/smoke_profile.json
           if-no-files-found: warn
           retention-days: 14

@@ -16,15 +16,26 @@ import java.util.OptionalDouble;
 import org.joml.Vector4fc;
 import org.lwjgl.system.MemoryUtil;
 
+import mcport.rt.FrameProfiler;
+
 /** The device's command encoder: records into one GPUCommandEncoder, submitted by submit()/present. */
 class WebGpuCommandEncoder implements CommandEncoderBackend {
     private final WebGpuTransientMemory transientMemory = new WebGpuTransientMemory();
     private final Int2ObjectOpenHashMap<Runnable> readbackCallbacks = new Int2ObjectOpenHashMap<>();
     private int nextCallback = 1;
+    /**
+     * Reused scratch slot for {@link #heapAddress}. Uniform and texture uploads
+     * happen hundreds of times per frame; a fresh {@code long[1]} per call was
+     * measurable Wasm GC garbage for no benefit. The encoder is confined to
+     * the render thread, so one slot is safe.
+     */
+    private final long[] scratch = new long[1];
 
     @Override
     public void submit() {
+        long submitStart = System.nanoTime();
         WG.submit();
+        FrameProfiler.submit(System.nanoTime() - submitStart);
         transientMemory.reset();
         runCompletedReadbacks();
     }
@@ -105,6 +116,7 @@ class WebGpuCommandEncoder implements CommandEncoderBackend {
 
     /** Address of the data in the native heap (copied there first if it is a Java-heap buffer). */
     private static long heapAddress(ByteBuffer data, long[] temp) {
+        temp[0] = 0;
         if (data.isDirect()) {
             return MemoryUtil.memAddress(data);
         }
@@ -116,11 +128,11 @@ class WebGpuCommandEncoder implements CommandEncoderBackend {
 
     @Override
     public void writeToBuffer(GpuBufferSlice slice, ByteBuffer data) {
-        long[] temp = new long[1];
-        long src = heapAddress(data, temp);
+        long src = heapAddress(data, scratch);
         WG.writeBuffer(((WebGpuBuffer) slice.buffer()).id, slice.offset(), (int) src, Math.min(data.remaining(), (int) slice.length()));
-        if (temp[0] != 0) {
-            MemoryUtil.nmemFree(temp[0]);
+        if (scratch[0] != 0) {
+            MemoryUtil.nmemFree(scratch[0]);
+            scratch[0] = 0;
         }
     }
 
@@ -132,11 +144,11 @@ class WebGpuCommandEncoder implements CommandEncoderBackend {
 
     @Override
     public void writeToTexture(GpuTexture texture, ByteBuffer data, int mipLevel, int depthOrLayer, int x, int y, int width, int height) {
-        long[] temp = new long[1];
-        long src = heapAddress(data, temp);
+        long src = heapAddress(data, scratch);
         WG.writeTexture(((WebGpuTexture) texture).id, (int) src, data.remaining(), mipLevel, x, y, width, height, depthOrLayer);
-        if (temp[0] != 0) {
-            MemoryUtil.nmemFree(temp[0]);
+        if (scratch[0] != 0) {
+            MemoryUtil.nmemFree(scratch[0]);
+            scratch[0] = 0;
         }
     }
 

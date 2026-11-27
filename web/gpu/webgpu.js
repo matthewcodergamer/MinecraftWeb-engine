@@ -31,7 +31,14 @@
     errors: [],
     stats: { draws: 0, passes: 0, submits: 0, bindGroups: 0, pipelines: 0,
       liveBuffers: 0, liveTextures: 0, liveViews: 0, liveSamplers: 0, livePipelines: 0,
-      transientBytes: 0, transientChunks: 0 },
+      transientBytes: 0, transientChunks: 0,
+      // Hot-path counters. They are cheap integers, unlike timing every call,
+      // and make a soak report show which port layer is actually doing work.
+      bufferWrites: 0, bufferWriteBytes: 0, textureWrites: 0, textureWriteBytes: 0,
+      textureCopies: 0, readbacks: 0, planMisses: 0, planEvictions: 0,
+      bindSkips: 0, pipelineSkips: 0, vertexSkips: 0, indexSkips: 0, scissorSkips: 0,
+      pipelineMs: 0, shaderMs: 0, pipelineCount: 0, beginPassHits: 0, beginPassMisses: 0,
+      transientUploads: 0, transientUploadBytes: 0 },
   };
   globalThis.__mcWebGPU = G;
 
@@ -289,6 +296,8 @@
       if (c.used > c.dirtyFrom) {
         const n = c.used - c.dirtyFrom;
         G.queue.writeBuffer(c.buf, c.dirtyFrom, H().buffer, c.shadow + c.dirtyFrom, n);
+        G.stats.transientUploads++;
+        G.stats.transientUploadBytes += n;
       }
       c.used = 0;
       c.dirtyFrom = 0;
@@ -298,6 +307,8 @@
   /** Buffer write ordered with recorded commands: data goes through a transient chunk + copyBufferToBuffer. */
   G.writeBufferStaged = function (dst, dstOffset, srcAddr, size) {
     if (size <= 0) return;
+    G.stats.bufferWrites++;
+    G.stats.bufferWriteBytes += size;
     const b = G.obj[dst];
     if (G.passState) {
       // Mapped ring buffers (dynamic uniforms, cloud meshes) are flushed from
@@ -423,6 +434,8 @@
   G.writeTexture = function (texId, srcAddr, srcBytes, mip, x, y, w, h, layer, srcStride) {
     const t = G.obj[texId];
     if (w <= 0 || h <= 0) return;
+    G.stats.textureWrites++;
+    G.stats.textureWriteBytes += srcBytes || (w * h * 4);
     const conv = srcStride ? null : sourceToTexelBytes(t, srcAddr, w, h);
     const { tight, aligned } = rowLayout(t, w);
     const stride = srcStride || tight;
@@ -442,6 +455,7 @@
 
   G.copyBufferToTexture = function (bufId, srcOffset, srcRowLength, srcRows, texId, mip, x, y, w, h, layer) {
     const t = G.obj[texId], b = G.obj[bufId];
+    G.stats.textureCopies++;
     const { bpt } = rowLayout(t, w);
     const rowLen = (srcRowLength || w) * bpt;
     endPass();
@@ -468,6 +482,7 @@
    */
   G.copyTextureToBuffer = function (texId, bufId, dstOffset, mip, x, y, w, h, callbackId) {
     const t = G.obj[texId], b = G.obj[bufId];
+    G.stats.readbacks++;
     const { bpt, tight, aligned } = rowLayout(t, w);
     const tmp = G.device.createBuffer({ size: aligned * h, usage: GU.COPY_DST | GU.MAP_READ });
     endPass();
@@ -639,6 +654,7 @@
   G.createPipeline = function (json) {
     const desc = JSON.parse(json);
     const p = { kind: 'pipeline', desc, variants: new Map(), modules: {}, error: null, samplerBindings: new Set(), textureDimensions: {} };
+    const shaderStart = performance.now();
     try {
       for (const sh of desc.shaders) {
         const words = new Uint32Array(H().buffer.slice(sh.spv[0], sh.spv[0] + sh.spv[1]));
@@ -657,6 +673,7 @@
       p.error = String(e && e.message || e);
       console.warn('pipeline ' + desc.name + ' unavailable: ' + p.error);
     }
+    G.stats.shaderMs += performance.now() - shaderStart;
     G.stats.pipelines++;
     G.pipelines.add(p);
     return put(p);
@@ -737,7 +754,10 @@
     } else if (depthFormat) {
       desc.depthStencil = { format: depthFormat, depthWriteEnabled: false, depthCompare: 'always' };
     }
+    const pipelineStart = performance.now();
     v = { pipeline: G.device.createRenderPipeline(desc), layouts };
+    G.stats.pipelineMs += performance.now() - pipelineStart;
+    G.stats.pipelineCount++;
     p.variants.set(key, v);
     return v;
   }
@@ -763,8 +783,11 @@
     let d = beginPassCache.get(json);
     if (!d) {
       d = JSON.parse(json);
+      G.stats.beginPassMisses++;
       if (beginPassCache.size > 512) beginPassCache.clear();
       beginPassCache.set(json, d);
+    } else {
+      G.stats.beginPassHits++;
     }
     endPass();
     const colorAttachments = d.colors.map((c) => {
@@ -788,10 +811,11 @@
     const mip = first ? G.obj[first[0]].baseMip : 0;
     const tw = Math.max(1, tex.w >> mip), th = Math.max(1, tex.h >> mip);
     G.passState = { width: tw, height: th, pipeline: null, variant: null, vertex: [], index: null, indexFormat: 'uint32',
-      area: d.area, depthFormat };
+      area: d.area, depthFormat, lastPlan: null, lastOffsets: null, scissor: null };
     G.pass.setViewport(0, 0, tw, th, 0, 1);
     const [x, y, w, h] = clampRect(d.area, tw, th);
     G.pass.setScissorRect(x, y, w, h);
+    G.passState.scissor = [x, y, w, h];
     G.stats.passes++;
   };
 
@@ -805,29 +829,48 @@
   G.setPipeline = function (id) {
     const s = G.passState;
     if (!s) return;
-    s.pipeline = G.obj[id];
+    const p = G.obj[id];
+    if (s.pipeline === p) { G.stats.pipelineSkips++; return; }
+    s.pipeline = p;
     s.variant = null;
+    // A new pipeline can use different bind-group layouts, so the cached
+    // bindings are no longer known to match.
+    s.lastPlan = null;
+    s.lastOffsets = null;
   };
 
   G.setVertexBuffer = function (slot, bufId, offset) {
     const s = G.passState;
     if (!s) return;
-    s.vertex[slot] = bufId ? [G.obj[bufId].buf, offset] : null;
-    if (bufId) G.pass.setVertexBuffer(slot, G.obj[bufId].buf, offset);
+    const buf = bufId ? G.obj[bufId].buf : null;
+    const prev = s.vertex[slot];
+    if (prev && prev[0] === buf && prev[1] === offset) { G.stats.vertexSkips++; return; }
+    if (!prev && !buf) return;
+    s.vertex[slot] = buf ? [buf, offset] : null;
+    if (buf) G.pass.setVertexBuffer(slot, buf, offset);
   };
 
   G.setIndexBuffer = function (bufId, is32) {
     const s = G.passState;
     if (!s) return;
-    s.indexFormat = is32 ? 'uint32' : 'uint16';
-    s.index = bufId ? G.obj[bufId].buf : null;
-    if (bufId) G.pass.setIndexBuffer(s.index, s.indexFormat);
+    const format = is32 ? 'uint32' : 'uint16';
+    const buf = bufId ? G.obj[bufId].buf : null;
+    if (s.index === buf && s.indexFormat === format) { G.stats.indexSkips++; return; }
+    s.indexFormat = format;
+    s.index = buf;
+    if (buf) G.pass.setIndexBuffer(buf, format);
   };
 
   G.setScissor = function (enabled, x, y, w, h) {
     const s = G.passState;
     if (!s) return;
     const r = enabled ? clampRect([x, y, w, h], s.width, s.height) : clampRect(s.area, s.width, s.height);
+    const prev = s.scissor;
+    if (prev && prev[0] === r[0] && prev[1] === r[1] && prev[2] === r[2] && prev[3] === r[3]) {
+      G.stats.scissorSkips++;
+      return;
+    }
+    s.scissor = r;
     G.pass.setScissorRect(r[0], r[1], r[2], r[3]);
   };
 
@@ -944,6 +987,7 @@
       }
     }
     if (!plan) {
+      G.stats.planMisses++;
       const kinds = new Array(n).fill('');
       const e0 = [], e1 = [], offsets = [], sig = new Float64Array(n * 4);
       for (let i = 0, j = 0; i < n; i++, j += 4) {
@@ -989,6 +1033,7 @@
       // the per-pipeline cap keeps one shader-heavy frame from evicting every
       // other pipeline's plans.
       if (++G.planTotal > 4096) {
+        G.stats.planEvictions += G.planTotal;
         for (const q of G.pipelines) {
           if (q.plans) { q.plans.clear(); q.planCount = 0; }
         }
@@ -996,6 +1041,7 @@
       }
       if (!p.plans) p.plans = new Map();
       else if (p.planCount >= 512) {
+        G.stats.planEvictions += p.planCount;
         G.planTotal -= p.planCount;
         p.plans.clear();
         p.planCount = 0;
@@ -1009,8 +1055,33 @@
       G.pass.setPipeline(plan.variant.pipeline);
       s.variant = plan.variant;
     }
-    G.pass.setBindGroup(0, plan.bg0, plan.offsets);
-    G.pass.setBindGroup(1, plan.bg1);
+    // Re-binding an identical bind group and dynamic-offset vector is pure
+    // Dawn validation overhead. GUI batches frequently draw many quads with
+    // one pipeline and one uniform slice; skip those repeats.
+    const samePlan = s.lastPlan === plan;
+    let offsetsChanged = !samePlan;
+    if (samePlan) {
+      const prev = s.lastOffsets;
+      if (!prev || prev.length !== plan.offsets.length) {
+        offsetsChanged = true;
+      } else {
+        for (let i = 0; i < plan.offsets.length; i++) {
+          if (prev[i] !== plan.offsets[i]) { offsetsChanged = true; break; }
+        }
+      }
+    }
+    if (!samePlan) {
+      G.pass.setBindGroup(1, plan.bg1);
+    }
+    if (!samePlan || offsetsChanged) {
+      G.pass.setBindGroup(0, plan.bg0, plan.offsets);
+      const offsets = s.lastOffsets || (s.lastOffsets = []);
+      offsets.length = plan.offsets.length;
+      for (let i = 0; i < plan.offsets.length; i++) offsets[i] = plan.offsets[i];
+    } else {
+      G.stats.bindSkips++;
+    }
+    s.lastPlan = plan;
     return true;
   }
 
@@ -1201,6 +1272,22 @@
       objSlots: G.obj.length, freeSlots: G.free.length, planTotal: G.planTotal,
       presentAvg: +G.presentAvg.toFixed(2), intervalAvg: +G.intervalAvg.toFixed(2),
       heapMB: performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : -1,
+      nativeHeapMB: H() ? Math.round(H().inUse / 1048576) : -1,
+      nativeHeapPeakMB: H() ? Math.round(H().peak / 1048576) : -1,
+      bufferWrites: s.bufferWrites, bufferWriteMB: +(s.bufferWriteBytes / 1048576).toFixed(1),
+      textureWrites: s.textureWrites, textureWriteMB: +(s.textureWriteBytes / 1048576).toFixed(1),
+      textureCopies: s.textureCopies, readbacks: s.readbacks,
+      planMisses: s.planMisses, planEvictions: s.planEvictions,
+      bindSkips: s.bindSkips, pipelineSkips: s.pipelineSkips,
+      vertexSkips: s.vertexSkips, indexSkips: s.indexSkips, scissorSkips: s.scissorSkips,
+      pipelineMs: +s.pipelineMs.toFixed(1), shaderMs: +s.shaderMs.toFixed(1),
+      pipelineCount: s.pipelineCount, beginPassHits: s.beginPassHits, beginPassMisses: s.beginPassMisses,
+      transientUploads: s.transientUploads, transientUploadMB: +(s.transientUploadBytes / 1048576).toFixed(1),
+      topPlans: [...G.pipelines]
+        .filter((p) => p.planCount)
+        .sort((a, b) => b.planCount - a.planCount)
+        .slice(0, 5)
+        .map((p) => ({ name: (p.desc && p.desc.name) || '?', plans: p.planCount })),
       lost: G.lost ? String(G.lost.message || 'device lost') : '',
       errors: G.errors.slice(-3),
     };
@@ -1214,6 +1301,7 @@
    */
   function trimCaches() {
     if (G.planTotal > 2048) {
+      G.stats.planEvictions += G.planTotal;
       for (const q of G.pipelines) {
         if (q.plans) { q.plans.clear(); q.planCount = 0; }
       }
