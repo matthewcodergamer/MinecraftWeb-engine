@@ -20,6 +20,10 @@ on:
         description: Destination folder inside the Space (empty = repo root)
         required: false
         default: ""
+      wasm_repo:
+        description: Model repository that streams the 112 MB WebAssembly module
+        required: false
+        default: "matthewcodergamer/minecraft-web-client"
 
 permissions:
   contents: read
@@ -33,6 +37,7 @@ jobs:
       RUN_ID: ${{ github.event.inputs.run_id || '45597544527' }}
       HF_REPO: ${{ github.event.inputs.hf_repo || 'matthewcodergamer/minecraft-browser' }}
       HF_PATH: ${{ github.event.inputs.hf_path || '' }}
+      HF_WASM_REPO: ${{ github.event.inputs.wasm_repo || 'matthewcodergamer/minecraft-web-client' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -68,6 +73,29 @@ jobs:
           cp build/ci/minecraft-java-edition-v26.3.wasm deploy/wasm/
           cp build/ci/minecraft-java-edition-v26.3.wasm-runtime.js deploy/wasm/
           cp build/ci/minecraft-java-edition-v26.3-assets.bin deploy/resources/
+
+      - name: Publish the streaming WebAssembly module
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from huggingface_hub import HfApi
+
+          api = HfApi(token=os.environ["HF_TOKEN"])
+          api.upload_file(
+              path_or_fileobj="deploy/wasm/minecraft-java-edition-v26.3.wasm",
+              path_in_repo="minecraft-java-edition-v26.3.wasm",
+              repo_id=os.environ["HF_WASM_REPO"],
+              repo_type="model",
+              commit_message="wasm: publish verified browser client",
+          )
+          print("published WebAssembly to", os.environ["HF_WASM_REPO"])
+          PY
+          # The Space shell streams the module from the model repository.
+          # Keeping a second 112 MB copy on the Space only burns storage quota.
+          rm -rf deploy/wasm
 
       - name: Fetch the complete live asset archive
         run: |
