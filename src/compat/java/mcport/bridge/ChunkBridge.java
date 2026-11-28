@@ -387,7 +387,7 @@ public final class ChunkBridge {
             boolean mobile = isMobileBrowser();
             int rd = requestedRenderDistance();
             if (rd <= 0) {
-                // Desktop 8 chunks / mobile 5. The old 12/8 defaults made the
+                // Desktop 8 chunks / mobile 4. The old 12/8 defaults made the
                 // Java renderer submit several hundred extra chunk draws per
                 // frame, which is the difference between a slideshow and a
                 // playable 30 FPS on integrated laptop GPUs.

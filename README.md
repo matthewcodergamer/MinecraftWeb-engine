@@ -16,8 +16,9 @@ unmodified client bytecode with [TeaVM](https://github.com/konsoletyper/teavm), 
 | Browser branch | `feat/client-headless-webgpu-boot` |
 | Browser HEAD | `fbcf93b` (README; code HEAD `6f6e281`, build `20261127c`) |
 | Browser CI | verify `46090386545` **succeeded** on `6f6e281`: 13.3–13.6 fps, title screenshot non-blank; `46027524065` failed before Chrome launched; `46008416951` succeeded |
-| Live Space | **build `26.3-20261127c` deployed** (60,461,887-byte stripped module); Space commit `cfbdef30a776`, model commit `e738a3b20293` |
-| Pages mirror | <https://matthewcodergamer.github.io/> points at build `26.3-20261127c`; site commit `4e71d1f`; mobile scroll locked during play |
+| Live Space | **build `26.3-20261127c` deployed** (60,461,887-byte stripped module); Space commit `931269de2b36`, model commit `e738a3b20293` |
+| Pages mirror | <https://matthewcodergamer.github.io/> embeds build `26.3-20261127c` via `/game.html?v=26.3-20261127c&host=pages2`; site commit `4f600a8`; mobile scroll locked during play |
+| Mobile render distance | touch shell now passes `rd=4` (was 6); simulation distance 4; adaptive floor 4 |
 | Native branch | `feat/native-vulkan`, HEAD `ac90861`, not pushed, no APK |
 | Next gate | real-phone test of build `c`; if still GPU-bound, tighten the mobile fill budget or initial scale |
 
@@ -44,7 +45,7 @@ matches the `EnvironmentAttributeReader` patch line in the full build log.
 | Playable demo | <https://matthewcodergamer-minecraft-browser.static.hf.space/> |
 | GitHub Pages mirror | <https://matthewcodergamer.github.io/> (embeds build `26.3-20261127c`; `play.html`/`game.html` redirect to it) |
 | Visible build | `26.3-20261127c` |
-| Space commit | `cfbdef30a7763dd1565ee78928d62b31e1eb0e41` |
+| Space commit | `931269de2b361f6f8c56ebf08fce8444e6fedc47` |
 | Model repo | `matthewcodergamer/minecraft-web-client` (commit `e738a3b202933a3eafa01c92693c91bb87f610ec`) |
 | Wasm module (deployed) | 60,461,887 bytes (TeaVM name section stripped) |
 | Wasm SHA-256 | `bdac79c39a3c26d72104e214918fa9ec57e34d4d35d9a10bb1af0eddf6af1285` |
@@ -153,13 +154,14 @@ GPU/fill-rate, which the adaptive scale and mobile budget address on real device
    after 30 s above 52 FPS. CSS keeps the canvas full-screen. This is the direct lever for a phone
    GPU that cannot fill 1080p; it is exposed as `__mcScaleBias` and triggered through the existing
    SDL resize path.
-3. **Mobile defaults and fill budget.** Render distance starts at 4 (was 5), simulation distance
-   at 4, and the canvas starts near a 1.6 MP framebuffer (about 850p wide) instead of full
-   resolution. A 1440p phone would otherwise render 3.7 MP for the first ~20 s while the
-   adaptive bias walked down; this makes the first frame playable and still lets the bias raise
-   sharpness when the GPU keeps up. The learned bias is stored in `localStorage`
-   (`mc_scale_bias_v1`), and both `computeScale` and Java's `currentScaleBias()` read it back, so a
-   returning player starts at the scale that worked last time instead of re-learning it.
+3. **Mobile defaults and fill budget.** The shell now passes render distance **4** on touch (it
+   used to pass 6, so Java's mobile fallback of 4 never applied), simulation distance is 4, and
+   the mobile canvas is capped at CSS resolution (scale ≤ 1.0, roughly 0.3–0.5 MP on a phone)
+   instead of full DPR. A 1440p phone would otherwise render 3.7 MP for the first ~20 s while the
+   adaptive bias walked down; this makes the first frame playable. The learned bias is stored in
+   `localStorage` (`mc_scale_bias_v1`), and both `computeScale` and Java's `currentScaleBias()`
+   read it back, so a returning player starts at the scale that worked last time instead of
+   re-learning it.
 4. **GPU queue timing.** `gpuAvg` measures `queue.onSubmittedWorkDone()` once per frame (one probe
    in flight), and the snapshot now reports the adapter name and fallback flag. `cdp.py` prints
    `gpuMs` on every SOAK line, so the next run distinguishes a GPU-bound frame from a CPU-bound
@@ -198,7 +200,7 @@ PY
 2. The profile comparison is done: `animateTick` inclusive fell from 14.5% to 5.7%,
    `EnvironmentAttributeReader.getValue` fell below 3.4%, and `Minecraft.tick` fell from 16.7% to
    7.9%. FPS rose from 9.4 to 13.3–13.6 on the same software GPU.
-3. Build `c` is deployed: stripped module 60,461,887 bytes, Space commit `cfbdef30a776`, model
+3. Build `c` is deployed: stripped module 60,461,887 bytes, Space commit `931269de2b36`, model
    commit `e738a3b20293`, live `play.html`/`game.html` contain `20261127c`, and the wasm magic is
    `0061736d01000000`.
 4. Test the live build on a real phone. If it is still GPU-bound, reduce the mobile fill budget
@@ -356,7 +358,7 @@ PLAIN ENGLISH
 The user says the live build's flicker is fixed but the game still crawls. Build
 26.3-20261127c is now live: it is verified at 13.3–13.6 fps on SwiftShader versus 9.4 before, with
 the ambient cache cutting the animateTick hot path and a real title screenshot. The deploy is
-confirmed (60,461,887-byte stripped module, Space commit cfbdef30a776, model commit e738a3b20293).
+confirmed (60,461,887-byte stripped module, Space commit 931269de2b36, model commit e738a3b20293).
 The next measurement is a real phone; if it is still GPU-bound, tighten the mobile fill budget or
 initial scale. After that, build the real Android app that renders with Vulkan natively — not a
 WebView wrapper and not a Tauri shell. The five-second sponsor ad is a hard requirement. Do not
@@ -373,7 +375,7 @@ REPO STATE
   + bind-group plan-cache fixes), 0ea1e34 (strip the Wasm name section for deploy, PERF window
   deltas, planTotal fix), 52f1534 (profiling and hot-path counters), 88119c0 (TeaVM runtime kept
   on the Space), c0014ec (GUI/sound fixes, build 20261127a).
-- Build c deployed: Space commit cfbdef30a7763dd1565ee78928d62b31e1eb0e41, model commit
+- Build c deployed: Space commit 931269de2b361f6f8c56ebf08fce8444e6fedc47, model commit
   e738a3b202933a3eafa01c92693c91bb87f610ec. Live wasm 60,461,887 bytes, runtime 17,338 bytes,
   play.html and game.html both contain 20261127c.
 - Batch verified in 46090386545 on 6f6e281: EnvironmentAttributePatches (per-quart ambient-particle
@@ -384,7 +386,7 @@ REPO STATE
   step exited before launching Chrome. That is fixed in b3970a1 and included in 6f6e281; the next
   run, 46090386545, succeeded and captured a real title screen.
 - Live: https://matthewcodergamer-minecraft-browser.static.hf.space/ (build 26.3-20261127c).
-  Space commit cfbdef30a776; model repo matthewcodergamer/minecraft-web-client commit
+  Space commit 931269de2b36; model repo matthewcodergamer/minecraft-web-client commit
   e738a3b20293. Wasm 60,461,887 bytes (name section stripped); runtime JS 17,338 bytes; asset
   archive 64,689,340 bytes / 25,671 entries; sounds.bin 117,739,281 bytes.
 - Native: branch feat/native-vulkan, HEAD ac90861, based on c0014ec and not pushed. WebView shell

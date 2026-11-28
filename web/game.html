@@ -3326,7 +3326,7 @@
             // silently ignored and the client generated at its 12-chunk
             // desktop default, which is far too heavy for a browser tab.
             if (params.has('rd')) brainQuery += '&rd=' + encodeURIComponent(params.get('rd'));
-            else brainQuery += '&rd=' + ((window.MCInput && MCInput.isTouch) ? 6 : 8);
+            else brainQuery += '&rd=' + ((window.MCInput && MCInput.isTouch) ? 4 : 8);
             if (params.has('gfx')) brainQuery += '&gfx=' + encodeURIComponent(params.get('gfx'));
             if (params.has('clouds')) brainQuery += '&clouds=' + encodeURIComponent(params.get('clouds'));
             if (params.get('adaptive') === '0') brainQuery += '&adaptive=0';
