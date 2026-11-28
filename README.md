@@ -17,6 +17,7 @@ unmodified client bytecode with [TeaVM](https://github.com/konsoletyper/teavm), 
 | Browser HEAD | `fbcf93b` (README; code HEAD `6f6e281`, build `20261127c`) |
 | Browser CI | verify `46090386545` **succeeded** on `6f6e281`: 13.3–13.6 fps, title screenshot non-blank; `46027524065` failed before Chrome launched; `46008416951` succeeded |
 | Live Space | **build `26.3-20261127c` deployed** (60,461,887-byte stripped module); Space commit `cfbdef30a776`, model commit `e738a3b20293` |
+| Pages mirror | <https://matthewcodergamer.github.io/> points at build `26.3-20261127c`; site commit `4e71d1f`; mobile scroll locked during play |
 | Native branch | `feat/native-vulkan`, HEAD `ac90861`, not pushed, no APK |
 | Next gate | real-phone test of build `c`; if still GPU-bound, tighten the mobile fill budget or initial scale |
 
@@ -41,6 +42,7 @@ matches the `EnvironmentAttributeReader` patch line in the full build log.
 | Item | Value |
 |---|---|
 | Playable demo | <https://matthewcodergamer-minecraft-browser.static.hf.space/> |
+| GitHub Pages mirror | <https://matthewcodergamer.github.io/> (embeds build `26.3-20261127c`; `play.html`/`game.html` redirect to it) |
 | Visible build | `26.3-20261127c` |
 | Space commit | `cfbdef30a7763dd1565ee78928d62b31e1eb0e41` |
 | Model repo | `matthewcodergamer/minecraft-web-client` (commit `e738a3b202933a3eafa01c92693c91bb87f610ec`) |
@@ -70,6 +72,10 @@ the mobile controls.
 - **GUI correctness.** Dynamic uniform offsets, sound resolution, and the Java boot overlay were
   fixed in `c0014ec`; the live build includes those fixes.
 - **Five-second sponsor ad.** The shell keeps the guaranteed sponsor slot; do not remove it.
+- **GitHub Pages mirror.** <https://matthewcodergamer.github.io/> embeds build
+  `26.3-20261127c`. While the game iframe is fullscreen the body is `position:fixed` with
+  `touch-action:none`, so mobile Safari/Chrome cannot rubber-band or scroll the page behind the
+  canvas.
 
 ## Architecture
 
@@ -420,11 +426,13 @@ CURRENT PERFORMANCE WORK
   MC_BUILD in web/play.html and web/game.html so Cache Storage does not serve the old module.
 
 NEXT MOVES
-1. Build c is deployed and verified: wasm 60,461,887 bytes, live play.html/game.html contain
-   20261127c, runtime 17,338 bytes, wasm magic 0061736d01000000.
-2. Test https://matthewcodergamer-minecraft-browser.static.hf.space/ on a real phone. Watch the
-   on-screen FPS, and confirm the canvas shrinks as __mcScaleBias adapts (floor 0.6). If it is
-   still GPU-bound, lower the mobile fill budget (1.6 MP) or start mobile at a lower initial bias.
+1. Build c is deployed and verified on both hosts: the HF Space serves the 60,461,887-byte wasm,
+   and https://matthewcodergamer.github.io/ embeds `?v=26.3-20261127c`. The Pages site also locks
+   the body during play (`position:fixed`, `touch-action:none`) so mobile cannot scroll behind the
+   canvas.
+2. Test https://matthewcodergamer.github.io/ on a real phone. Watch the on-screen FPS, and confirm
+   the canvas shrinks as __mcScaleBias adapts (floor 0.6). If it is still GPU-bound, lower the
+   mobile fill budget (1.6 MP) or start mobile at a lower initial bias.
 3. Add browser CI coverage for Language/Singleplayer/death/loading screens, plus assertions that
    title_screen.png is non-blank and that __mcScaleBias=0.6 actually shrinks the canvas.
 4. Then resume native: rebase feat/native-vulkan onto browser HEAD 6f6e281, implement winit + wgpu
