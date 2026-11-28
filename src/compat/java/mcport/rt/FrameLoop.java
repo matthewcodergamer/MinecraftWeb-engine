@@ -29,6 +29,7 @@ public final class FrameLoop {
 
     public static void endFrame() {
         BrowserRuntime.report("trace", "frame-loop-endframe-enter");
+        long hooksStart = System.nanoTime();
         for (int i = 0; i < HOOKS.size(); i++) {
             try {
                 HOOKS.get(i).run();
@@ -37,6 +38,7 @@ public final class FrameLoop {
             }
         }
         frameStats();
+        FrameProfiler.hooks(System.nanoTime() - hooksStart);
         BrowserRuntime.report("trace", "frame-loop-wait-enter");
         FrameLoopAsync.waitForNextFrame(vsync);
     }

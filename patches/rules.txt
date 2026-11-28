@@ -71,6 +71,14 @@ REDIRECT java.lang.Class isAnonymousClass()Z -> mcport.rt.jdk.JdkExt classIsAnon
 # Memory untracking is diagnostic-only; disable its reflective static bootstrap in the browser.
 BODY_STATIC com.mojang.blaze3d.platform.DebugMemoryUntracker <clinit>()V -> mcport.rt.patch.LibraryPatches noop
 
+# --- Client tick hot path: cache biome ambient particles per quart cell -----------------------
+# ClientLevel.doAnimateTick samples 1,334 random blocks per tick and asks for AMBIENT_PARTICLES
+# at each one; the default BlockPos overload resolves the biome and evaluates every attribute
+# layer every time (9.2% of sampled main-thread time, plus 4.7% biome palette lookups). The value
+# is constant inside a 4x4x4 biome cell, so cache it for about a second. Every other attribute
+# and reader falls through to the original three-argument method unchanged.
+BODY net.minecraft.world.attribute.EnvironmentAttributeReader getValue(Lnet/minecraft/world/attribute/EnvironmentAttribute;Lnet/minecraft/core/BlockPos;)Ljava/lang/Object; -> mcport.rt.patch.EnvironmentAttributePatches getValue
+
 # --- Libraries: take the same fallback paths they use on JVMs without sun.misc.Unsafe ---------
 # Guava catches the failure (Exception|Error) and falls back to AtomicReferenceFieldUpdaterAtomicHelper.
 STUB_CLASS com.google.common.util.concurrent.AbstractFutureState$UnsafeAtomicHelper

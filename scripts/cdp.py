@@ -25,6 +25,43 @@ import zlib
 CHROME = os.environ.get("CHROME", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 
 
+def split_actions(raw):
+    """Split a --actions string on top-level semicolons only.
+
+    JavaScript wait expressions contain semicolons inside function bodies, so
+    a plain str.split(";") turns one wait into several bogus actions. Track
+    quotes and bracket depth so the separators inside a JS expression survive.
+    """
+    out, buf, depth, quote, escape = [], [], 0, None, False
+    for ch in raw:
+        if quote:
+            buf.append(ch)
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == quote:
+                quote = None
+            continue
+        if ch in "\"'`":
+            quote = ch
+            buf.append(ch)
+        elif ch in "([{":
+            depth += 1
+            buf.append(ch)
+        elif ch in ")]}":
+            depth = max(0, depth - 1)
+            buf.append(ch)
+        elif ch == ";" and depth == 0:
+            out.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+    if buf:
+        out.append("".join(buf))
+    return [s.strip() for s in out if s.strip()]
+
+
 class WS:
     def __init__(self, url):
         assert url.startswith("ws://")
@@ -173,6 +210,82 @@ def png_has_visible_pixels(data):
         return True
 
 
+def _profile_label(node):
+    frame = node.get("callFrame") or {}
+    name = frame.get("functionName") or "(anonymous)"
+    url = frame.get("url") or ""
+    line = int(frame.get("lineNumber", -1)) + 1
+    short_url = url.rsplit("/", 1)[-1] if url else ""
+    return name + (" ({}:{})".format(short_url, line) if short_url else "")
+
+
+def summarize_cpu_profile(profile, top=35):
+    """Print the hottest self and inclusive frames from a Chrome CPU profile.
+
+    Self time finds the leaf doing the work (a Wasm helper, JSON.parse, a
+    bridge call); inclusive time finds the Java frame or game phase that owns
+    it. Wasm GC builds carry a name section, so most leaf names are real Java
+    methods rather than wasm-function indices.
+    """
+    nodes = profile.get("nodes") or []
+    by_id = {int(n.get("id")): n for n in nodes}
+    parent = {}
+    for node in nodes:
+        for child in node.get("children") or []:
+            parent[int(child)] = int(node.get("id"))
+    self_hits = {}
+    inclusive_us = {}
+    samples = profile.get("samples") or []
+    deltas = profile.get("timeDeltas") or []
+    if samples:
+        for index, node_id in enumerate(samples):
+            node_id = int(node_id)
+            delta = int(deltas[index]) if index < len(deltas) else 1000
+            delta = max(0, delta)
+            seen = set()
+            while node_id in by_id and node_id not in seen:
+                seen.add(node_id)
+                inclusive_us[node_id] = inclusive_us.get(node_id, 0) + delta
+                node_id = parent.get(node_id, 0)
+            leaf = int(samples[index])
+            self_hits[leaf] = self_hits.get(leaf, 0) + 1
+    else:
+        for node in nodes:
+            hits = int(node.get("hitCount") or 0)
+            if hits:
+                self_hits[int(node.get("id"))] = hits
+    total = sum(self_hits.values())
+    if not total:
+        print("PROFILE: no samples were recorded", flush=True)
+        return
+    sampled_ms = sum(inclusive_us.get(int(n.get("id")), 0) for n in nodes
+                     if int(n.get("id")) not in parent) / 1000.0
+    print("PROFILE: {} self samples across {} frames, {:.1f}ms on the main thread"
+          .format(total, len(nodes), sampled_ms), flush=True)
+    self_buckets = {}
+    for node_id, hits in self_hits.items():
+        node = by_id.get(node_id)
+        if node:
+            self_buckets[_profile_label(node)] = self_buckets.get(_profile_label(node), 0) + hits
+    print("PROFILE self-time:", flush=True)
+    for label, hits in sorted(self_buckets.items(), key=lambda item: item[1], reverse=True)[:top]:
+        print("PROFILE {:5.1f}% {:6d}  {}".format(100.0 * hits / total, hits, label), flush=True)
+    if inclusive_us:
+        print("PROFILE inclusive (top-level phases first):", flush=True)
+        roots = [n for n in nodes if int(n.get("id")) not in parent]
+        ranked = sorted(inclusive_us.items(), key=lambda item: item[1], reverse=True)
+        for node_id, micros in ranked[:top]:
+            node = by_id.get(node_id)
+            if not node:
+                continue
+            label = _profile_label(node)
+            if node_id in [int(r.get("id")) for r in roots]:
+                label = "[root] " + label
+            print("PROFILE {:5.1f}% {:8.0f}ms  {}".format(
+                100.0 * micros / max(1, sum(inclusive_us.get(int(r.get("id")), 0) for r in roots)),
+                micros / 1000.0, label), flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("url")
@@ -204,10 +317,16 @@ def main():
                     help="fail if every soak FPS sample is below this value (0 disables; use on real GPUs)")
     ap.add_argument("--soak-screenshot", default="build/soak_end.png",
                     help="screenshot captured at the end of the soak (default build/soak_end.png)")
+    ap.add_argument("--cpu-profile",
+                    help="after the soak, sample the renderer's main thread and write a Chrome CPU profile JSON here")
+    ap.add_argument("--cpu-profile-seconds", type=float, default=20.0,
+                    help="duration of the CPU profile in seconds (default 20)")
+    ap.add_argument("--cpu-profile-interval", type=int, default=1000,
+                    help="CPU profile sampling interval in microseconds (default 1000)")
     a = ap.parse_args()
 
     actions = []
-    for raw in (a.actions or "").split(";"):
+    for raw in split_actions(a.actions or ""):
         raw = raw.strip()
         if not raw:
             continue
@@ -599,7 +718,7 @@ def main():
             const G = w && w.__mcWebGPU;
             const S = G && G.snapshot ? G.snapshot() : null;
             return JSON.stringify({frame: S ? S.frame : (G ? G.frame : -1),
-                fps: F.fps || 0, workAvg: F.workAvg || 0, snap: S});
+                fps: F.fps || 0, workAvg: F.workAvg || 0, phases: F.phases || null, snap: S});
         })()"""
 
         def run_soak():
@@ -675,16 +794,35 @@ def main():
                 snap = data.get("snap") or {}
                 transient_mb = round((snap.get("transientBytes") or 0) / 1048576, 1)
                 line = ("SOAK {:6.1f}s frame={} fps={:.1f} javaFps={:.1f} workMs={:.1f} "
-                        "presentMs={:.2f} heapMB={} liveTex={} liveBuf={} livePipe={} plans={} "
+                        "presentMs={:.2f} gpuMs={:.1f} heapMB={} liveTex={} liveBuf={} livePipe={} plans={} "
                         "objSlots={} transientMB={} lost={}").format(
                             now - started_at, frame, window_fps, float(data.get("fps") or 0),
                             float(data.get("workAvg") or 0), float(snap.get("presentAvg") or 0),
+                            float(snap.get("gpuAvg") or 0),
                             snap.get("heapMB", -1), snap.get("liveTextures", -1),
                             snap.get("liveBuffers", -1), snap.get("livePipelines", -1),
                             snap.get("planTotal", -1), snap.get("objSlots", -1),
                             transient_mb, snap.get("lost") or "")
                 record(line)
                 print(line, flush=True)
+                phases = data.get("phases") or {}
+                counters = ("SOAKGPU {:6.1f}s bufMB={:.1f} texMB={:.1f} upMB={:.1f} "
+                            "planMiss={} bindSkip={} pipeSkip={} vtxSkip={} idxSkip={} scissorSkip={} "
+                            "passHit={} passMiss={} pipeMs={:.1f} shaderMs={:.1f} "
+                            "submitMs={:.2f} hooksMs={:.2f} readbackMs={:.2f}").format(
+                                now - started_at,
+                                float(snap.get("bufferWriteMB") or 0),
+                                float(snap.get("textureWriteMB") or 0),
+                                float(snap.get("transientUploadMB") or 0),
+                                snap.get("planMisses", -1), snap.get("bindSkips", -1),
+                                snap.get("pipelineSkips", -1), snap.get("vertexSkips", -1),
+                                snap.get("indexSkips", -1), snap.get("scissorSkips", -1),
+                                snap.get("beginPassHits", -1), snap.get("beginPassMisses", -1),
+                                float(snap.get("pipelineMs") or 0), float(snap.get("shaderMs") or 0),
+                                float(phases.get("submitMs") or 0), float(phases.get("hooksMs") or 0),
+                                float(phases.get("readbackMs") or 0))
+                record(counters)
+                print(counters, flush=True)
                 if snap.get("lost"):
                     save_browser_error("WebGPU device lost during soak: " + str(snap.get("lost")))
                     return False
@@ -700,6 +838,72 @@ def main():
                 print("SOAK FPS FAIL: {:.1f} < {:.1f}".format(measured, a.min_fps), flush=True)
                 return False
             return True
+
+        def perf_metrics():
+            """Cumulative renderer metrics, used as deltas around the profile."""
+            ws.call("Performance.enable", pump=pump)
+            metrics = ws.call("Performance.getMetrics", pump=pump).get("result", {}).get("metrics", [])
+            return {m.get("name"): m.get("value") for m in metrics}
+
+        def run_cpu_profile():
+            """Sample the main thread after the soak; the soak itself stays unperturbed."""
+            if not a.cpu_profile:
+                return
+            seconds = max(1.0, a.cpu_profile_seconds)
+            print("{:7.2f}s PROFILE start: {:.0f}s at {} us".format(
+                time.time() - t0, seconds, a.cpu_profile_interval), flush=True)
+            before = {}
+            try:
+                before = perf_metrics()
+                ws.call("Profiler.enable", pump=pump)
+                ws.call("Profiler.setSamplingInterval",
+                        {"interval": max(100, int(a.cpu_profile_interval))}, pump=pump)
+                ws.call("Profiler.start", pump=pump, timeout_sec=30)
+            except (TimeoutError, EOFError, OSError) as exc:
+                print("PROFILE unavailable: {}: {}".format(type(exc).__name__, exc), flush=True)
+                return
+            end = time.time() + seconds
+            while time.time() < end:
+                if crashed["flag"]:
+                    print("PROFILE stopped: " + crashed["reason"], flush=True)
+                    return
+                try:
+                    msg = ws.recv(0.5)
+                except (EOFError, OSError) as exc:
+                    print("PROFILE connection closed: {}: {}".format(type(exc).__name__, exc), flush=True)
+                    return
+                if msg:
+                    try:
+                        pump(msg)
+                    except Exception as exc:
+                        print("PROFILE pump error: {}: {}".format(type(exc).__name__, exc), flush=True)
+            try:
+                response = ws.call("Profiler.stop", pump=pump, timeout_sec=120)
+                profile = response.get("result", {}).get("profile")
+                if not profile:
+                    print("PROFILE: Profiler.stop returned no profile", flush=True)
+                    return
+                directory = os.path.dirname(a.cpu_profile)
+                if directory:
+                    os.makedirs(directory, exist_ok=True)
+                with open(a.cpu_profile, "w", encoding="utf-8") as handle:
+                    json.dump(profile, handle)
+                print("PROFILE -> " + a.cpu_profile, flush=True)
+                summarize_cpu_profile(profile)
+            except (TimeoutError, EOFError, OSError) as exc:
+                print("PROFILE stop failed: {}: {}".format(type(exc).__name__, exc), flush=True)
+                return
+            try:
+                after = perf_metrics()
+                keys = ("TaskDuration", "ScriptDuration", "LayoutDuration",
+                        "RecalcStyleDuration", "JSHeapUsedSize", "JSHeapTotalSize")
+                window = {k: round(after.get(k, 0) - before.get(k, 0), 3) for k in keys}
+                window["windowSec"] = round(seconds, 1)
+                window["busyPct"] = round(100.0 * max(0.0, window["TaskDuration"]) / seconds, 1)
+                window["scriptPct"] = round(100.0 * max(0.0, window["ScriptDuration"]) / seconds, 1)
+                print("PERF " + json.dumps(window), flush=True)
+            except (TimeoutError, EOFError, OSError) as exc:
+                print("PERF metrics unavailable: {}: {}".format(type(exc).__name__, exc), flush=True)
 
         def run_actions():
             nonlocal actions_done, actions_failed, action_hold_until
@@ -917,6 +1121,8 @@ def main():
                     break
             if assert_ok:
                 assert_ok = run_soak()
+            if assert_ok:
+                run_cpu_profile()
             if assert_ok:
                 for expr in a.eval:
                     try:

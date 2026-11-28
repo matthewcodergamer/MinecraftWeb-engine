@@ -7,6 +7,7 @@ import com.mojang.renderpearl.backend.api.GpuSurfaceBackend;
 import java.util.Collection;
 import java.util.List;
 import mcport.rt.FrameLoop;
+import mcport.rt.FrameProfiler;
 
 /** The canvas swap chain. present() submits the frame and yields to the browser until the next animation frame. */
 class WebGpuSurface implements GpuSurfaceBackend {
@@ -38,9 +39,14 @@ class WebGpuSurface implements GpuSurfaceBackend {
 
     @Override
     public void present() {
+        long submitStart = System.nanoTime();
         WG.present();
+        FrameProfiler.submit(System.nanoTime() - submitStart);
         FrameLoop.endFrame();
+        long readbackStart = System.nanoTime();
         encoder.runCompletedReadbacks();
+        FrameProfiler.readback(System.nanoTime() - readbackStart);
+        FrameProfiler.endFrame();
     }
 
     @Override

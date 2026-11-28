@@ -299,12 +299,14 @@ public class TObject {
             o.monitor = new Monitor();
         }
         o.monitor.traceId = nextTraceId();
-        String className = null;
-        try {
-            className = o.getClass().getName();
-        } catch (Throwable ignored) {
-        }
-        o.monitor.entry = MonitorRegistry.register(o.monitor.traceId, className);
+        // Do not register every monitor here. Vanilla synchronizes on millions of
+        // short-lived objects (13,341,935 in a four-minute title/world run), and
+        // every registry Entry is retained for the life of the page: that leak
+        // alone was hundreds of megabytes of the JS heap and made the boot
+        // watchdog walk millions of dead entries. The contended path below
+        // registers lazily (bounded by MonitorRegistry.allowRepair), which is
+        // all the watchdog needs: a lock nobody is waiting on cannot be the
+        // reason a fiber is stalled.
         if (o.monitor.owner != null) {
             setOwner(o.monitor, o.monitor.owner);
         }

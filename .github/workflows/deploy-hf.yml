@@ -74,6 +74,26 @@ jobs:
           cp build/ci/minecraft-java-edition-v26.3.wasm-runtime.js deploy/wasm/
           cp build/ci/minecraft-java-edition-v26.3-assets.bin deploy/resources/
 
+      - name: Strip debug names from the streaming module
+        run: |
+          set -euo pipefail
+          # TeaVM's name section lists every Java method. It is ~46% of the
+          # module (about 51 MB here) and is only used for crash stacks and CPU
+          # profiles. Chrome never executes it, so publish the stripped module
+          # and cut the download in half. Profiles still come from the
+          # unstripped CI artifact.
+          python3 scripts/strip_wasm_names.py \
+            deploy/wasm/minecraft-java-edition-v26.3.wasm \
+            deploy/wasm/minecraft-java-edition-v26.3.wasm
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("deploy/wasm/minecraft-java-edition-v26.3.wasm")
+          head = path.read_bytes()[:8]
+          assert head == b"\x00asm\x01\x00\x00\x00", "stripped module is not wasm"
+          assert path.stat().st_size < 80 * 1024 * 1024, "name section was not stripped"
+          print(f"production module: {path.stat().st_size:,} bytes")
+          PY
+
       - name: Publish the streaming WebAssembly module
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -95,7 +115,9 @@ jobs:
           PY
           # The Space shell streams the module from the model repository.
           # Keeping a second 112 MB copy on the Space only burns storage quota.
-          rm -rf deploy/wasm
+          # The small TeaVM runtime JS still belongs on the Space, so remove
+          # only the module and let upload_hf.py publish the runtime.
+          rm -f deploy/wasm/minecraft-java-edition-v26.3.wasm
 
       - name: Fetch the complete live asset archive
         run: |
@@ -104,7 +126,7 @@ jobs:
           # languages. Keep the complete archive already served by the Space so
           # tutorial toasts, achievements, fonts, and sound metadata stay intact.
           curl -fL --retry 5 --retry-delay 3 \
-            https://matthewcodergamer-minecraft-browser.static.hf.space/client-resources.bin \
+            https://matthewcodergamer-minecraft-browser.static.hf.space/minecraft-java-edition-v26.3-assets.bin \
             -o deploy/resources/minecraft-java-edition-v26.3-assets.bin
           python3 - <<'PY'
           import json, struct
