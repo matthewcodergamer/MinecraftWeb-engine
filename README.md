@@ -9,16 +9,23 @@ unmodified client bytecode with [TeaVM](https://github.com/konsoletyper/teavm), 
 > Space **before** native Vulkan work resumes. The native APK is not finished and no APK is shipped
 > from this branch yet.
 
-## Status snapshot (2026-11-27)
+## Status snapshot (2026-11-28)
 
 | Item | State |
 |---|---|
 | Browser branch | `feat/client-headless-webgpu-boot` |
-| Browser HEAD | `abd846e` verified; local optimization batch pending (env-attr cache, adaptive scale) |
-| Browser CI | verify `46008416951` succeeded on `abd846e`; profile + screenshots downloaded |
+| Browser HEAD | `b3970a1` (CDP action-parser fix, learned-scale persistence, patch audit) |
+| Browser CI | verify `46089986283` in progress on `b3970a1`; `46027524065` failed before Chrome launched; `46008416951` succeeded |
 | Live Space | build `26.3-20261127b`; stripped 60,459,240-byte module |
 | Native branch | `feat/native-vulkan`, HEAD `ac90861`, not pushed, no APK |
-| Next gate | verify the pending optimization batch, then deploy it |
+| Next gate | verify `46089986283`, check patch match/`gpuMs`/heap/plans and the title screenshot, then deploy |
+
+Run `46027524065` was not a client regression. `scripts/cdp.py` split the new title wait on the
+semicolons inside its JavaScript function body, so the title step exited with
+`unknown --actions step: return ...` before it launched Chrome. `b3970a1` adds a quote/bracket-aware
+action splitter, moves the wait into a single function expression, stores the learned scale bias in
+`localStorage`, and makes Java read that stored value back. The build audit now prints the
+`EnvironmentAttributeReader` patch-match line.
 
 > **CI caveat:** the verify workflow uses `concurrency: cancel-in-progress`, so any push touching
 > `scripts/**`, `web/**`, `src/**`, `renderer/**`, `patches/**`, `tools/src/**`, or the workflow
@@ -77,10 +84,11 @@ WASM→Vulkan translator** and no plan to add one: the native client needs a rea
 
 ## Current performance state
 
-The latest profile is verify **46008416951** (commit `abd846e`) on GitHub's x86_64 runner with
-**SwiftShader** at 1280×577. It includes the monitor-registry fix and the plan-cache fix. The
-title/Create World test drives the real Java renderer; the smoke test is the separate Rust Body
-path.
+The latest completed profile is verify **46008416951** (commit `abd846e`) on GitHub's x86_64
+runner with **SwiftShader** at 1280×577. It includes the monitor-registry fix and the plan-cache
+fix. The title/Create World test drives the real Java renderer; the smoke test is the separate
+Rust Body path. Verify **46089986283** (`b3970a1`) is the next profile: it adds the ambient cache,
+adaptive scale, `gpuAvg`, and the corrected title wait.
 
 | Metric | Title/Create World | Meaning |
 |---|---|---|
@@ -105,11 +113,11 @@ path.
 2. **The plan cache no longer thrashes every frame.** `planEvictions` is 8,118, all during the
    first half-second of startup; after warm-up `planTotal` holds at 1,272 and grows by only a few
    plans over 100 s. The old build evicted 34,816 plans across 2,050 frames.
-3. **The title flow still reaches `world-level-and-player-ready`, but `title_screen.png` is still
-   a flat gray frame.** The iframe frame counter passes, yet the Java title screen has not painted
-   (or the WebGPU canvas has not been composited) at that instant. The next batch waits for the
-   iframe's `boot-state` to report `TitleScreen` + `loadFinished=true`, plus a 5 s settle, before
-   the capture.
+3. **The title flow still reaches `world-level-and-player-ready`, but `title_screen.png` was still
+   a flat gray frame in `46008416951`.** The old wait only required `__mcWebGPU.frame > 2`, so it
+   captured before the Java title screen had painted or composited. `b3970a1` waits for the
+   iframe's `boot-state` to report `TitleScreen` + `loadFinished=true` and `frame > 10`, then holds
+   for 5 s. Verify `46089986283` will confirm whether the capture is non-blank.
 4. **The frame is still GPU-bound on SwiftShader.** The CPU profile is 61.6% idle self-time
    (55.2% of inclusive time), with 5.5% GC and 2.6% native program code. The game ticks at 20 TPS;
    the 9.4 FPS is the software rasterizer and the three-frame fence ring, not a tick stall.
@@ -129,7 +137,7 @@ asks for `AMBIENT_PARTICLES` at each one. The vanilla two-argument attribute ove
 the biome and walks every attribute layer for every sample, even though the value is constant
 inside a 4×4×4-block biome cell. That is the next targeted fix.
 
-### Optimization batch pending verification
+### Optimization batch under verification (`b3970a1`)
 
 1. **Per-quart ambient-particle cache** (`EnvironmentAttributePatches`). `AMBIENT_PARTICLES` is
    cached per quart cell for about one second; every other attribute and reader falls through to
@@ -145,11 +153,17 @@ inside a 4×4×4-block biome cell. That is the next targeted fix.
    at 4, and the canvas starts near a 1.6 MP framebuffer (about 850p wide) instead of full
    resolution. A 1440p phone would otherwise render 3.7 MP for the first ~20 s while the
    adaptive bias walked down; this makes the first frame playable and still lets the bias raise
-   sharpness when the GPU keeps up.
+   sharpness when the GPU keeps up. The learned bias is stored in `localStorage`
+   (`mc_scale_bias_v1`), and both `computeScale` and Java's `currentScaleBias()` read it back, so a
+   returning player starts at the scale that worked last time instead of re-learning it.
 4. **GPU queue timing.** `gpuAvg` measures `queue.onSubmittedWorkDone()` once per frame (one probe
    in flight), and the snapshot now reports the adapter name and fallback flag. `cdp.py` prints
    `gpuMs` on every SOAK line, so the next run distinguishes a GPU-bound frame from a CPU-bound
    one instead of inferring it from idle samples.
+5. **CDP action parsing and patch audit.** `split_actions` keeps semicolons inside quoted strings
+   and bracket depth, so a multi-statement JS wait no longer becomes bogus `--actions` steps. The
+   build audit prints `PATCH_RULE_MATCH net.minecraft.world.attribute.EnvironmentAttributeReader`,
+   which proves the ambient cache was actually wired into the client.
 
 Run a profiled soak locally (Chrome must expose a WebGPU adapter):
 
@@ -174,9 +188,9 @@ PY
 
 ### Next steps
 
-1. Commit the batch and wait for verify; check `heapMB`/`heapTotalMB` stay near 1.7 GB,
-   `planEvictions` stays at the startup value, `gpuMs` tracks `intervalAvg`, and the title
-   screenshot is non-blank.
+1. Wait for verify `46089986283`; confirm `PATCH_RULE_MATCH ... matched=true`, `heapMB` /
+   `heapTotalMB` stay near 1.7 GB, `planEvictions` stays at the startup value, `gpuMs` tracks
+   `intervalAvg`, and the title screenshot is non-blank.
 2. Compare the CPU profile with the numbers above: `animateTick` and
    `EnvironmentAttributeSystem.getValue` should fall sharply; GC should fall with the removed
    `Vec3.atCenterOf` allocations.
@@ -194,7 +208,7 @@ The WebView/Tauri APK was scrapped. **Only a real native Vulkan APK is acceptabl
 | Item | State |
 |---|---|
 | Branch | `feat/native-vulkan`, HEAD `ac90861` |
-| Base | `c0014ec`; browser HEAD has since advanced to `abd846e` (rebase before resuming) |
+| Base | `c0014ec`; browser HEAD has since advanced to `b3970a1` (rebase before resuming) |
 | WebView/Tauri shell | Removed in `ac90861`; old shell still in `8eb6624` for reference |
 | Native scaffold | None. `stash@{0}` is only the scrapped Tauri/WebView shell; do not restore it |
 | Reuse | Renderer math/meshing/material/shader code and `client-textures.bin` (443,717 bytes, 1,301 PNGs) |
@@ -343,14 +357,19 @@ not a Tauri shell. The five-second sponsor ad is a hard requirement. Do not decl
 do not swap the Java client for a demo renderer, and do not ship a fake APK.
 
 REPO STATE
-- Browser work: branch feat/client-headless-webgpu-boot, HEAD abd846e. Code commits: abd846e
-  (wait for the iframe's WebGPU frame before the title screenshot), 6307f3a (monitor leak +
-  bind-group plan-cache fixes), 0ea1e34 (strip the Wasm name section for deploy, PERF window
+- Browser work: branch feat/client-headless-webgpu-boot, HEAD b3970a1. Code commits: b3970a1
+  (CDP action-parser fix, learned-scale persistence, patch-match audit), 5b786ba
+  (EnvironmentAttributePatches ambient cache, adaptive render scale, mobile fill budget, gpuAvg),
+  abd846e (wait for the iframe's WebGPU frame before the title screenshot), 6307f3a (monitor leak
+  + bind-group plan-cache fixes), 0ea1e34 (strip the Wasm name section for deploy, PERF window
   deltas, planTotal fix), 52f1534 (profiling and hot-path counters), 88119c0 (TeaVM runtime kept
   on the Space), c0014ec (GUI/sound fixes, build 20261127a).
-- Uncommitted batch on top of abd846e: EnvironmentAttributePatches (per-quart ambient-particle
-  cache), adaptive render scale (__mcScaleBias, 0.6–1.0), mobile render/simulation distance 4,
-  gpuAvg queue timing, SOAK gpuMs. Not verified yet.
+- Batch under verification on b3970a1: EnvironmentAttributePatches (per-quart ambient-particle
+  cache), adaptive render scale (__mcScaleBias, 0.6–1.0, persisted in localStorage
+  mc_scale_bias_v1 and read back by Java), mobile render/simulation distance 4, gpuAvg queue
+  timing, SOAK gpuMs, split_actions. Verify 46089986283 is in progress.
+- Run 46027524065 (5b786ba) failed only because cdp.py split the JS wait on semicolons; the title
+  step exited before launching Chrome. That is fixed in b3970a1, not a rendering regression.
 - Live: https://matthewcodergamer-minecraft-browser.static.hf.space/ (build 26.3-20261127b).
   Space commit c91bc519e3fd; model repo matthewcodergamer/minecraft-web-client commit
   2a26281ac451. Wasm 60,459,240 bytes (name section stripped); runtime JS 17,338 bytes; asset
@@ -372,33 +391,39 @@ CURRENT PERFORMANCE WORK
   194, 711 textures / 727 views / 103 buffers / 199 pipelines, ~260 draws and ~11 passes per
   frame, 1,272 plans steady. planEvictions 8,118 all happened in the first half-second; the old
   build evicted 34,816 over 2,050 frames.
+- Run 46027524065 on 5b786ba completed the Rust Body smoke step but never ran the title test:
+  cdp.py split the multi-statement JS wait on semicolons and exited with "unknown --actions step".
+  b3970a1 adds split_actions and rewrites the wait as one function expression; verify 46089986283
+  is the first run that will exercise the new title capture.
 - CPU profile (20,946 samples / 27.1 s): 61.6% idle, 5.5% GC, 2.6% program. Inclusive: 16.7%
   Minecraft.tick, 14.5% ClientLevel.animateTick, 9.7% EnvironmentAttributeReader.getValue_1,
   9.2% EnvironmentAttributeSystem.getValue, 4.9% BiomeManager.getNoiseBiomeAtQuart, 5.4%
   integrated server. The tick runs at 20 TPS; the low FPS is GPU/SwiftShader waiting.
-- Pending batch: cache AMBIENT_PARTICLES per quart for one second (targets the 9.7% + 4.9% hot
-  path), adaptive canvas scale after render distance reaches the floor of 4, mobile defaults
-  rd/simulation 4, gpuAvg timing. Expected: lower CPU per frame, same rendering output; the
-  scale lever is the direct fix for a weak phone GPU.
+- Batch under verification (b3970a1): cache AMBIENT_PARTICLES per quart for one second (targets
+  the 9.7% + 4.9% hot path), adaptive canvas scale after render distance reaches the floor of 4,
+  mobile defaults rd/simulation 4, gpuAvg timing, learned-scale persistence. Expected: lower CPU
+  per frame, same rendering output; the scale lever is the direct fix for a weak phone GPU.
 - FIXED and deployed: MonitorRegistry leak (lazy contended-only registration, 131,072 cap; heap
   down ~0.65 GB), bind-group plan cap 1,024 with oldest-bucket eviction, and the stripped 60.5 MB
-  module. The title_screen.png wait (iframe __mcWebGPU.frame > 2) was still too early; the pending
-  workflow change waits for TitleScreen + loadFinished=true and a 5 s settle.
+  module. The old title_screen.png wait (iframe __mcWebGPU.frame > 2) was too early; b3970a1 waits
+  for TitleScreen + loadFinished=true + frame > 10 and a 5 s settle, and fixes the parser that
+  previously prevented that wait from running. The non-blank capture is not confirmed yet.
 - Deploy mechanics: scripts/strip_wasm_names.py strips the name section; upload the stripped
   module to the model repo, then run scripts/upload_hf.py for the Space shell/runtime. Bump
   MC_BUILD in web/play.html and web/game.html so Cache Storage does not serve the old module.
 
 NEXT MOVES
-1. Commit the pending batch (batch code changes; pushes touching scripts/web/src cancel the
-   running verify job), wait for verify, and read /root/diag*/summary.txt.
-2. Confirm heap stays ~1.7 GB, planEvictions stays at the startup value, gpuMs tracks intervalAvg,
-   title_screen.png is non-blank, and world-level-and-player-ready is reached. Compare the profile
-   to the numbers above; animateTick and environment-attribute frames should fall sharply.
+1. Wait for verify 46089986283 on b3970a1 (do not push code while it runs). Download the
+   diagnostics artifact and read title_console.log / title_profile.json.
+2. Confirm PATCH_RULE_MATCH EnvironmentAttributeReader matched=true, heap stays ~1.7 GB,
+   planEvictions stays at the startup value, gpuMs tracks intervalAvg, title_screen.png is
+   non-blank, and world-level-and-player-ready is reached. Compare the profile to the numbers
+   above; animateTick and environment-attribute frames should fall sharply.
 3. Deploy the verified batch with scripts/strip_wasm_names.py + scripts/upload_hf.py, bump
-   MC_BUILD to the next letter, and check the live wasm size and play.html build string.
+   MC_BUILD to 20261127c, and check the live wasm size and play.html build string.
 4. If a real phone is still GPU-bound after scale adaptation, lower the mobile fill budget or
    expose a scale hint; do not lower gameplay correctness.
-5. Then resume native: rebase feat/native-vulkan onto browser HEAD, implement winit + wgpu
+5. Then resume native: rebase feat/native-vulkan onto browser HEAD b3970a1, implement winit + wgpu
    NativeActivity, build with cargo-ndk + Gradle in CI, assert no WebView.
 6. Add browser CI coverage for Language/Singleplayer/death/loading screens.
 7. Remember: README-only commits are safe; code pushes cancel the running verify job.
