@@ -43,9 +43,9 @@ functions.
 | Browser HEAD | code `7068c91` (touch starts at render distance 4); this README/handoff commit is the branch tip |
 | Browser CI | `46146270033` **in progress** on `7068c91` (started 2026-11-28T12:45:55Z); latest completed `46090386545` on `6f6e281` succeeded: 13.3–13.6 fps, `workAvg` ~74 ms, title screenshot non-blank; baseline `46008416951` was 9.4 fps |
 | Live Space | build `26.3-20261127c`; Space commit `931269de2b36`, model commit `e738a3b20293`; wasm 60,461,887 bytes, SHA-256 `bdac79c39a3c26d72104e214918fa9ec57e34d4d35d9a10bb1af0eddf6af1285` |
-| Pages mirror | <https://matthewcodergamer.github.io/>; site commits `4e71d1f` (scroll lock), `4f600a8` (direct game shell), `0db7489` (docs/cache), `dde70f8` (overflow clip), `07f9977` (site docs); loads `/game.html?v=26.3-20261127c&host=pages2`; Pages build `built` |
+| Pages mirror | <https://matthewcodergamer.github.io/>; site commits `4e71d1f` (scroll lock), `4f600a8` (direct game shell), `0db7489` (docs/cache), `dde70f8` (overflow clip), `07f9977` (site docs), `cc1a184` (root lock), `d1bad5e` (iOS launcher scroll), `3026e00` (site docs); loads `/game.html?v=26.3-20261127c&host=pages2`; Pages build `built` |
 | Mobile render distance | touch shell passes `rd=4` (was 6); simulation distance 4; adaptive floor 4 |
-| Mobile scroll | body locked with `position:fixed`, `overflow:clip`, `touch-action:none`, `100dvh`; verified live at 390×844 (`scrollY=0`, `body.scrollTop=0`) |
+| Mobile scroll | launcher scrolls normally on iOS (verified 414×896, `scrollY` reaches 1500); during play `html`/`body` use `overflow:clip`/`touch-action:none`, `body` is `position:fixed`, and all scroll offsets stay 0 |
 | Native branch | `feat/native-vulkan`, HEAD `ac90861`, not pushed, no APK |
 | Next gate | finish `46146270033`, then real-phone test of the Pages/HF build; if still slow, tune initial scale/bias, not gameplay |
 
@@ -65,12 +65,34 @@ matches the `EnvironmentAttributeReader` patch line in the full build log.
 > file **cancels the running verify job**. Batch changes and wait for the profile artifact before
 > pushing. A README-only commit does not trigger the workflow.
 
+### Recent commit log
+
+| Commit | What changed |
+|---|---|
+| `9673255` | This complete README/handoff (goal, live state, mobile fix, deploy runbook, prompt) |
+| `7068c91` | Touch shell passes `rd=4`; README mirror/perf notes |
+| `d3aec32` | Record Pages mirror build `c` and mobile scroll lock |
+| `72de903` | Record live wasm SHA-256 for build `c` |
+| `6f6e281` | Bump every shell script/iframe query to build `20261127c` (fresh Cache Storage) |
+| `b3970a1` | CDP `split_actions`, learned scale bias persistence, patch audit |
+| `5b786ba` | Ambient cache, adaptive render scale, mobile fill budget, `gpuAvg` |
+| `abd846e` | Wait for the iframe's WebGPU frame before the title screenshot |
+| `6307f3a` | MonitorRegistry leak fix and bind-group plan cap |
+| `0ea1e34` | Strip the Wasm name section for deploy, PERF deltas, `planTotal` fix |
+| `52f1534` | Profiling and hot-path counters |
+| `88119c0` | Keep the TeaVM runtime on the Space |
+| `c0014ec` | GUI/sound fixes, build `20261127a` |
+
+Pages-site commits: `4e71d1f` (scroll lock), `4f600a8` (direct game shell), `0db7489` (docs/cache
+v23), `dde70f8` (`overflow:clip`), `07f9977` (site docs), `cc1a184` (lock `html` too), `d1bad5e`
+(restore normal iOS launcher scrolling), `3026e00` (site docs).
+
 ## Live build
 
 | Item | Value |
 |---|---|
 | Playable demo | <https://matthewcodergamer-minecraft-browser.static.hf.space/> (root `index.html` is the same shell as `game.html`) |
-| GitHub Pages mirror | <https://matthewcodergamer.github.io/>; site repo `matthewcodergamer/matthewcodergamer.github.io`, tip `07f9977`; launcher loads `https://matthewcodergamer-minecraft-browser.static.hf.space/game.html?v=26.3-20261127c&host=pages2` in the fullscreen iframe |
+| GitHub Pages mirror | <https://matthewcodergamer.github.io/>; site repo `matthewcodergamer/matthewcodergamer.github.io`, tip `3026e00`; launcher loads `https://matthewcodergamer-minecraft-browser.static.hf.space/game.html?v=26.3-20261127c&host=pages2` in the fullscreen iframe |
 | Visible build | `26.3-20261127c` |
 | Space commit | `931269de2b361f6f8c56ebf08fce8444e6fedc47` |
 | Model repo | `matthewcodergamer/minecraft-web-client` (commit `e738a3b202933a3eafa01c92693c91bb87f610ec`) |
@@ -107,17 +129,21 @@ the loading screen, the sponsor slot, and the mobile controls.
 
 ## Mobile behavior (verified 2026-11-28)
 
-The GitHub Pages launcher and the Hugging Face game shell are separate documents, so both are
-locked independently:
+The GitHub Pages launcher and the Hugging Face game shell are separate documents, so each needs its
+own scrolling rules:
 
-- **Pages launcher** (`matthewcodergamer.github.io`). `html,body` are 100% high with
-  `overflow-x:hidden`; the app and left rail use `100dvh` with a `100vh` fallback. When Play opens
-  the game, `body.game-on` becomes `position:fixed; inset:0; width:100%; height:100%;
-  overflow:hidden; overflow:clip; overscroll-behavior:none; touch-action:none`, and `#game-frame`
-  fills the viewport at `100dvh`. `overflow:clip` (not only `hidden`) is required because `hidden`
-  still permits programmatic `body.scrollTop` changes. Measured live at 390×844 DPR 3:
-  `documentElement.scrollHeight=844`, `scrollY=0`, and `body.scrollTop` stays 0 even when assigned
-  120.
+- **Pages launcher** (`matthewcodergamer.github.io`). The document itself must scroll on phones:
+  `html{height:100%}` and `html,body{min-height:100%}`, with horizontal clipping moved to `body`
+  (`overflow-x:hidden; overflow-x:clip`). The old `height:100%; overflow-x:hidden` on both made
+  `body` the scroll container, so iOS Safari clipped the long guide instead of scrolling it.
+  Verified live at 414×896 DPR 2: `documentElement.scrollHeight=17,692` and
+  `window.scrollTo(0,1500)` reaches `scrollY=1500`.
+- **Game lock.** When Play opens the game, both `html.game-on` and `body.game-on` get
+  `overflow:hidden; overflow:clip; overscroll-behavior:none; touch-action:none`; `body` also
+  becomes `position:fixed; inset:0; width:100%; height:100%`, and `#game-frame` fills the viewport
+  at `100dvh`. `overflow:clip` (not only `hidden`) is required because `hidden` still permits
+  programmatic `scrollTop` changes. Verified live: `scrollY=0`, `htmlTop=0`, and `bodyTop=0` even
+  after assigning 1500.
 - **HF game shell** (`/game.html`, also copied to `/index.html`). `html,body` are `height:100%`
   with `overflow:hidden`, and the Java canvas is a fixed full-viewport layer. The earlier test
   confirmed `body`/`html` scrollTop stay 0 while the game runs.
@@ -501,14 +527,15 @@ WHAT IS LIVE NOW (2026-11-28)
   bdac79c39a3c26d72104e214918fa9ec57e34d4d35d9a10bb1af0eddf6af1285. Runtime JS 17,338 bytes.
   Asset archive 64,689,340 bytes / 25,671 entries. sounds.bin 117,739,281 bytes with Range.
 - GitHub Pages: https://matthewcodergamer.github.io/ . Separate repo
-  matthewcodergamer/matthewcodergamer.github.io, tip 07f9977, branch main.
+  matthewcodergamer/matthewcodergamer.github.io, tip 3026e00, branch main.
   The launcher loads https://matthewcodergamer-minecraft-browser.static.hf.space/game.html?v=26.3-20261127c&host=pages2
   in its fullscreen iframe. play.html and game.html redirect to build c.
-- Mobile scroll is fixed and verified at 390x844 DPR 3: the Pages body gets `game-on`, becomes
-  `position:fixed; inset:0; width:100%; height:100%; overflow:hidden; overflow:clip;
-  overscroll-behavior:none; touch-action:none`, and #game-frame is 100dvh.
-  documentElement.scrollHeight stays 844, scrollY stays 0, body.scrollTop stays 0 even when
-  assigned 120. The HF shell already locks html/body.
+- Mobile scroll: the launcher document scrolls normally on iOS (`html{height:100%}`,
+  `html,body{min-height:100%}`, body `overflow-x:clip`). Verified live at 414x896 DPR 2:
+  documentElement.scrollHeight 17,692 and window.scrollTo(0,1500) reaches 1500. When the game
+  starts, html.game-on and body.game-on get overflow:clip + touch-action:none, body becomes
+  `position:fixed` at 100%, #game-frame is 100dvh; scrollY, htmlTop, and bodyTop stay 0 even when
+  assigned 1500. The HF shell already locks html/body.
 - Touch performance: the shell passes rd=4 (it used to pass 6, which overrode Java's mobile
   fallback). Java uses render distance 4, simulation distance 4, fast graphics, adaptive scale
   floor 0.6, persisted in localStorage `mc_scale_bias_v1`. Mobile framebuffer is capped at the
@@ -522,8 +549,10 @@ WHAT WAS FIXED AND MEASURED
   Minecraft.tick 16.7% -> 7.9%, EnvironmentAttributeReader.getValue below 3.4%.
 - MonitorRegistry leak fix (heap down ~0.65 GB) and bind-group plan cap 1,024.
 - CDP split_actions fix; title wait is TitleScreen + loadFinished=true + frame > 10 + 5 s.
-- Pages scroll root cause: `overflow-x:hidden` made body a scroll container; `body.game-on
-  {overflow:hidden}` still allowed body.scrollTop changes. The position:fixed lock removes it.
+- Pages scroll root cause: `height:100%; overflow-x:hidden` on html+body made body the scroll
+  container, which clipped the long launcher on iOS; and `body.game-on{overflow:hidden}` still
+  allowed body.scrollTop changes. Final fix: `html{height:100%}`, `html,body{min-height:100%}`,
+  body `overflow-x:clip`, and `overflow:clip` + `position:fixed` on html/body only during play.
 - Mobile rd root cause: the shell forced rd=6 on touch, so Java never used its mobile 4.
 - CI 46146270033 on 7068c91 was in progress at handoff. Check it. Any code push cancels the
   running verify job; README-only commits are safe.
