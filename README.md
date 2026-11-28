@@ -5,9 +5,11 @@ unmodified client bytecode with [TeaVM](https://github.com/konsoletyper/teavm), 
 **native Vulkan Android client** from the same Java code. See `docs/ARCHITECTURE.md` and
 `docs/MIGRATION_MATRIX.md` for the older design notes.
 
-> **Current priority:** build `26.3-20261127c` is deployed and CI-verified; the remaining browser
-> gate is a real-phone FPS measurement. Native Vulkan resumes only after that. The native APK is
-> not finished and no APK is shipped from this branch yet.
+> **Current priority:** the browser Java Edition build `26.3-20261127c` is deployed and
+> CI-verified; the remaining browser gate is a real-phone FPS measurement. The separate native
+> Vulkan APK is now being built on `feat/native-vulkan`. It is **not** the Play button page and
+> does **not** replace the browser Java Edition client; the Play button still opens the real Java
+> client in the browser.
 
 ## Project goal (read this first)
 
@@ -16,15 +18,20 @@ playable frame rate, verify it in CI, and deploy the exact verified artifact to 
 (the Hugging Face Space and the GitHub Pages mirror). The browser must stay the real Java client:
 same world generation, rendering, gameplay, GUI, and the guaranteed five-second sponsor ad.
 
-**Second goal (only after the browser is deployed and measured on a phone):** ship a genuinely
-native Vulkan Android APK built from the same Java client code, with `winit` + `wgpu` and **no
+**Second goal:** ship a genuinely native Vulkan Android APK with `winit` + `wgpu` and **no
 WebView**. The old WebView/Tauri APK is scrapped and must not be revived. The native client is a
 platform-layer port, not a WASM→Vulkan translation: the TeaVM module imports 97 JS/DOM/WebGPU
-functions.
+functions. The APK is a **separate download**, not the Play button page; the Play button keeps
+opening the real Java Edition client in the browser. The native client is being built from the
+same renderer/texture/material code, but full Java world/gameplay parity is still a later bridge
+milestone. Do not present the native APK as the browser Java Edition page.
 
 **Non-negotiables:**
 
-- Do not replace the Java client with a demo renderer or ship a fake APK.
+- Keep the Play button page as the real Java Edition browser client. Do not replace it with the
+  native APK or a demo renderer.
+- Do not ship a fake APK or claim full Java Edition parity for the native platform-layer build
+  before the Java world/gameplay bridge lands.
 - Do not remove or shorten the five-second sponsor ad.
 - Do not use AdMob for the sideloaded Android build.
 - Keep Minecraft rendering/gameplay correctness; performance work must not change game behavior.
@@ -46,8 +53,10 @@ functions.
 | Pages mirror | <https://matthewcodergamer.github.io/>; site commits `4e71d1f` (scroll lock), `4f600a8` (direct game shell), `0db7489` (docs/cache), `dde70f8` (overflow clip), `07f9977` (site docs), `cc1a184` (root lock), `d1bad5e` (iOS launcher scroll), `3026e00` (site docs); loads `/game.html?v=26.3-20261127c&host=pages2`; Pages build `built` |
 | Mobile render distance | touch shell passes `rd=4` (was 6); simulation distance 4; adaptive floor 4 |
 | Mobile scroll | launcher scrolls normally on iOS (verified 414×896, `scrollY` reaches 1500); during play `html`/`body` use `overflow:clip`/`touch-action:none`, `body` is `position:fixed`, and all scroll offsets stay 0 |
-| Native branch | `feat/native-vulkan`, HEAD `ac90861`, not pushed, no APK |
-| Next gate | real-phone test of the Pages/HF build; if still slow, tune initial scale/bias, not gameplay |
+| Native branch | `feat/native-vulkan`, based on browser HEAD `4aed992`; native scaffold and Android Gradle shell committed in `4d7bfce`; APK workflow in `.github/workflows/build-native-vulkan-apk.yml` |
+| Native APK | build workflow `46152280757` failed at the old `setup-android` action (it tried to install the removed `tools` package); the workflow now locates the runner's preinstalled SDK. The next build is pending; no APK has been published yet. |
+| Native scope | native Vulkan/wgpu `NativeActivity` with vanilla textures and a generated overworld; separate from the Play button page, not full Java Edition parity yet |
+| Next gate | browser real-phone test on Pages/HF, plus the first green native APK build; if the browser is still slow, tune initial scale/bias, not gameplay |
 
 Run `46027524065` was not a client regression. `scripts/cdp.py` split the new title wait on the
 semicolons inside its JavaScript function body, so the title step exited with
@@ -69,6 +78,8 @@ matches the `EnvironmentAttributeReader` patch line in the full build log.
 
 | Commit | What changed |
 |---|---|
+| `4d7bfce` | Native Vulkan scaffold, `winit` + `wgpu` NativeActivity, Android Gradle shell, APK workflow |
+| `e50c269` | Merge browser HEAD into `feat/native-vulkan`; remove the scrapped Tauri/WebView workflow |
 | `9673255` | This complete README/handoff (goal, live state, mobile fix, deploy runbook, prompt) |
 | `7068c91` | Touch shell passes `rd=4`; README mirror/perf notes |
 | `d3aec32` | Record Pages mirror build `c` and mobile scroll lock |
@@ -168,7 +179,7 @@ own scrolling rules:
 | Java↔Rust bridge | `src/compat/java/mcport/bridge`, `web/bridge.js` | World sections, palette, player state, input |
 | Rust Body | `renderer/` | Optional WebGPU fallback renderer and boot backdrop |
 | Production shell | `web/index.html`, `web/play.html`, `web/game.html` | Loading UI, iframe, QA/test entry points |
-| Native client | not started | winit + wgpu NativeActivity, no WebView; build the platform layer |
+| Native client | `native/`, `android/` | Rust `winit` + `wgpu` Vulkan `NativeActivity`, no WebView; vanilla textures, generated overworld, touch look/move. Separate from the browser Play page. |
 
 The TeaVM module imports **97 JavaScript/DOM/WebGPU functions**. There is **no direct
 WASM→Vulkan translator** and no plan to add one: the native client needs a real platform layer
@@ -296,27 +307,48 @@ PY
 5. Add the CI assertions in the handoff prompt (non-blank title, scale-bias shrink, extra screens).
 6. Only after the browser build is verified and deployed, resume native Vulkan.
 
-## Native Vulkan APK (paused)
+## Native Vulkan APK (building)
 
-The WebView/Tauri APK was scrapped. **Only a real native Vulkan APK is acceptable.**
+The WebView/Tauri APK was scrapped. **Only a real native Vulkan APK is acceptable.** This APK is
+a separate native download; the Play button page remains the browser Java Edition client.
 
 | Item | State |
 |---|---|
-| Branch | `feat/native-vulkan`, HEAD `ac90861` |
-| Base | `c0014ec`; browser HEAD has since advanced to `6f6e281` (rebase before resuming) |
-| WebView/Tauri shell | Removed in `ac90861`; old shell still in `8eb6624` for reference |
-| Native scaffold | None. `stash@{0}` is only the scrapped Tauri/WebView shell; do not restore it |
-| Reuse | Renderer math/meshing/material/shader code and `client-textures.bin` (443,717 bytes, 1,301 PNGs) |
-| APK | None yet |
-| Local toolchain | No Android SDK/NDK; Rust 1.75; native APK must build in CI |
-| Signing key | `/root/ci-release.jks` |
+| Branch | `feat/native-vulkan`, based on browser HEAD `4aed992`; native commit `4d7bfce` |
+| Base | Browser branch merged into `feat/native-vulkan` in `e50c269`; old Tauri/WebView workflow removed |
+| WebView/Tauri shell | Removed in `ac90861`; old shell still in `8eb6624` for reference only |
+| Native scaffold | Recovered from `stash@{0}^3` (the stash contains only `native/`, not the Tauri shell) and committed in `4d7bfce` |
+| Android shell | `android/`: `android.app.NativeActivity`, `android:hasCode="false"`, arm64-v8a, compileSdk 35, minSdk 24, targetSdk 35, 16 KB ELF alignment |
+| Renderer | Rust `winit` + `wgpu` 30 Vulkan surface, vanilla 99-layer block texture array, generated overworld, frustum culling, sky/cloud shader |
+| Controls | Left-half joystick, right-half look, double-tap right to jump, edge-of-stick sprint; desktop WASD/mouse/Space |
+| APK build | `.github/workflows/build-native-vulkan-apk.yml`; run `46152280757` failed at `android-actions/setup-android@v3` (it tried to install the removed `tools` package). The workflow now locates the runner's preinstalled SDK; the next run is pending. |
+| APK | None published yet. The stable asset name will be `minecraft-native-vulkan-latest.apk` on the `native-vulkan-latest` GitHub release. |
+| Local toolchain | Host is ARM64 Android/Ubuntu with Rust 1.75 and no NDK; the APK must build in CI with Rust 1.87+ |
+| Signing | CI generates an ephemeral release keystore and signs the release APK; no private key is committed |
 | Target API | wgpu 30: `CurrentSurfaceTexture`, `immediate_size`, `queue.present` |
+
+What the native APK is:
+
+- A genuine Vulkan/wgpu Android app with an `ANativeWindow` swap chain, no WebView, no Tauri, no
+  browser engine.
+- The native platform-layer milestone: vanilla block textures, chunk meshing, terrain, sky,
+  movement, and touch input.
+- A separate download from the browser Play button page.
+
+What it is not yet:
+
+- It is **not** the browser Java Edition page and must not replace that page.
+- It is **not** full Java Edition parity: the Java world/gameplay bridge is still the next
+  milestone. Do not describe it as a complete Java client.
+- It is **not** a WASM→Vulkan translation.
 
 Native requirements:
 
 - `winit` + `wgpu` NativeActivity, **no WebView**.
-- Use `cargo-ndk` + Gradle in CI; assert the APK has no WebView dependency.
-- Preserve Minecraft rendering/gameplay and the guaranteed five-second sponsor ad.
+- Use `cargo-ndk` + Gradle in CI; assert the APK has no WebView dependency and links
+  `libvulkan.so`.
+- Preserve Minecraft rendering/gameplay and the guaranteed five-second sponsor ad on the browser
+  play page.
 - No AdMob for sideloaded Android.
 - Use `Mojang/bedrock-samples` / GeyserMC mappings for controls.
 - Do not describe the native port as a WASM→Vulkan translation; build the platform layer.
@@ -481,8 +513,14 @@ screen/Create World/Superflat flow plus audio pass in CI.
   in-world HUD assertion so the test cannot pass on a stale screen state.
 - **Deploy credentials.** The current PAT can push and read public APIs but cannot dispatch
   workflows or read repository secrets (HTTP 403). Deployment is manual until that changes.
-- **No native APK.** The native scaffold is parked in `stash@{0}`; only a winit + wgpu
-  NativeActivity build counts. The WebView/Tauri shell is scrapped.
+- **Native APK is not published yet.** The scaffold is committed on `feat/native-vulkan`, but the
+  first APK workflow failed at the old `setup-android` action. The workflow now uses the runner's
+  preinstalled SDK; the next run must produce `libmc_native.so`, link `libvulkan.so`, use
+  `android.app.NativeActivity`, and contain no WebView/Tauri payload.
+- **Native APK is not full Java Edition parity.** It renders vanilla textures and a generated
+  overworld with native Vulkan, but the Java world/gameplay bridge is still a later milestone.
+  Keep the Play button page on the browser Java Edition client and label the APK as the separate
+  native build.
 - **TeaVM import surface.** 97 JS/DOM/WebGPU imports. Native is a platform-layer port, not a
   WASM→Vulkan translation.
 
@@ -507,7 +545,9 @@ screen/Create World/Superflat flow plus audio pass in CI.
 | `scripts/cdp.py` | Headless Chrome driver, soak, CPU profiling, PERF window deltas |
 | `scripts/strip_wasm_names.py` | Removes the ~51 MB Wasm name section for deployment |
 | `renderer/` | Rust WebGPU fallback renderer |
-| `native/` | Native platform layer to be built; no scaffold exists |
+| `native/` | Native Vulkan/wgpu client: winit window, texture array, mesher, world, touch input |
+| `android/` | Native `NativeActivity` Gradle shell; no Java/Kotlin app code, no WebView |
+| `.github/workflows/build-native-vulkan-apk.yml` | cargo-ndk + Gradle APK build, native assertions, GitHub release |
 
 ## Handoff prompt (copy this to another AI)
 
@@ -520,13 +560,15 @@ READ FIRST
 - README.md is the source of truth; this prompt is the short version.
 - Browser branch: feat/client-headless-webgpu-boot. Code HEAD 7068c91; the README/handoff
   commit is the tip after it. Run `git log --oneline -5` before doing anything.
-- Native branch: feat/native-vulkan, HEAD ac90861, parked. There is no APK yet.
+- Native branch: feat/native-vulkan, based on browser HEAD 4aed992; native commit 4d7bfce.
+  The APK workflow is being fixed; no APK is published yet.
 - Live browser build: 26.3-20261127c on both hosts (details below).
 
 USER GOAL
 1. Make the real Minecraft Java 26.3 browser client fast enough to play, verify it in CI, and
    deploy it to the live Hugging Face Space AND the GitHub Pages mirror.
-2. Only after that, resume the genuinely native Vulkan Android APK.
+2. Ship the genuinely native Vulkan Android APK as a separate download. It is not the Play
+   button page; the Play button stays the real Java Edition browser client.
 3. Preserve Minecraft rendering/gameplay correctness and the guaranteed five-second sponsor ad.
 4. Only a native Vulkan APK is acceptable. The WebView/Tauri APK is scrapped; do not revive it.
 5. Do not claim a direct WASM->Vulkan translator. The TeaVM module imports 97 JS/DOM/WebGPU
@@ -556,6 +598,11 @@ WHAT IS LIVE NOW (2026-11-28)
   fallback). Java uses render distance 4, simulation distance 4, fast graphics, adaptive scale
   floor 0.6, persisted in localStorage `mc_scale_bias_v1`. Mobile framebuffer is capped at the
   smaller of DPR 1.0 and a 1.6 MP budget.
+- Native APK: no published APK yet. Workflow 46152280757 failed at android-actions/setup-android
+  (it tried to install the removed `tools` package). The workflow now locates the runner's
+  preinstalled SDK. The native app is Vulkan/wgpu NativeActivity, no WebView, arm64, with vanilla
+  textures and a generated overworld. It is not full Java Edition parity and must not replace the
+  Play button page.
 
 WHAT WAS FIXED AND MEASURED
 - Verify 46090386545 on 6f6e281 (build c): 13.3-13.6 fps on SwiftShader vs 9.4 baseline;
@@ -601,10 +648,12 @@ NEXT MOVES
    budget or the initial bias; do not lower gameplay correctness.
 3. Add CI assertions that title_screen.png is non-blank and that __mcScaleBias=0.6 actually
    shrinks the canvas, plus Language/Singleplayer/death/loading screen coverage.
-4. Then resume native: rebase feat/native-vulkan onto browser HEAD, implement winit + wgpu
-   NativeActivity, build with cargo-ndk + Gradle in CI, and assert the APK has no WebView.
-   Signing key /root/ci-release.jks. Target wgpu 30 APIs (CurrentSurfaceTexture, immediate_size,
-   queue.present).
+4. Native: the branch is merged with browser HEAD and the scaffold + Android shell are committed
+   in 4d7bfce. Fix the APK workflow by removing android-actions/setup-android (its `tools`
+   install fails on the current runner) and using the preinstalled SDK; then get a green build
+   and publish minecraft-native-vulkan-latest.apk to the native-vulkan-latest release. Assert the
+   APK contains libmc_native.so, links libvulkan.so, uses android.app.NativeActivity, and has no
+   WebView/Tauri payload.
 5. Keep README.md updated with commits, hashes, and measured numbers after every deploy.
 
 GOTCHAS
@@ -613,10 +662,11 @@ GOTCHAS
   real-GPU metric. Local javac is 21 and cannot compile class-file 69; CI uses Java 25.
 - HF static hosting injects window.huggingface and OG meta tags into HTML, so live HTML hashes
   differ from repo files. Wasm/runtime hashes match exactly.
-- Do not restore stash@{0}; it is the scrapped Tauri/WebView shell. The reusable renderer/ crate
-  and web/native/ helpers are on feat/native-vulkan, but no Android activity exists.
-- Do not remove or shorten the five-second sponsor ad. Do not replace the Java client with a
-  demo renderer. Do not ship a fake APK.
+- stash@{0} contains the native scaffold (not the Tauri shell) and has been recovered into
+  native/. The scrapped Tauri/WebView shell is only in old commit 8eb6624; do not revive it.
+- Do not remove or shorten the five-second sponsor ad. Keep the Play button page as the browser
+  Java Edition client; do not replace it with the native APK. Do not claim the native
+  platform-layer build is full Java Edition parity.
 ```
 
 ## Legal

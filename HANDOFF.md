@@ -4,10 +4,11 @@
 **Live browser build:** https://matthewcodergamer-minecraft-browser.static.hf.space/  
 **Live Pages mirror:** https://matthewcodergamer.github.io/  
 **Browser branch:** `feat/client-headless-webgpu-boot`  
+**Native branch:** `feat/native-vulkan`  
 **Last updated:** 2026-11-28
 
 This file is the copy-paste handoff for another AI. It is self-contained; the README has the full
-details, commit log, performance numbers, and deploy runbook.
+details, commit log, performance numbers, native APK state, and deploy runbook.
 
 ## Copy-paste prompt
 
@@ -16,15 +17,17 @@ You are taking over https://github.com/matthewcodergamer/MinecraftWeb-engine.
 
 READ FIRST
 - README.md is the source of truth; this prompt is the short version.
-- Browser branch: feat/client-headless-webgpu-boot. Code HEAD 7068c91; the README/HANDOFF docs
-  are the tip after it. Run `git log --oneline -5` before doing anything.
-- Native branch: feat/native-vulkan, HEAD ac90861, parked. There is no APK yet.
+- Browser branch: feat/client-headless-webgpu-boot. Code HEAD 7068c91; the README/handoff
+  commit is the tip after it. Run `git log --oneline -5` before doing anything.
+- Native branch: feat/native-vulkan, based on browser HEAD 4aed992; native commit 4d7bfce.
+  The APK workflow is being fixed; no APK is published yet.
 - Live browser build: 26.3-20261127c on both hosts (details below).
 
 USER GOAL
 1. Make the real Minecraft Java 26.3 browser client fast enough to play, verify it in CI, and
    deploy it to the live Hugging Face Space AND the GitHub Pages mirror.
-2. Only after that, resume the genuinely native Vulkan Android APK.
+2. Ship the genuinely native Vulkan Android APK as a separate download. It is not the Play
+   button page; the Play button stays the real Java Edition browser client.
 3. Preserve Minecraft rendering/gameplay correctness and the guaranteed five-second sponsor ad.
 4. Only a native Vulkan APK is acceptable. The WebView/Tauri APK is scrapped; do not revive it.
 5. Do not claim a direct WASM->Vulkan translator. The TeaVM module imports 97 JS/DOM/WebGPU
@@ -54,6 +57,11 @@ WHAT IS LIVE NOW (2026-11-28)
   fallback). Java uses render distance 4, simulation distance 4, fast graphics, adaptive scale
   floor 0.6, persisted in localStorage `mc_scale_bias_v1`. Mobile framebuffer is capped at the
   smaller of DPR 1.0 and a 1.6 MP budget.
+- Native APK: no published APK yet. Workflow 46152280757 failed at android-actions/setup-android
+  (it tried to install the removed `tools` package). The workflow now locates the runner's
+  preinstalled SDK. The native app is Vulkan/wgpu NativeActivity, no WebView, arm64, with vanilla
+  textures and a generated overworld. It is not full Java Edition parity and must not replace the
+  Play button page.
 
 WHAT WAS FIXED AND MEASURED
 - Verify 46090386545 on 6f6e281 (build c): 13.3-13.6 fps on SwiftShader vs 9.4 baseline;
@@ -99,10 +107,12 @@ NEXT MOVES
    budget or the initial bias; do not lower gameplay correctness.
 3. Add CI assertions that title_screen.png is non-blank and that __mcScaleBias=0.6 actually
    shrinks the canvas, plus Language/Singleplayer/death/loading screen coverage.
-4. Then resume native: rebase feat/native-vulkan onto browser HEAD, implement winit + wgpu
-   NativeActivity, build with cargo-ndk + Gradle in CI, and assert the APK has no WebView.
-   Signing key /root/ci-release.jks. Target wgpu 30 APIs (CurrentSurfaceTexture, immediate_size,
-   queue.present).
+4. Native: the branch is merged with browser HEAD and the scaffold + Android shell are committed
+   in 4d7bfce. Fix the APK workflow by removing android-actions/setup-android (its `tools`
+   install fails on the current runner) and using the preinstalled SDK; then get a green build
+   and publish minecraft-native-vulkan-latest.apk to the native-vulkan-latest release. Assert the
+   APK contains libmc_native.so, links libvulkan.so, uses android.app.NativeActivity, and has no
+   WebView/Tauri payload.
 5. Keep README.md updated with commits, hashes, and measured numbers after every deploy.
 
 GOTCHAS
@@ -111,10 +121,11 @@ GOTCHAS
   real-GPU metric. Local javac is 21 and cannot compile class-file 69; CI uses Java 25.
 - HF static hosting injects window.huggingface and OG meta tags into HTML, so live HTML hashes
   differ from repo files. Wasm/runtime hashes match exactly.
-- Do not restore stash@{0}; it is the scrapped Tauri/WebView shell. The reusable renderer/ crate
-  and web/native/ helpers are on feat/native-vulkan, but no Android activity exists.
-- Do not remove or shorten the five-second sponsor ad. Do not replace the Java client with a
-  demo renderer. Do not ship a fake APK.
+- stash@{0} contains the native scaffold (not the Tauri shell) and has been recovered into
+  native/. The scrapped Tauri/WebView shell is only in old commit 8eb6624; do not revive it.
+- Do not remove or shorten the five-second sponsor ad. Keep the Play button page as the browser
+  Java Edition client; do not replace it with the native APK. Do not claim the native
+  platform-layer build is full Java Edition parity.
 ```
 
 ## Quick links
@@ -122,5 +133,6 @@ GOTCHAS
 - [Project goal and non-negotiables](README.md#project-goal-read-this-first)
 - [Status snapshot](README.md#status-snapshot-2026-11-28)
 - [Mobile behavior](README.md#mobile-behavior-verified-2026-11-28)
+- [Native Vulkan APK](README.md#native-vulkan-apk-building)
 - [Deploy runbook](README.md#deploy-runbook)
 - [Known issues](README.md#known-issues-and-open-questions)
