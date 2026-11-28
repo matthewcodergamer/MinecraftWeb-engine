@@ -45,6 +45,7 @@ matches the `EnvironmentAttributeReader` patch line in the full build log.
 | Space commit | `cfbdef30a7763dd1565ee78928d62b31e1eb0e41` |
 | Model repo | `matthewcodergamer/minecraft-web-client` (commit `e738a3b202933a3eafa01c92693c91bb87f610ec`) |
 | Wasm module (deployed) | 60,461,887 bytes (TeaVM name section stripped) |
+| Wasm SHA-256 | `bdac79c39a3c26d72104e214918fa9ec57e34d4d35d9a10bb1af0eddf6af1285` |
 | Wasm runtime JS | 17,338 bytes |
 | Asset archive | 64,689,340 bytes, 25,671 entries (jar-only by design) |
 | Audio bank | `sounds.bin`, 117,739,281 bytes, served with HTTP Range from the model repo |
