@@ -25,6 +25,43 @@ import zlib
 CHROME = os.environ.get("CHROME", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 
 
+def split_actions(raw):
+    """Split a --actions string on top-level semicolons only.
+
+    JavaScript wait expressions contain semicolons inside function bodies, so
+    a plain str.split(";") turns one wait into several bogus actions. Track
+    quotes and bracket depth so the separators inside a JS expression survive.
+    """
+    out, buf, depth, quote, escape = [], [], 0, None, False
+    for ch in raw:
+        if quote:
+            buf.append(ch)
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == quote:
+                quote = None
+            continue
+        if ch in "\"'`":
+            quote = ch
+            buf.append(ch)
+        elif ch in "([{":
+            depth += 1
+            buf.append(ch)
+        elif ch in ")]}":
+            depth = max(0, depth - 1)
+            buf.append(ch)
+        elif ch == ";" and depth == 0:
+            out.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+    if buf:
+        out.append("".join(buf))
+    return [s.strip() for s in out if s.strip()]
+
+
 class WS:
     def __init__(self, url):
         assert url.startswith("ws://")
@@ -289,7 +326,7 @@ def main():
     a = ap.parse_args()
 
     actions = []
-    for raw in (a.actions or "").split(";"):
+    for raw in split_actions(a.actions or ""):
         raw = raw.strip()
         if not raw:
             continue

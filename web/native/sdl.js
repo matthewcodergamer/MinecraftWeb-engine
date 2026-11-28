@@ -56,7 +56,9 @@
     // The Java tick bridge lowers this bias when a device cannot hold 30 FPS.
     // Fill rate is the one cost that scales directly with pixels, and a
     // slightly soft image is far better than a slideshow on a weak phone GPU.
-    const bias = Math.min(1, Math.max(0.5, Number(globalThis.__mcScaleBias) || 1));
+    let storedBias = 1;
+    try { storedBias = Number(localStorage.getItem('mc_scale_bias_v1')) || 1; } catch (e) {}
+    const bias = Math.min(1, Math.max(0.5, Number(globalThis.__mcScaleBias) || storedBias));
     const w = Math.max(1, window.innerWidth);
     const h = Math.max(1, window.innerHeight);
     const mobile = /iPhone|iPad|Android/i.test(navigator.userAgent);

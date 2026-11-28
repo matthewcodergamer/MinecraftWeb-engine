@@ -481,11 +481,13 @@ public final class ChunkBridge {
             + " catch (e) { return 0; }")
     private static native double currentFps();
 
-    @JSBody(script = "try { return Number(window.__mcScaleBias) || 1; } catch (e) { return 1; }")
+    @JSBody(script = "try { return Number(window.__mcScaleBias)"
+            + " || Number(localStorage.getItem('mc_scale_bias_v1')) || 1; } catch (e) { return 1; }")
     private static native double currentScaleBias();
 
-    @JSBody(params = "bias", script = "try { window.__mcScaleBias = bias;"
-            + " if (window.__mcQueueResize) window.__mcQueueResize(); } catch (e) {}")
+    @JSBody(params = "bias", script = "try { window.__mcScaleBias = bias; } catch (e) {}"
+            + " try { localStorage.setItem('mc_scale_bias_v1', String(bias)); } catch (e) {}"
+            + " try { if (window.__mcQueueResize) window.__mcQueueResize(); } catch (e) {}")
     private static native void setScaleBias(double bias);
 
     @JSBody(script = "try { return new URLSearchParams(location.search).get('adaptive') !== '0'; }"
@@ -535,8 +537,7 @@ public final class ChunkBridge {
                 bias = Math.max(0.6, bias - 0.1);
                 setScaleBias(bias);
                 BrowserRuntime.report("adaptive-scale",
-                        "fps=" + Math.round(fps) + " rd=" + rd
-                                + " scale=" + String.format(java.util.Locale.ROOT, "%.1f", bias));
+                        "fps=" + Math.round(fps) + " rd=" + rd + " scale=" + scaleText(bias));
             }
         } else {
             lowFpsStreak = 0;
@@ -549,13 +550,18 @@ public final class ChunkBridge {
                     bias = Math.min(1.0, bias + 0.1);
                     setScaleBias(bias);
                     BrowserRuntime.report("adaptive-scale-up",
-                            "fps=" + Math.round(fps) + " rd=" + rd
-                                    + " scale=" + String.format(java.util.Locale.ROOT, "%.1f", bias));
+                            "fps=" + Math.round(fps) + " rd=" + rd + " scale=" + scaleText(bias));
                 }
             } else {
                 highFpsStreak = 0;
             }
         }
+    }
+
+    /** "0.7" without pulling Formatter/Locale into the client for a log line. */
+    private static String scaleText(double bias) {
+        int tenths = (int) Math.round(bias * 10.0);
+        return (tenths / 10) + "." + (tenths % 10);
     }
 
     /**
