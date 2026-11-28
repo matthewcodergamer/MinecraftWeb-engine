@@ -30,10 +30,10 @@ functions.
 - Keep Minecraft rendering/gameplay correctness; performance work must not change game behavior.
 - Only claim performance is fixed after CI **and** a real phone both pass.
 
-> **AI handoff:** this file is self-contained. Read the Project goal, Status snapshot, Mobile
-> behavior, Deploy runbook, and the copy-paste **Handoff prompt** at the bottom. It records the live
-> URLs, commits, hashes, measured numbers, rejected approaches, and exact next moves so no prior
-> conversation is needed.
+> **AI handoff:** this file is self-contained, and [HANDOFF.md](HANDOFF.md) is the standalone
+> copy-paste version. Read the Project goal, Status snapshot, Mobile behavior, Deploy runbook, and
+> the **Handoff prompt** at the bottom. It records the live URLs, commits, hashes, measured numbers,
+> rejected approaches, and exact next moves so no prior conversation is needed.
 
 ## Status snapshot (2026-11-28)
 
@@ -41,13 +41,13 @@ functions.
 |---|---|
 | Browser branch | `feat/client-headless-webgpu-boot` |
 | Browser HEAD | code `7068c91` (touch starts at render distance 4); this README/handoff commit is the branch tip |
-| Browser CI | `46146270033` **in progress** on `7068c91` (started 2026-11-28T12:45:55Z); latest completed `46090386545` on `6f6e281` succeeded: 13.3–13.6 fps, `workAvg` ~74 ms, title screenshot non-blank; baseline `46008416951` was 9.4 fps |
+| Browser CI | `46146270033` **succeeded** on `7068c91` (51m51s): full build, Rust smoke, Java title/world, and screenshot assertions all passed. Title soak mean **9.4 fps** on SwiftShader (23 samples), `workAvg` ~101 ms, `gpuMs` ~305 ms, heap 1.73–1.75 GB; `title_screen.png` 76,895 bytes. Earlier `46090386545` reported 13.3–13.6 fps, so treat the difference as runner variance until a controlled repeat. Baseline `46008416951` was 9.4 fps. |
 | Live Space | build `26.3-20261127c`; Space commit `931269de2b36`, model commit `e738a3b20293`; wasm 60,461,887 bytes, SHA-256 `bdac79c39a3c26d72104e214918fa9ec57e34d4d35d9a10bb1af0eddf6af1285` |
 | Pages mirror | <https://matthewcodergamer.github.io/>; site commits `4e71d1f` (scroll lock), `4f600a8` (direct game shell), `0db7489` (docs/cache), `dde70f8` (overflow clip), `07f9977` (site docs), `cc1a184` (root lock), `d1bad5e` (iOS launcher scroll), `3026e00` (site docs); loads `/game.html?v=26.3-20261127c&host=pages2`; Pages build `built` |
 | Mobile render distance | touch shell passes `rd=4` (was 6); simulation distance 4; adaptive floor 4 |
 | Mobile scroll | launcher scrolls normally on iOS (verified 414×896, `scrollY` reaches 1500); during play `html`/`body` use `overflow:clip`/`touch-action:none`, `body` is `position:fixed`, and all scroll offsets stay 0 |
 | Native branch | `feat/native-vulkan`, HEAD `ac90861`, not pushed, no APK |
-| Next gate | finish `46146270033`, then real-phone test of the Pages/HF build; if still slow, tune initial scale/bias, not gameplay |
+| Next gate | real-phone test of the Pages/HF build; if still slow, tune initial scale/bias, not gameplay |
 
 Run `46027524065` was not a client regression. `scripts/cdp.py` split the new title wait on the
 semicolons inside its JavaScript function body, so the title step exited with
@@ -176,13 +176,20 @@ WASM→Vulkan translator** and no plan to add one: the native client needs a rea
 
 ## Current performance state
 
-The latest profile is verify **46090386545** (commit `6f6e281`, build `20261127c`) on GitHub's
-x86_64 runner with **SwiftShader** at 1280×577. It includes the ambient cache, adaptive scale,
-`gpuAvg`, and the corrected title wait. The previous profile **46008416951** (`abd846e`) is the
-baseline. The title/Create World test drives the real Java renderer; the smoke test is the
+The best verified performance profile is **46090386545** (commit `6f6e281`, build `20261127c`) on
+GitHub's x86_64 runner with **SwiftShader** at 1280×577. It includes the ambient cache, adaptive
+scale, `gpuAvg`, and the corrected title wait. The previous profile **46008416951** (`abd846e`) is
+the baseline. The title/Create World test drives the real Java renderer; the smoke test is the
 separate Rust Body path.
 
-| Metric | Latest (build c) | Previous (build b) | Meaning |
+The latest integration run **46146270033** (`7068c91`, same build `c` plus the `rd=4` touch shell)
+also passed all steps. Its 23-sample title soak mean was **9.4 fps**, `workAvg` ~101 ms, `gpuMs`
+~305 ms, heap 1.73–1.75 GB, and `title_screen.png` 76,895 bytes. The CI title test still forces
+`rd=6` for the desktop run, so this run proves the build/shell integration, not a new FPS result.
+Use `46090386545` for the optimization comparison and repeat under controlled conditions before
+claiming a new performance result.
+
+| Metric | Best verified (46090386545) | Previous (build b) | Meaning |
 |---|---|---|---|
 | Presented FPS | 13.3–13.6 | 9.4 | Software WebGPU; not a real-GPU number |
 | `workAvg` | ~74 ms | 105 ms | Java frame wall time, including GPU fence waits |
@@ -196,7 +203,7 @@ separate Rust Body path.
 | Render passes | ~10.5/frame | ~11/frame | 20,153 over 1,910 frames |
 | Plans | 1,273 steady | 1,272 steady | 9,391 misses / 8,118 evictions during startup only |
 
-### What the latest run proved
+### What the verified optimization batch proved
 
 1. **The ambient cache works.** Inclusive `ClientLevel.animateTick` fell from 14.5% to 5.7%;
    `EnvironmentAttributeReader.getValue` fell from 9.7% to below 3.4%; the 4.9%
@@ -455,13 +462,17 @@ screen/Create World/Superflat flow plus audio pass in CI.
 ## Known issues and open questions
 
 - **No real-GPU FPS number.** CI uses SwiftShader; the local ARM64 host cannot expose a WebGPU
-  adapter (Chrome 158 returns "no adapter" for SwiftShader and lavapipe). The 13.3–13.6 fps title
-  soak is a software-rasterizer number, not a user-facing score. The next meaningful measurement
-  is the live Pages/HF build on a real phone with `__mcScaleBias` visible.
+  adapter (Chrome 158 returns "no adapter" for SwiftShader and lavapipe). CI title soaks have
+  ranged from 9.4 to 13.6 fps depending on the runner; that is a software-rasterizer number, not a
+  user-facing score. The next meaningful measurement is the live Pages/HF build on a real phone
+  with `__mcScaleBias` visible.
 - **Real-phone verification is still pending.** The mobile scroll behavior (normal launcher
   scrolling plus the in-game lock) is verified with headless Chrome at 414×896, matching iPhone 11
   CSS pixels, but no physical phone has reported FPS yet. If the phone is still GPU-bound, lower
   the mobile 1.6 MP budget or the initial bias; do not lower gameplay correctness.
+- **CI still tests desktop `rd=6`.** The title test appends `rd=6`, so the new touch `rd=4` shell
+  path is code-reviewed but not exercised by CI. Add a touch-emulation run that asserts the iframe
+  query contains `rd=4` and that `__mcScaleBias=0.6` shrinks the canvas.
 - **Heap headroom.** The monitor fix brought the live set to 1.72–1.75 GB. `nativeHeapPeakMB` is
   only 194 MB against a 768 MB reservation, so a 512 MB desktop default is a reasonable follow-up;
   re-measure after the pending CPU batch before changing it.
@@ -479,6 +490,8 @@ screen/Create World/Superflat flow plus audio pass in CI.
 
 | Path | Purpose |
 |---|---|
+| `README.md` | Full project record, status, deploy runbook, performance numbers |
+| `HANDOFF.md` | Standalone copy-paste AI handoff prompt |
 | `tools/src/PortBuilder.java` | TeaVM driver |
 | `tools/src/PortTransformer.java`, `patches/rules.txt` | Compile-time bytecode adaptations |
 | `src/compat/java` | JDK gaps, TeaVM fixes, browser runtime (`mcport.rt`), library shims |
@@ -497,6 +510,8 @@ screen/Create World/Superflat flow plus audio pass in CI.
 | `native/` | Native platform layer to be built; no scaffold exists |
 
 ## Handoff prompt (copy this to another AI)
+
+Standalone version: **[HANDOFF.md](HANDOFF.md)**.
 
 ```text
 You are taking over https://github.com/matthewcodergamer/MinecraftWeb-engine.
@@ -555,8 +570,11 @@ WHAT WAS FIXED AND MEASURED
   allowed body.scrollTop changes. Final fix: `html{height:100%}`, `html,body{min-height:100%}`,
   body `overflow-x:clip`, and `overflow:clip` + `position:fixed` on html/body only during play.
 - Mobile rd root cause: the shell forced rd=6 on touch, so Java never used its mobile 4.
-- CI 46146270033 on 7068c91 was in progress at handoff. Check it. Any code push cancels the
-  running verify job; README-only commits are safe.
+- CI 46146270033 on 7068c91 succeeded (51m51s): full build, Rust smoke, Java title/world, and
+  screenshot assertions. Title soak mean 9.4 fps on SwiftShader (23 samples), workAvg ~101 ms,
+  gpuMs ~305 ms, heap 1.73-1.75 GB, title_screen.png 76,895 bytes. Earlier 46090386545 reported
+  13.3-13.6 fps; treat the difference as runner variance until a controlled repeat. Any code push
+  cancels the running verify job; README-only commits are safe.
 
 DEPLOY RUNBOOK
 - One command: `HF_TOKEN=... /root/deploy-now.sh` (strips the name section, uploads the wasm to
@@ -576,8 +594,8 @@ DEPLOY RUNBOOK
   (HTTP 403). Direct HF uploads work with the valid token.
 
 NEXT MOVES
-1. Read the result of CI 46146270033. If it failed, fix the failure and rerun; do not deploy an
-   unverified change.
+1. CI 46146270033 already passed on 7068c91. Before changing performance code, reproduce the
+   title soak under the same conditions; do not deploy an unverified change.
 2. Test https://matthewcodergamer.github.io/ and the HF Space on a real phone. Record FPS,
    __mcScaleBias, and canvas backing size. If it is still GPU-bound, lower the 1.6 MP mobile
    budget or the initial bias; do not lower gameplay correctness.
