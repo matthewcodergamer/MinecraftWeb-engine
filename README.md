@@ -15,18 +15,21 @@ unmodified client bytecode with [TeaVM](https://github.com/konsoletyper/teavm), 
 |---|---|
 | Browser branch | `feat/client-headless-webgpu-boot` |
 | Browser HEAD | `6f6e281` (build `20261127c`; CDP action-parser fix, learned-scale persistence, patch audit) |
-| Browser CI | verify `46090386545` in progress on `6f6e281`; `46027524065` failed before Chrome launched; `46008416951` succeeded |
-| Live Space | build `26.3-20261127b`; stripped 60,459,240-byte module |
+| Browser CI | verify `46090386545` **succeeded** on `6f6e281`: 13.3–13.6 fps, title screenshot non-blank; `46027524065` failed before Chrome launched; `46008416951` succeeded |
+| Live Space | build `26.3-20261127b`; build `c` staged (60,461,887-byte stripped module), deploy blocked on a fresh HF token |
 | Native branch | `feat/native-vulkan`, HEAD `ac90861`, not pushed, no APK |
-| Next gate | verify `46090386545`, check patch match/`gpuMs`/heap/plans and the title screenshot, then deploy build `c` |
+| Next gate | upload the staged build `c` module + shell, then verify the live URL and build string |
 
 Run `46027524065` was not a client regression. `scripts/cdp.py` split the new title wait on the
 semicolons inside its JavaScript function body, so the title step exited with
 `unknown --actions step: return ...` before it launched Chrome. `b3970a1` adds a quote/bracket-aware
 action splitter, moves the wait into a single function expression, stores the learned scale bias in
 `localStorage`, and makes Java read that stored value back. `6f6e281` bumps every shell script and
-the iframe query to `20261127c`, so the deploy gets a fresh Cache Storage bucket. The build audit
-now prints the `EnvironmentAttributeReader` patch-match line.
+the iframe query to `20261127c`, so the deploy gets a fresh Cache Storage bucket. Verify
+`46090386545` then succeeded: FPS rose from 9.4 to 13.3–13.6 on the same SwiftShader runner,
+`workAvg` fell from ~105 ms to ~74 ms, the ambient cache removed most of the `animateTick` cost,
+and `title_screen.png` is now a 1,110-color image instead of a flat gray frame. The build audit
+matches the `EnvironmentAttributeReader` patch line in the full build log.
 
 > **CI caveat:** the verify workflow uses `concurrency: cancel-in-progress`, so any push touching
 > `scripts/**`, `web/**`, `src/**`, `renderer/**`, `patches/**`, `tools/src/**`, or the workflow
@@ -85,67 +88,59 @@ WASM→Vulkan translator** and no plan to add one: the native client needs a rea
 
 ## Current performance state
 
-The latest completed profile is verify **46008416951** (commit `abd846e`) on GitHub's x86_64
-runner with **SwiftShader** at 1280×577. It includes the monitor-registry fix and the plan-cache
-fix. The title/Create World test drives the real Java renderer; the smoke test is the separate
-Rust Body path. Verify **46090386545** (`6f6e281`, build `20261127c`) is the next profile: it adds
-the ambient cache, adaptive scale, `gpuAvg`, and the corrected title wait. The earlier verify
-`46089986283` was canceled by the build-`c` bump before it reached the browser.
+The latest profile is verify **46090386545** (commit `6f6e281`, build `20261127c`) on GitHub's
+x86_64 runner with **SwiftShader** at 1280×577. It includes the ambient cache, adaptive scale,
+`gpuAvg`, and the corrected title wait. The previous profile **46008416951** (`abd846e`) is the
+baseline. The title/Create World test drives the real Java renderer; the smoke test is the
+separate Rust Body path.
 
-| Metric | Title/Create World | Meaning |
-|---|---|---|
-| Presented FPS | 9.4 | Software WebGPU; not a real-GPU number |
-| `workAvg` | 105 ms | Java frame wall time, including GPU fence waits |
-| `presentAvg` | 0.00 ms | `WG.present()` only; GPU work is asynchronous |
-| JS heap | 1.72–1.74 GB | Down from 2.37–2.42 GB before the monitor fix; limit 4.19 GB |
-| Native heap | 194 MB peak | The 768 MB default is mostly unused |
-| Live textures / views | 711 / 727 | Stable |
-| Live buffers | 103 | Stable |
-| Pipelines | 199 | Created during load |
-| Draws | ~260/frame | 361,107 over 1,391 frames |
-| Render passes | ~11/frame | 15,460 over 1,391 frames |
-| Plans | 1,272 steady | 9,390 misses / 8,118 evictions during startup only |
-| Shader creation | 3.0 s | One-time during load |
+| Metric | Latest (build c) | Previous (build b) | Meaning |
+|---|---|---|---|
+| Presented FPS | 13.3–13.6 | 9.4 | Software WebGPU; not a real-GPU number |
+| `workAvg` | ~74 ms | 105 ms | Java frame wall time, including GPU fence waits |
+| `gpuMs` | ~220 ms | n/a | Queue latency; above the frame interval, so SwiftShader is the limiter |
+| `presentAvg` | 0.00 ms | 0.00 ms | `WG.present()` only; GPU work is asynchronous |
+| JS heap | 1.73–1.75 GB | 1.72–1.74 GB | Stable; limit 4.19 GB |
+| Live textures / views | 711 / 727 | 711 / 727 | Stable |
+| Live buffers | 103 | 103 | Stable |
+| Pipelines | 199 | 199 | Created during load |
+| Draws | ~250/frame | ~260/frame | 478,116 over 1,910 frames |
+| Render passes | ~10.5/frame | ~11/frame | 20,153 over 1,910 frames |
+| Plans | 1,273 steady | 1,272 steady | 9,391 misses / 8,118 evictions during startup only |
 
 ### What the latest run proved
 
-1. **The monitor leak is gone.** `[REPORT] monitors` now stays at `locks=0` with only the lazy
-   contended path; the heap fell by about 0.65 GB and stayed flat (1.72–1.74 GB over 200 s)
-   instead of climbing toward the 4.19 GB limit.
-2. **The plan cache no longer thrashes every frame.** `planEvictions` is 8,118, all during the
-   first half-second of startup; after warm-up `planTotal` holds at 1,272 and grows by only a few
-   plans over 100 s. The old build evicted 34,816 plans across 2,050 frames.
-3. **The title flow still reaches `world-level-and-player-ready`, but `title_screen.png` was still
-   a flat gray frame in `46008416951`.** The old wait only required `__mcWebGPU.frame > 2`, so it
-   captured before the Java title screen had painted or composited. `b3970a1` waits for the
-   iframe's `boot-state` to report `TitleScreen` + `loadFinished=true` and `frame > 10`, then holds
-   for 5 s. Verify `46090386545` will confirm whether the capture is non-blank.
-4. **The frame is still GPU-bound on SwiftShader.** The CPU profile is 61.6% idle self-time
-   (55.2% of inclusive time), with 5.5% GC and 2.6% native program code. The game ticks at 20 TPS;
-   the 9.4 FPS is the software rasterizer and the three-frame fence ring, not a tick stall.
+1. **The ambient cache works.** Inclusive `ClientLevel.animateTick` fell from 14.5% to 5.7%;
+   `EnvironmentAttributeReader.getValue` fell from 9.7% to below 3.4%; the 4.9%
+   `BiomeManager.getNoiseBiomeAtQuart` path fell with it. `Minecraft.tick` inclusive fell from
+   16.7% to 7.9%. FPS rose 41% and `workAvg` fell 30% on the same software GPU.
+2. **The title screenshot is finally real.** `title_screen.png` is 77,713 bytes with 1,110 unique
+   colors (was a 16,751-byte flat gray frame). The parser fix plus the `TitleScreen` +
+   `loadFinished=true` + `frame > 10` + 5 s wait fixed the capture.
+3. **The monitor leak and plan churn stay fixed.** Heap is flat at 1.73–1.75 GB; `locks=0`;
+   `planEvictions` stays at 8,118 and `planTotal` at 1,273 after startup.
+4. **SwiftShader is now the wall.** `gpuMs` is ~220 ms against a ~74 ms frame interval, so the
+   software rasterizer is the remaining CI bottleneck. The CPU is 73.4% idle self-time; the real
+   phone test is still the missing measurement.
 
-### CPU profile findings (20,946 samples over 27.1 s)
+### CPU profile findings (20,726 samples over 26.7 s, build c)
 
-- 61.6% idle, 5.5% garbage collector, 2.6% native program code.
-- 14.5% `ClientLevel.animateTick` / `doAnimateTick`; 9.7% of all samples are
-  `EnvironmentAttributeReader.getValue(attribute, BlockPos)` and 9.2% is the
-  `EnvironmentAttributeSystem.getValue` underneath it.
-- 4.9% `BiomeManager.getNoiseBiomeAtQuart`, mostly called from those attribute lookups.
-- 16.7% inclusive `Minecraft.tick`, 9.7% inclusive TeaVM `EventQueue.run`, 5.4% integrated
-  server, 2.2% Java rendering.
+- 73.4% idle, 5.3% garbage collector, 2.5% native program code.
+- 5.7% `ClientLevel.animateTick` / `doAnimateTick`; `EnvironmentAttributeReader.getValue` is no
+  longer in the top inclusive list (below 3.4%, down from 9.7%).
+- `Minecraft.tick` inclusive 7.9% (down from 16.7%); integrated server 4.0% (down from 5.4%).
+- `gpuMs` ~220 ms and `workAvg` ~74 ms show the queue is the limiter on SwiftShader.
 
-The dominant CPU cost is `animateTick`: every client tick samples 1,334 random block positions and
-asks for `AMBIENT_PARTICLES` at each one. The vanilla two-argument attribute overload re-resolves
-the biome and walks every attribute layer for every sample, even though the value is constant
-inside a 4×4×4-block biome cell. That is the next targeted fix.
+The ambient-particle cache is the optimization that moved the CPU numbers. The remaining work is
+GPU/fill-rate, which the adaptive scale and mobile budget address on real devices.
 
-### Optimization batch under verification (`6f6e281`, build `20261127c`)
+### Verified optimization batch (`6f6e281`, build `20261127c`)
 
 1. **Per-quart ambient-particle cache** (`EnvironmentAttributePatches`). `AMBIENT_PARTICLES` is
    cached per quart cell for about one second; every other attribute and reader falls through to
    the original three-argument implementation. The one-second clock check runs once per 256
-   lookups so it does not add a JS boundary crossing to every sample. This targets the 9.7% +
-   4.9% biome/attribute cost without changing gameplay or particle rates.
+   lookups so it does not add a JS boundary crossing to every sample. It cut the profile's
+   `animateTick` inclusive time from 14.5% to 5.7% without changing gameplay or particle rates.
 2. **Adaptive render scale.** Once render distance is already at the floor of 4, a device below
    28 FPS steps the canvas backing store down by 10% every 5 s (floor 0.6), and steps it back up
    after 30 s above 52 FPS. CSS keeps the canvas full-screen. This is the direct lever for a phone
@@ -164,8 +159,9 @@ inside a 4×4×4-block biome cell. That is the next targeted fix.
    one instead of inferring it from idle samples.
 5. **CDP action parsing and patch audit.** `split_actions` keeps semicolons inside quoted strings
    and bracket depth, so a multi-statement JS wait no longer becomes bogus `--actions` steps. The
-   build audit prints `PATCH_RULE_MATCH net.minecraft.world.attribute.EnvironmentAttributeReader`,
-   which proves the ambient cache was actually wired into the client.
+   build audit now matches `PATCH_RULE_MATCH net.minecraft.world.attribute.EnvironmentAttributeReader`
+   in the full build log; the profile above independently confirms the cache is active. All five
+   items are in the artifact staged for deploy.
 
 Run a profiled soak locally (Chrome must expose a WebGPU adapter):
 
@@ -190,17 +186,16 @@ PY
 
 ### Next steps
 
-1. Wait for verify `46090386545`; confirm `PATCH_RULE_MATCH ... matched=true`, `heapMB` /
-   `heapTotalMB` stay near 1.7 GB, `planEvictions` stays at the startup value, `gpuMs` tracks
-   `intervalAvg`, and the title screenshot is non-blank.
-2. Compare the CPU profile with the numbers above: `animateTick` and
-   `EnvironmentAttributeSystem.getValue` should fall sharply; GC should fall with the removed
-   `Vec3.atCenterOf` allocations.
-3. Deploy with `scripts/strip_wasm_names.py` and `scripts/upload_hf.py` (the PAT cannot dispatch
-   workflows or read repository secrets: HTTP 403). Bump `MC_BUILD` so returning players do not
-   keep the old module in Cache Storage.
-4. If a real phone is still GPU-bound after the scale adaptation, reduce the mobile fill budget
-   further or add a `?scale=` recommendation to the shell; do not lower gameplay correctness.
+1. Verify `46090386545` succeeded: heap stayed at 1.73–1.75 GB, `planEvictions` stayed at 8,118,
+   `gpuMs` is ~220 ms (SwiftShader is the wall), and `title_screen.png` is non-blank.
+2. The profile comparison is done: `animateTick` inclusive fell from 14.5% to 5.7%,
+   `EnvironmentAttributeReader.getValue` fell below 3.4%, and `Minecraft.tick` fell from 16.7% to
+   7.9%. FPS rose from 9.4 to 13.3–13.6 on the same software GPU.
+3. Deploy the staged build `c` (60,461,887-byte stripped module) with `scripts/upload_hf.py`.
+   `MC_BUILD` and every shell script query are already `20261127c`; the remaining blocker is a
+   fresh HF write token (the stored `/root/.hf-token` is invalid).
+4. Test the live build on a real phone. If it is still GPU-bound, reduce the mobile fill budget
+   further or expose a `?scale=` hint; do not lower gameplay correctness.
 5. Only after the browser build is verified and deployed, resume native Vulkan.
 
 ## Native Vulkan APK (paused)
@@ -351,12 +346,15 @@ USER GOAL
 6. No AdMob for sideloaded Android. Use Mojang/bedrock-samples and GeyserMC mappings for controls.
 
 PLAIN ENGLISH
-The user says the live build's flicker is fixed but the game still crawls. The live Space now
-serves build 26.3-20261127b with the monitor-leak fix and a 60.5 MB stripped module; the next job
-is to verify and deploy the environment-attribute and adaptive-scale batch. After the browser is
-proven, build the real Android app that renders with Vulkan natively — not a WebView wrapper and
-not a Tauri shell. The five-second sponsor ad is a hard requirement. Do not declare victory early,
-do not swap the Java client for a demo renderer, and do not ship a fake APK.
+The user says the live build's flicker is fixed but the game still crawls. The live Space still
+serves build 26.3-20261127b with the monitor-leak fix and a 60.5 MB stripped module. Build c is
+verified: 13.3–13.6 fps on SwiftShader versus 9.4 before, with the ambient cache cutting the
+animateTick hot path and a real title screenshot. It is staged for upload; the stored HF token is
+invalid, so obtaining a fresh write token is the immediate blocker. After the browser is deployed,
+test it on a real phone and then build the real Android app that renders with Vulkan natively —
+not a WebView wrapper and not a Tauri shell. The five-second sponsor ad is a hard requirement. Do
+not declare victory early, do not swap the Java client for a demo renderer, and do not ship a fake
+APK.
 
 REPO STATE
 - Browser work: branch feat/client-headless-webgpu-boot, HEAD 6f6e281. Code commits: 6f6e281
@@ -367,13 +365,13 @@ REPO STATE
   + bind-group plan-cache fixes), 0ea1e34 (strip the Wasm name section for deploy, PERF window
   deltas, planTotal fix), 52f1534 (profiling and hot-path counters), 88119c0 (TeaVM runtime kept
   on the Space), c0014ec (GUI/sound fixes, build 20261127a).
-- Batch under verification on 6f6e281: EnvironmentAttributePatches (per-quart ambient-particle
+- Batch verified in 46090386545 on 6f6e281: EnvironmentAttributePatches (per-quart ambient-particle
   cache), adaptive render scale (__mcScaleBias, 0.6–1.0, persisted in localStorage
   mc_scale_bias_v1 and read back by Java), mobile render/simulation distance 4, gpuAvg queue
-  timing, SOAK gpuMs, split_actions, build 20261127c. Verify 46090386545 is in progress.
+  timing, SOAK gpuMs, split_actions, build 20261127c. The artifact is staged for deploy.
 - Run 46027524065 (5b786ba) failed only because cdp.py split the JS wait on semicolons; the title
-  step exited before launching Chrome. That is fixed in b3970a1 and included in 6f6e281, not a
-  rendering regression.
+  step exited before launching Chrome. That is fixed in b3970a1 and included in 6f6e281; the next
+  run, 46090386545, succeeded and captured a real title screen.
 - Live: https://matthewcodergamer-minecraft-browser.static.hf.space/ (build 26.3-20261127b).
   Space commit c91bc519e3fd; model repo matthewcodergamer/minecraft-web-client commit
   2a26281ac451. Wasm 60,459,240 bytes (name section stripped); runtime JS 17,338 bytes; asset
@@ -400,37 +398,36 @@ CURRENT PERFORMANCE WORK
   b3970a1 adds split_actions and rewrites the wait as one function expression. Verify 46089986283
   was canceled by the 20261127c bump before it reached the browser; 46090386545 is the first run
   that will exercise the new title capture.
-- CPU profile (20,946 samples / 27.1 s): 61.6% idle, 5.5% GC, 2.6% program. Inclusive: 16.7%
-  Minecraft.tick, 14.5% ClientLevel.animateTick, 9.7% EnvironmentAttributeReader.getValue_1,
-  9.2% EnvironmentAttributeSystem.getValue, 4.9% BiomeManager.getNoiseBiomeAtQuart, 5.4%
-  integrated server. The tick runs at 20 TPS; the low FPS is GPU/SwiftShader waiting.
-- Batch under verification (6f6e281, build 20261127c): cache AMBIENT_PARTICLES per quart for one second (targets
-  the 9.7% + 4.9% hot path), adaptive canvas scale after render distance reaches the floor of 4,
-  mobile defaults rd/simulation 4, gpuAvg timing, learned-scale persistence. Expected: lower CPU
-  per frame, same rendering output; the scale lever is the direct fix for a weak phone GPU.
-- FIXED and deployed: MonitorRegistry leak (lazy contended-only registration, 131,072 cap; heap
-  down ~0.65 GB), bind-group plan cap 1,024 with oldest-bucket eviction, and the stripped 60.5 MB
-  module. The old title_screen.png wait (iframe __mcWebGPU.frame > 2) was too early; b3970a1 waits
-  for TitleScreen + loadFinished=true + frame > 10 and a 5 s settle, and fixes the parser that
-  previously prevented that wait from running. The non-blank capture is not confirmed yet.
+- Verified run 46090386545 (6f6e281, build c): 13.3–13.6 fps on SwiftShader (was 9.4), workAvg
+  ~74 ms (was 105), gpuMs ~220 ms (software GPU queue), heap 1.73–1.75 GB, 711 textures / 727
+  views / 103 buffers / 199 pipelines, 1,273 plans steady, planEvictions 8,118. title_screen.png
+  is 77,713 bytes / 1,110 colors (was a flat gray frame).
+- New CPU profile (20,726 samples / 26.7 s): 73.4% idle, 5.3% GC, 2.5% program. Inclusive: 7.9%
+  Minecraft.tick, 5.7% ClientLevel.animateTick, EnvironmentAttributeReader.getValue below 3.4%,
+  4.0% integrated server. The ambient cache cut the 9.7% attribute path and the FPS rose 41%;
+  the remaining wall is SwiftShader/GPU queue time.
+- FIXED and verified: MonitorRegistry leak (lazy contended-only registration, 131,072 cap; heap
+  down ~0.65 GB), bind-group plan cap 1,024 with oldest-bucket eviction, and the title capture
+  wait (TitleScreen + loadFinished=true + frame > 10 + 5 s). The cdp.py split_actions fix lets
+  that wait run; 46090386545 produced a real 1,110-color title screenshot.
 - Deploy mechanics: scripts/strip_wasm_names.py strips the name section; upload the stripped
   module to the model repo, then run scripts/upload_hf.py for the Space shell/runtime. Bump
   MC_BUILD in web/play.html and web/game.html so Cache Storage does not serve the old module.
 
 NEXT MOVES
-1. Wait for verify 46090386545 on 6f6e281 (do not push code while it runs). Download the
-   diagnostics artifact and read title_console.log / title_profile.json.
-2. Confirm PATCH_RULE_MATCH EnvironmentAttributeReader matched=true, heap stays ~1.7 GB,
-   planEvictions stays at the startup value, gpuMs tracks intervalAvg, title_screen.png is
-   non-blank, and world-level-and-player-ready is reached. Compare the profile to the numbers
-   above; animateTick and environment-attribute frames should fall sharply.
-3. Deploy the verified batch with scripts/strip_wasm_names.py + scripts/upload_hf.py. MC_BUILD is
-   already 20261127c; check the live wasm size and play.html build string.
+1. Deploy now; verify 46090386545 is green. The stripped module is staged at
+   /root/deploy-c/wasm/minecraft-java-edition-v26.3.wasm (60,461,887 bytes), with the runtime JS.
+2. Upload the module to matthewcodergamer/minecraft-web-client and run
+   scripts/upload_hf.py for the Space shell. MC_BUILD and every shell script query are already
+   20261127c. The stored /root/.hf-token is invalid, so a fresh HF write token is the only blocker.
+3. After upload, check the live wasm HEAD size (60,461,887), play.html contains 20261127c, the
+   runtime is 17,338 bytes, and the wasm magic is 0061736d01000000. Then test on a real phone.
 4. If a real phone is still GPU-bound after scale adaptation, lower the mobile fill budget or
    expose a scale hint; do not lower gameplay correctness.
 5. Then resume native: rebase feat/native-vulkan onto browser HEAD 6f6e281, implement winit + wgpu
    NativeActivity, build with cargo-ndk + Gradle in CI, assert no WebView.
-6. Add browser CI coverage for Language/Singleplayer/death/loading screens.
+6. Add browser CI coverage for Language/Singleplayer/death/loading screens, and move the
+   PATCH_RULE_MATCH grep ahead of the LINK tail so the patch line is always visible.
 7. Remember: README-only commits are safe; code pushes cancel the running verify job.
 
 GUARDRAILS
