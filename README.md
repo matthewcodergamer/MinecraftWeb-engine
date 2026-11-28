@@ -420,12 +420,13 @@ Mobile scroll/layout check (headless Chrome; no WebGPU needed for the launcher p
 
 ```sh
 CHROME=/usr/bin/google-chrome python3 scripts/cdp.py \
-  'https://matthewcodergamer.github.io/?cb=verify' --viewport 390x844 --dpr 3 \
+  'https://matthewcodergamer.github.io/?cb=verify' --viewport 414x896 --dpr 2 \
   --timeout 90 --quiet --until-js "document.readyState === 'complete'" --assert-js "true" \
-  --eval "(function(){const b=document.body,d=document.documentElement;b.classList.add('game-on');window.scrollTo(0,120);b.scrollTop=120;d.scrollTop=120;return JSON.stringify({inner:[innerWidth,innerHeight],doc:[d.clientWidth,d.clientHeight,d.scrollHeight],scrollY,bodyTop:b.scrollTop,docTop:d.scrollTop});})()"
+  --eval "(function(){const h=document.documentElement,b=document.body;const before={doc:[h.clientWidth,h.clientHeight,h.scrollHeight],body:[b.clientHeight,b.scrollHeight]};window.scrollTo(0,1500);const scrolled={scrollY,htmlTop:h.scrollTop,bodyTop:b.scrollTop};window.scrollTo(0,0);h.classList.add('game-on');b.classList.add('game-on');window.scrollTo(0,1500);h.scrollTop=1500;b.scrollTop=1500;const locked={scrollY,htmlTop:h.scrollTop,bodyTop:b.scrollTop};return JSON.stringify({before,scrolled,locked});})()"
 ```
 
-Expect `inner` and `doc` height 844, `scrollY=0`, `bodyTop=0`, `docTop=0`.
+Expect the launcher to scroll (`scrollY=1500`, page height well above 896) and the game lock to
+hold (`scrollY=0`, `htmlTop=0`, `bodyTop=0`).
 
 A live deploy is not "verified" until `MC_BUILD` matches the new version, the module size/hash
 matches the build log, the Pages launcher points at that build, and the title
@@ -457,10 +458,10 @@ screen/Create World/Superflat flow plus audio pass in CI.
   adapter (Chrome 158 returns "no adapter" for SwiftShader and lavapipe). The 13.3–13.6 fps title
   soak is a software-rasterizer number, not a user-facing score. The next meaningful measurement
   is the live Pages/HF build on a real phone with `__mcScaleBias` visible.
-- **Real-phone verification is still pending.** The mobile scroll lock and `rd=4` shell change are
-  verified with headless Chrome at 390×844, but no physical phone has reported FPS yet. If the
-  phone is still GPU-bound, lower the mobile 1.6 MP budget or the initial bias; do not lower
-  gameplay correctness.
+- **Real-phone verification is still pending.** The mobile scroll behavior (normal launcher
+  scrolling plus the in-game lock) is verified with headless Chrome at 414×896, matching iPhone 11
+  CSS pixels, but no physical phone has reported FPS yet. If the phone is still GPU-bound, lower
+  the mobile 1.6 MP budget or the initial bias; do not lower gameplay correctness.
 - **Heap headroom.** The monitor fix brought the live set to 1.72–1.75 GB. `nativeHeapPeakMB` is
   only 194 MB against a 768 MB reservation, so a 512 MB desktop default is a reasonable follow-up;
   re-measure after the pending CPU batch before changing it.
