@@ -14,11 +14,11 @@ unmodified client bytecode with [TeaVM](https://github.com/konsoletyper/teavm), 
 | Item | State |
 |---|---|
 | Browser branch | `feat/client-headless-webgpu-boot` |
-| Browser HEAD | `6f6e281` (build `20261127c`; CDP action-parser fix, learned-scale persistence, patch audit) |
+| Browser HEAD | `fbcf93b` (README; code HEAD `6f6e281`, build `20261127c`) |
 | Browser CI | verify `46090386545` **succeeded** on `6f6e281`: 13.3–13.6 fps, title screenshot non-blank; `46027524065` failed before Chrome launched; `46008416951` succeeded |
-| Live Space | build `26.3-20261127b`; build `c` staged (60,461,887-byte stripped module), deploy blocked on a fresh HF token |
+| Live Space | **build `26.3-20261127c` deployed** (60,461,887-byte stripped module); Space commit `cfbdef30a776`, model commit `e738a3b20293` |
 | Native branch | `feat/native-vulkan`, HEAD `ac90861`, not pushed, no APK |
-| Next gate | upload the staged build `c` module + shell, then verify the live URL and build string |
+| Next gate | real-phone test of build `c`; if still GPU-bound, tighten the mobile fill budget or initial scale |
 
 Run `46027524065` was not a client regression. `scripts/cdp.py` split the new title wait on the
 semicolons inside its JavaScript function body, so the title step exited with
@@ -41,10 +41,10 @@ matches the `EnvironmentAttributeReader` patch line in the full build log.
 | Item | Value |
 |---|---|
 | Playable demo | <https://matthewcodergamer-minecraft-browser.static.hf.space/> |
-| Visible build | `26.3-20261127b` |
-| Space commit | `c91bc519e3fd` |
-| Model repo | `matthewcodergamer/minecraft-web-client` (commit `2a26281ac451`) |
-| Wasm module (deployed) | 60,459,240 bytes (TeaVM name section stripped) |
+| Visible build | `26.3-20261127c` |
+| Space commit | `cfbdef30a7763dd1565ee78928d62b31e1eb0e41` |
+| Model repo | `matthewcodergamer/minecraft-web-client` (commit `e738a3b202933a3eafa01c92693c91bb87f610ec`) |
+| Wasm module (deployed) | 60,461,887 bytes (TeaVM name section stripped) |
 | Wasm runtime JS | 17,338 bytes |
 | Asset archive | 64,689,340 bytes, 25,671 entries (jar-only by design) |
 | Audio bank | `sounds.bin`, 117,739,281 bytes, served with HTTP Range from the model repo |
@@ -161,7 +161,7 @@ GPU/fill-rate, which the adaptive scale and mobile budget address on real device
    and bracket depth, so a multi-statement JS wait no longer becomes bogus `--actions` steps. The
    build audit now matches `PATCH_RULE_MATCH net.minecraft.world.attribute.EnvironmentAttributeReader`
    in the full build log; the profile above independently confirms the cache is active. All five
-   items are in the artifact staged for deploy.
+   items are live in build `20261127c`.
 
 Run a profiled soak locally (Chrome must expose a WebGPU adapter):
 
@@ -191,9 +191,9 @@ PY
 2. The profile comparison is done: `animateTick` inclusive fell from 14.5% to 5.7%,
    `EnvironmentAttributeReader.getValue` fell below 3.4%, and `Minecraft.tick` fell from 16.7% to
    7.9%. FPS rose from 9.4 to 13.3–13.6 on the same software GPU.
-3. Deploy the staged build `c` (60,461,887-byte stripped module) with `scripts/upload_hf.py`.
-   `MC_BUILD` and every shell script query are already `20261127c`; the remaining blocker is a
-   fresh HF write token (the stored `/root/.hf-token` is invalid).
+3. Build `c` is deployed: stripped module 60,461,887 bytes, Space commit `cfbdef30a776`, model
+   commit `e738a3b20293`, live `play.html`/`game.html` contain `20261127c`, and the wasm magic is
+   `0061736d01000000`.
 4. Test the live build on a real phone. If it is still GPU-bound, reduce the mobile fill budget
    further or expose a `?scale=` hint; do not lower gameplay correctness.
 5. Only after the browser build is verified and deployed, resume native Vulkan.
@@ -346,18 +346,19 @@ USER GOAL
 6. No AdMob for sideloaded Android. Use Mojang/bedrock-samples and GeyserMC mappings for controls.
 
 PLAIN ENGLISH
-The user says the live build's flicker is fixed but the game still crawls. The live Space still
-serves build 26.3-20261127b with the monitor-leak fix and a 60.5 MB stripped module. Build c is
-verified: 13.3–13.6 fps on SwiftShader versus 9.4 before, with the ambient cache cutting the
-animateTick hot path and a real title screenshot. It is staged for upload; the stored HF token is
-invalid, so obtaining a fresh write token is the immediate blocker. After the browser is deployed,
-test it on a real phone and then build the real Android app that renders with Vulkan natively —
-not a WebView wrapper and not a Tauri shell. The five-second sponsor ad is a hard requirement. Do
-not declare victory early, do not swap the Java client for a demo renderer, and do not ship a fake
+The user says the live build's flicker is fixed but the game still crawls. Build
+26.3-20261127c is now live: it is verified at 13.3–13.6 fps on SwiftShader versus 9.4 before, with
+the ambient cache cutting the animateTick hot path and a real title screenshot. The deploy is
+confirmed (60,461,887-byte stripped module, Space commit cfbdef30a776, model commit e738a3b20293).
+The next measurement is a real phone; if it is still GPU-bound, tighten the mobile fill budget or
+initial scale. After that, build the real Android app that renders with Vulkan natively — not a
+WebView wrapper and not a Tauri shell. The five-second sponsor ad is a hard requirement. Do not
+declare victory early, do not swap the Java client for a demo renderer, and do not ship a fake
 APK.
 
 REPO STATE
-- Browser work: branch feat/client-headless-webgpu-boot, HEAD 6f6e281. Code commits: 6f6e281
+- Browser work: branch feat/client-headless-webgpu-boot, HEAD fbcf93b (README). Code HEAD 6f6e281.
+  Code commits: 6f6e281
   (bump every shell script and iframe query to build 20261127c), b3970a1 (CDP action-parser fix,
   learned-scale persistence, patch-match audit), 5b786ba
   (EnvironmentAttributePatches ambient cache, adaptive render scale, mobile fill budget, gpuAvg),
@@ -365,16 +366,19 @@ REPO STATE
   + bind-group plan-cache fixes), 0ea1e34 (strip the Wasm name section for deploy, PERF window
   deltas, planTotal fix), 52f1534 (profiling and hot-path counters), 88119c0 (TeaVM runtime kept
   on the Space), c0014ec (GUI/sound fixes, build 20261127a).
+- Build c deployed: Space commit cfbdef30a7763dd1565ee78928d62b31e1eb0e41, model commit
+  e738a3b202933a3eafa01c92693c91bb87f610ec. Live wasm 60,461,887 bytes, runtime 17,338 bytes,
+  play.html and game.html both contain 20261127c.
 - Batch verified in 46090386545 on 6f6e281: EnvironmentAttributePatches (per-quart ambient-particle
   cache), adaptive render scale (__mcScaleBias, 0.6–1.0, persisted in localStorage
   mc_scale_bias_v1 and read back by Java), mobile render/simulation distance 4, gpuAvg queue
-  timing, SOAK gpuMs, split_actions, build 20261127c. The artifact is staged for deploy.
+  timing, SOAK gpuMs, split_actions, build 20261127c. It is live now.
 - Run 46027524065 (5b786ba) failed only because cdp.py split the JS wait on semicolons; the title
   step exited before launching Chrome. That is fixed in b3970a1 and included in 6f6e281; the next
   run, 46090386545, succeeded and captured a real title screen.
-- Live: https://matthewcodergamer-minecraft-browser.static.hf.space/ (build 26.3-20261127b).
-  Space commit c91bc519e3fd; model repo matthewcodergamer/minecraft-web-client commit
-  2a26281ac451. Wasm 60,459,240 bytes (name section stripped); runtime JS 17,338 bytes; asset
+- Live: https://matthewcodergamer-minecraft-browser.static.hf.space/ (build 26.3-20261127c).
+  Space commit cfbdef30a776; model repo matthewcodergamer/minecraft-web-client commit
+  e738a3b20293. Wasm 60,461,887 bytes (name section stripped); runtime JS 17,338 bytes; asset
   archive 64,689,340 bytes / 25,671 entries; sounds.bin 117,739,281 bytes.
 - Native: branch feat/native-vulkan, HEAD ac90861, based on c0014ec and not pushed. WebView shell
   removed in ac90861 (old shell in 8eb6624). There is no native scaffold: stash@{0} is only the
@@ -415,20 +419,16 @@ CURRENT PERFORMANCE WORK
   MC_BUILD in web/play.html and web/game.html so Cache Storage does not serve the old module.
 
 NEXT MOVES
-1. Deploy now; verify 46090386545 is green. The stripped module is staged at
-   /root/deploy-c/wasm/minecraft-java-edition-v26.3.wasm (60,461,887 bytes), with the runtime JS.
-2. Upload the module to matthewcodergamer/minecraft-web-client and run
-   scripts/upload_hf.py for the Space shell. MC_BUILD and every shell script query are already
-   20261127c. The stored /root/.hf-token is invalid, so a fresh HF write token is the only blocker.
-3. After upload, check the live wasm HEAD size (60,461,887), play.html contains 20261127c, the
-   runtime is 17,338 bytes, and the wasm magic is 0061736d01000000. Then test on a real phone.
-4. If a real phone is still GPU-bound after scale adaptation, lower the mobile fill budget or
-   expose a scale hint; do not lower gameplay correctness.
-5. Then resume native: rebase feat/native-vulkan onto browser HEAD 6f6e281, implement winit + wgpu
+1. Build c is deployed and verified: wasm 60,461,887 bytes, live play.html/game.html contain
+   20261127c, runtime 17,338 bytes, wasm magic 0061736d01000000.
+2. Test https://matthewcodergamer-minecraft-browser.static.hf.space/ on a real phone. Watch the
+   on-screen FPS, and confirm the canvas shrinks as __mcScaleBias adapts (floor 0.6). If it is
+   still GPU-bound, lower the mobile fill budget (1.6 MP) or start mobile at a lower initial bias.
+3. Add browser CI coverage for Language/Singleplayer/death/loading screens, plus assertions that
+   title_screen.png is non-blank and that __mcScaleBias=0.6 actually shrinks the canvas.
+4. Then resume native: rebase feat/native-vulkan onto browser HEAD 6f6e281, implement winit + wgpu
    NativeActivity, build with cargo-ndk + Gradle in CI, assert no WebView.
-6. Add browser CI coverage for Language/Singleplayer/death/loading screens, and move the
-   PATCH_RULE_MATCH grep ahead of the LINK tail so the patch line is always visible.
-7. Remember: README-only commits are safe; code pushes cancel the running verify job.
+5. Remember: README-only commits are safe; code pushes cancel the running verify job.
 
 GUARDRAILS
 - Do not regress the five-second sponsor ad.
