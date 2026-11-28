@@ -14,8 +14,9 @@ The `.so` is built by CI with `cargo-ndk` and copied into
 WebView or Tauri dependency.
 
 ```sh
-cargo ndk -t arm64-v8a -o android/app/src/main/jniLibs \
-  build --manifest-path native/Cargo.toml --release --lib
+cd native
+cargo ndk -t arm64-v8a -p 24 -o ../android/app/src/main/jniLibs build --release --lib
+cd ..
 gradle -p android :app:assembleRelease
 ```
 

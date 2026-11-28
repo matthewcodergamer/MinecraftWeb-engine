@@ -34,8 +34,9 @@ Local prerequisites: Rust 1.87+, Android SDK 35, NDK 27.2, and Gradle 8.11.
 ```sh
 export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018"
 export RUSTFLAGS="-C link-arg=-Wl,-z,max-page-size=16384 -C link-arg=-Wl,-z,common-page-size=16384"
-cargo ndk -t arm64-v8a -o android/app/src/main/jniLibs \
-  build --manifest-path native/Cargo.toml --release --lib
+cd native
+cargo ndk -t arm64-v8a -p 24 -o ../android/app/src/main/jniLibs build --release --lib
+cd ..
 gradle -p android :app:assembleRelease
 ```
 
